@@ -16,6 +16,8 @@ const (
 	indexPatterns      = "rag-snap-*"
 	indexAlias         = "rag-snap-knowledge"
 	embeddingDimension = 768
+	efConstruction     = 256
+	bidirectionalLinks = 16
 )
 
 // getOrCreateIndexTemplate checks if the index template exists and creates or updates it.
@@ -46,9 +48,8 @@ func (c *OpenSearchClient) getOrCreateIndexTemplate(ctx context.Context) error {
 func (c *OpenSearchClient) getIndexTemplate(ctx context.Context) (*indexTemplateResponse, error) {
 	resp, err := c.client.Client.Do(
 		ctx,
-		opensearchapi.Request{
-			Method: http.MethodGet,
-			Path:   fmt.Sprintf("/_index_template/%s", indexTemplateName),
+		opensearchapi.IndexTemplateGetReq{
+			IndexTemplates: []string{indexTemplateName},
 		},
 		nil,
 	)
@@ -85,10 +86,9 @@ func (c *OpenSearchClient) createIndexTemplate(ctx context.Context) error {
 
 	resp, err := c.client.Client.Do(
 		ctx,
-		opensearchapi.Request{
-			Method: http.MethodPut,
-			Path:   fmt.Sprintf("/_index_template/%s", indexTemplateName),
-			Body:   bytes.NewReader(bodyBytes),
+		opensearchapi.IndexTemplateCreateReq{
+			IndexTemplate: indexTemplateName,
+			Body:          bytes.NewReader(bodyBytes),
 		},
 		nil,
 	)
@@ -117,10 +117,21 @@ func (c *OpenSearchClient) updateIndexTemplate(ctx context.Context) error {
 
 	resp, err := c.client.Client.Do(
 		ctx,
-		opensearchapi.Request{
-			Method: http.MethodPut,
-			Path:   fmt.Sprintf("/_index_template/%s", indexTemplateName),
-			Body:   bytes.NewReader(bodyBytes),
+		opensearchapi.IndexTemplateDeleteReq{
+			IndexTemplate: indexTemplateName,
+		},
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("error executing update index template request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	resp, err = c.client.Client.Do(
+		ctx,
+		opensearchapi.IndexTemplateCreateReq{
+			IndexTemplate: indexTemplateName,
+			Body:          bytes.NewReader(bodyBytes),
 		},
 		nil,
 	)
@@ -147,10 +158,10 @@ func buildIndexTemplateBody() map[string]interface{} {
 			},
 			"settings": map[string]interface{}{
 				"index": map[string]interface{}{
-					"knn":                       true,
-					"knn.algo_param.ef_search":  100,
-					"number_of_shards":          "2",
-					"number_of_replicas":        "1",
+					"knn":                      true,
+					"knn.algo_param.ef_search": 100,
+					"number_of_shards":         "2",
+					"number_of_replicas":       "1",
 				},
 			},
 			"mappings": map[string]interface{}{
@@ -175,8 +186,8 @@ func buildIndexTemplateBody() map[string]interface{} {
 										"type": "fp16",
 									},
 								},
-								"ef_construction": 256,
-								"m":               16,
+								"ef_construction": efConstruction,
+								"m":               bidirectionalLinks,
 							},
 						},
 					},

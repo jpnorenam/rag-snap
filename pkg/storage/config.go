@@ -31,14 +31,12 @@ type configType string
 // config precedence, from lowest to highest
 var confPrecedence = []configType{
 	PackageConfig, // values set by the package
-	EngineConfig,  // values set by the active engine, overriding package values
 	UserConfig,    // values set by the user, overriding all others
 }
 
 // config types
 const (
 	PackageConfig configType = "package"
-	EngineConfig  configType = "engine"
 	UserConfig    configType = "user"
 )
 

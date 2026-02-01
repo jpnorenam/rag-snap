@@ -41,9 +41,8 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 		Use:   "init",
 		Short: "Initialize the knowledge base pipelines and index template",
 		Long:  "Create and initialize an OpenSearch pipelines and index template for storing knowledge base documents.",
-		Args:  cobra.Args()
+		Args:  cobra.ArbitraryArgs,
 		RunE: func(_ *cobra.Command, args []string) error {
-			fmt.Printf("[MOCK] Initializing knowledge base index: %s\n", indexName)
 			if sentenceTransformer != "" {
 				fmt.Printf("  Sentence transformer model: %s\n", sentenceTransformer)
 			}
@@ -62,9 +61,9 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 
 func (cmd *knowledgeCommand) createCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "init <index_name>",
-		Short: "Initialize a knowledge base index",
-		Long:  "Create and initialize an OpenSearch index for storing knowledge base documents.",
+		Use:   "create <index_name>",
+		Short: "Create a knowledge base index",
+		Long:  "Create an OpenSearch index for storing knowledge base documents.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			indexName := args[0]
@@ -73,7 +72,6 @@ func (cmd *knowledgeCommand) createCommand() *cobra.Command {
 		},
 	}
 }
-
 
 func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 	return &cobra.Command{

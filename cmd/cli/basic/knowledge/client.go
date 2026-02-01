@@ -1,31 +1,35 @@
 package knowledge
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"syscall"
 	"time"
 
 	"github.com/canonical/go-snapctl"
 	"github.com/canonical/go-snapctl/env"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
-	"github.com/chzyer/readline"
-	"github.com/fatih/color"
 	opensearch "github.com/opensearch-project/opensearch-go/v4"
 	opensearchapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 )
 
+const (
+	envOpenSearchUsername = "OPENSEARCH_USERNAME"
+	envOpenSearchPassword = "OPENSEARCH_PASSWORD"
+)
+
 type OpenSearchClient struct {
 	client           *opensearchapi.Client
+	url              string
+	username         string
+	password         string
 	embeddingModelID string
 	ingestPipeline   string
 	rerankModelID    string
@@ -45,8 +49,6 @@ func Client(baseUrl string) error {
 		}
 	}
 
-	fmt.Printf("Using OpenSearch at %v\n", baseUrl)
-
 	if err := handshake(baseUrl); err != nil {
 		return err
 	}
@@ -60,15 +62,14 @@ func Client(baseUrl string) error {
 		return err
 	}
 
-	if indexName == "" {
-		indexName = "rag-snap-default"
-	}
-	if verbose {
-		fmt.Printf("Using index %v\n", indexName)
-	}
+	opensearchUsername, _ := os.LookupEnv(envOpenSearchUsername)
+	opensearchPassword, _ := os.LookupEnv(envOpenSearchPassword)
 
 	client := &OpenSearchClient{
-		client: osClient,
+		client:   osClient,
+		username: opensearchUsername,
+		password: opensearchPassword,
+		url:      baseUrl,
 	}
 
 	ctx := context.Background()
@@ -123,9 +124,21 @@ func (c *OpenSearchClient) Init(ctx context.Context) error {
 }
 
 func newOpenSearchClient(baseUrl string) (*opensearchapi.Client, error) {
+
+	opensearchUsername, found := os.LookupEnv(envOpenSearchUsername)
+	if !found {
+		return nil, fmt.Errorf("%q env var is not set", envOpenSearchUsername)
+	}
+
+	opensearchPassword, found := os.LookupEnv(envOpenSearchPassword)
+	if !found {
+		return nil, fmt.Errorf("%q env var is not set", envOpenSearchPassword)
+	}
 	client, err := opensearchapi.NewClient(opensearchapi.Config{
 		Client: opensearch.Config{
 			Addresses: []string{baseUrl},
+			Username:  opensearchUsername,
+			Password:  opensearchPassword,
 			Transport: &http.Transport{
 				TLSClientConfig: &tls.Config{
 					InsecureSkipVerify: true,
@@ -136,7 +149,7 @@ func newOpenSearchClient(baseUrl string) (*opensearchapi.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return client, n
+	return client, nil
 }
 
 func handshake(baseUrl string) error {
@@ -189,7 +202,7 @@ func checkServer(client *opensearchapi.Client) error {
 			continue
 		}
 
-		if resp.StatusCode == http.StatusOK {
+		if resp.Inspect().Response.StatusCode == http.StatusOK {
 			return nil
 		}
 
@@ -202,98 +215,12 @@ func checkServer(client *opensearchapi.Client) error {
 	}
 }
 
-func (c *OpenSearchClient) search(query string) error {
-	searchBody := map[string]interface{}{
-		"_source": map[string]interface{}{
-			"excludes": []string{"embedding"},
-		},
-		"query": map[string]interface{}{
-			"neural": map[string]interface{}{
-				"embedding": map[string]interface{}{
-					"query_text": query,
-					"model_id":   c.embeddingModelID,
-					"k":          10,
-				},
-			},
-		},
-		"ext": map[string]interface{}{
-			"rerank": map[string]interface{}{
-				"query_context": map[string]interface{}{
-					"query_text": query,
-				},
-			},
-		},
-	}
-
-	bodyBytes, err := json.Marshal(searchBody)
+// newAuthenticatedRequest creates an HTTP request with basic authentication.
+func (c *OpenSearchClient) newAuthenticatedRequest(method, path string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequest(method, c.url+path, body)
 	if err != nil {
-		return fmt.Errorf("error marshaling search query: %v", err)
+		return nil, err
 	}
-
-	if c.verbose {
-		fmt.Printf("Sending search request: %s\n", string(bodyBytes))
-	}
-
-	stopProgress := common.StartProgressSpinner("Searching")
-	resp, err := c.client.Search(
-		context.Background(),
-		&opensearchapi.SearchReq{
-			Indices: []string{c.indexName},
-			Body:    bytes.NewReader(bodyBytes),
-		},
-	)
-	stopProgress()
-
-	if err != nil {
-		if errors.Is(err, syscall.ECONNREFUSED) {
-			return fmt.Errorf("connection refused\n\n%s",
-				common.SuggestServerLogs())
-		}
-		return fmt.Errorf("search error: %v\n\n%s", err,
-			common.SuggestServerLogs())
-	}
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("search failed with status %d", resp.StatusCode)
-	}
-
-	return c.displayResults(resp)
+	req.SetBasicAuth(c.username, c.password)
+	return req, nil
 }
-
-func (c *OpenSearchClient) displayResults(resp *opensearchapi.SearchResp) error {
-	totalHits := resp.Hits.Total.Value
-	fmt.Printf("\n%s %d results\n\n", color.GreenString("Found"), totalHits)
-
-	if totalHits == 0 {
-		return nil
-	}
-
-	for i, hit := range resp.Hits.Hits {
-		fmt.Printf("%s %d\n", color.YellowString("Result"), i+1)
-		fmt.Printf("  Index: %s\n", hit.Index)
-		fmt.Printf("  ID: %s\n", hit.ID)
-		fmt.Printf("  Score: %.4f\n", hit.Score)
-
-		if hit.Source != nil {
-			var source map[string]interface{}
-			if err := json.Unmarshal(hit.Source, &source); err == nil {
-				for key, value := range source {
-					fmt.Printf("  %s: %v\n", key, value)
-				}
-			}
-		}
-		fmt.Println()
-	}
-
-	return nil
-}
-
-func filterInput(r rune) (rune, bool) {
-	switch r {
-	case readline.CharCtrlZ:
-		return r, false
-	}
-	return r, true
-}
-
-

@@ -101,15 +101,6 @@ type Status struct {
 func (cmd *statusCommand) statusStruct() (*Status, error) {
 	var statusStr Status
 
-	activeEngineName, err := cmd.Cache.GetActiveEngine()
-	if err != nil {
-		return nil, fmt.Errorf("error getting active engine: %v", err)
-	}
-	if activeEngineName == "" {
-		return nil, fmt.Errorf("error no engine is active")
-	}
-	statusStr.Engine = activeEngineName
-
 	services, err := snapctl.Services().Run()
 	if err != nil {
 		return nil, fmt.Errorf("error getting services: %v", err)

@@ -8,11 +8,15 @@ import (
 	"io"
 	"net/http"
 	"time"
-
-	opensearchapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 )
 
 const (
+	defaultSentenceTransformerName    = "huggingface/sentence-transformers/msmarco-distilbert-base-tas-b"
+	defaultSentenceTransformerVersion = "1.0.2"
+
+	defaultCrossEncoderName    = "huggingface/cross-encoders/ms-marco-MiniLM-L-12-v2"
+	defaultCrossEncoderVersion = "1.0.2"
+
 	modelGroupName = "rag-snap-models"
 )
 
@@ -52,15 +56,12 @@ func (c *OpenSearchClient) findModelGroup(ctx context.Context, name string) (str
 		return "", fmt.Errorf("error marshaling search query: %w", err)
 	}
 
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodGet,
-			Path:   "/_plugins/_ml/model_groups/_search",
-			Body:   bytes.NewReader(bodyBytes),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodGet, "/_plugins/_ml/model_groups/_search", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return "", fmt.Errorf("error executing search request: %w", err)
 	}
@@ -99,15 +100,12 @@ func (c *OpenSearchClient) createModelGroup(ctx context.Context, name string) (s
 		return "", fmt.Errorf("error marshaling request body: %w", err)
 	}
 
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodPost,
-			Path:   "/_plugins/_ml/model_groups/_register",
-			Body:   bytes.NewReader(bodyBytes),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodPost, "/_plugins/_ml/model_groups/_register", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return "", fmt.Errorf("error executing register request: %w", err)
 	}
@@ -152,18 +150,15 @@ type modelGroupRegisterResponse struct {
 	Status       string `json:"status"`
 }
 
-const (
-	defaultSentenceTransformerName    = "huggingface/sentence-transformers/msmarco-distilbert-base-tas-b"
-	defaultSentenceTransformerVersion = "1.0.2"
-
-	defaultCrossEncoderName    = "huggingface/cross-encoders/ms-marco-MiniLM-L-12-v2"
-	defaultCrossEncoderVersion = "1.0.2"
-)
-
 // registerAndDeploySentenceTransformer registers and deploys a TORCH_SCRIPT sentence transformer model.
 // If modelName or modelVersion are empty, uses the default model.
 // If the model is already deployed in the model group, returns the existing model ID.
-func (c *OpenSearchClient) registerAndDeploySentenceTransformer(ctx context.Context, modelGroupID, modelName, modelVersion string) (string, error) {
+func (c *OpenSearchClient) registerAndDeploySentenceTransformer(
+	ctx context.Context,
+	modelGroupID,
+	modelName,
+	modelVersion string,
+) (string, error) {
 	if modelName == "" {
 		modelName = defaultSentenceTransformerName
 	}
@@ -224,7 +219,12 @@ func (c *OpenSearchClient) registerAndDeploySentenceTransformer(ctx context.Cont
 // registerAndDeployCrossEncoder registers and deploys a TORCH_SCRIPT cross-encoder model.
 // If modelName or modelVersion are empty, uses the default model.
 // If the model is already deployed in the model group, returns the existing model ID.
-func (c *OpenSearchClient) registerAndDeployCrossEncoder(ctx context.Context, modelGroupID, modelName, modelVersion string) (string, error) {
+func (c *OpenSearchClient) registerAndDeployCrossEncoder(
+	ctx context.Context,
+	modelGroupID,
+	modelName,
+	modelVersion string,
+) (string, error) {
 	if modelName == "" {
 		modelName = defaultCrossEncoderName
 	}
@@ -284,7 +284,12 @@ func (c *OpenSearchClient) registerAndDeployCrossEncoder(ctx context.Context, mo
 
 // findModelInGroup searches for a model by name and version within a model group.
 // Returns the model ID if found, empty string if not found.
-func (c *OpenSearchClient) findModelInGroup(ctx context.Context, modelGroupID, modelName, modelVersion string) (string, error) {
+func (c *OpenSearchClient) findModelInGroup(
+	ctx context.Context,
+	modelGroupID,
+	modelName,
+	modelVersion string,
+) (string, error) {
 	searchBody := map[string]interface{}{
 		"query": map[string]interface{}{
 			"bool": map[string]interface{}{
@@ -314,15 +319,12 @@ func (c *OpenSearchClient) findModelInGroup(ctx context.Context, modelGroupID, m
 		return "", fmt.Errorf("error marshaling search query: %w", err)
 	}
 
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodGet,
-			Path:   "/_plugins/_ml/models/_search",
-			Body:   bytes.NewReader(bodyBytes),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodGet, "/_plugins/_ml/models/_search", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return "", fmt.Errorf("error executing search request: %w", err)
 	}
@@ -347,14 +349,12 @@ func (c *OpenSearchClient) findModelInGroup(ctx context.Context, modelGroupID, m
 
 // getModelState retrieves the current state of a model.
 func (c *OpenSearchClient) getModelState(ctx context.Context, modelID string) (string, error) {
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodGet,
-			Path:   fmt.Sprintf("/_plugins/_ml/models/%s", modelID),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/_plugins/_ml/models/%s", modelID), nil)
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return "", fmt.Errorf("error getting model: %w", err)
 	}
@@ -374,7 +374,14 @@ func (c *OpenSearchClient) getModelState(ctx context.Context, modelID string) (s
 }
 
 // registerModel registers a model with OpenSearch ML plugin.
-func (c *OpenSearchClient) registerModel(ctx context.Context, modelGroupID, modelName, modelVersion, modelFormat, functionName string) (string, error) {
+func (c *OpenSearchClient) registerModel(
+	ctx context.Context,
+	modelGroupID,
+	modelName,
+	modelVersion,
+	modelFormat,
+	functionName string,
+) (string, error) {
 	requestBody := map[string]interface{}{
 		"name":           modelName,
 		"version":        modelVersion,
@@ -388,15 +395,12 @@ func (c *OpenSearchClient) registerModel(ctx context.Context, modelGroupID, mode
 		return "", fmt.Errorf("error marshaling request body: %w", err)
 	}
 
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodPost,
-			Path:   "/_plugins/_ml/models/_register",
-			Body:   bytes.NewReader(bodyBytes),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodPost, "/_plugins/_ml/models/_register", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return "", fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return "", fmt.Errorf("error executing register request: %w", err)
 	}
@@ -426,14 +430,12 @@ func (c *OpenSearchClient) registerModel(ctx context.Context, modelGroupID, mode
 
 // deployModel deploys a registered model.
 func (c *OpenSearchClient) deployModel(ctx context.Context, modelID string) error {
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodPost,
-			Path:   fmt.Sprintf("/_plugins/_ml/models/%s/_deploy", modelID),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodPost, fmt.Sprintf("/_plugins/_ml/models/%s/_deploy", modelID), nil)
+	if err != nil {
+		return fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("error executing deploy request: %w", err)
 	}
@@ -460,14 +462,12 @@ func (c *OpenSearchClient) waitForTaskAndGetModelID(ctx context.Context, taskID 
 			return "", fmt.Errorf("timeout waiting for task %s to complete", taskID)
 		}
 
-		resp, err := c.client.Client.Do(
-			ctx,
-			opensearchapi.Request{
-				Method: http.MethodGet,
-				Path:   fmt.Sprintf("/_plugins/_ml/tasks/%s", taskID),
-			},
-			nil,
-		)
+		req, err := c.newAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/_plugins/_ml/tasks/%s", taskID), nil)
+		if err != nil {
+			return "", fmt.Errorf("error creating request: %w", err)
+		}
+
+		resp, err := c.client.Client.Perform(req.WithContext(ctx))
 		if err != nil {
 			return "", fmt.Errorf("error getting task status: %w", err)
 		}
@@ -506,14 +506,12 @@ func (c *OpenSearchClient) waitForModelState(ctx context.Context, modelID, desir
 			return fmt.Errorf("timeout waiting for model %s to reach state %s", modelID, desiredState)
 		}
 
-		resp, err := c.client.Client.Do(
-			ctx,
-			opensearchapi.Request{
-				Method: http.MethodGet,
-				Path:   fmt.Sprintf("/_plugins/_ml/models/%s", modelID),
-			},
-			nil,
-		)
+		req, err := c.newAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/_plugins/_ml/models/%s", modelID), nil)
+		if err != nil {
+			return fmt.Errorf("error creating request: %w", err)
+		}
+
+		resp, err := c.client.Client.Perform(req.WithContext(ctx))
 		if err != nil {
 			return fmt.Errorf("error getting model status: %w", err)
 		}

@@ -13,8 +13,6 @@ func DebugCommand(ctx *common.Context) *cobra.Command {
 	}
 
 	debugCmd.AddCommand(
-		ValidateCommand(ctx),
-		SelectCommand(ctx),
 		ChatCommand(ctx),
 	)
 

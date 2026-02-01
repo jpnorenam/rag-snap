@@ -1,0 +1,20 @@
+#!/bin/bash -eu
+
+tag="snap.$SNAP_INSTANCE_NAME.hook.install"
+
+# Redirect stdout to stdout+syslog
+exec 1> >(tee >(logger --tag=$tag))
+# Redirect stderr to stderr+syslog
+exec 2> >(logger --stderr --priority error --tag=$tag)
+
+#
+# Set generic configurations
+#
+
+rag set --package chat.http.port="8324"
+rag set --package chat.http.host="127.0.0.1"
+rag set --package knowledge.http.port="9200"
+rag set --package knowledge.http.host="127.0.0.1"
+rag set --package knowledge.username="admin"
+rag set --package knowledge.password="admin"
+rag set --package verbose="false"

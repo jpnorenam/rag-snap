@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-
-	opensearchapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 )
 
 const (
@@ -43,14 +41,12 @@ func (c *OpenSearchClient) getOrCreateIngestPipeline(ctx context.Context, embedd
 // getIngestPipeline retrieves the ingest pipeline if it exists.
 // Returns nil if the pipeline is not found (404).
 func (c *OpenSearchClient) getIngestPipeline(ctx context.Context) (*ingestPipelineResponse, error) {
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodGet,
-			Path:   fmt.Sprintf("/_ingest/pipeline/%s", ingestPipelineName),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/_ingest/pipeline/%s", ingestPipelineName), nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("error executing get ingest pipeline request: %w", err)
 	}
@@ -82,15 +78,12 @@ func (c *OpenSearchClient) createIngestPipeline(ctx context.Context, embeddingMo
 		return fmt.Errorf("error marshaling ingest pipeline body: %w", err)
 	}
 
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodPut,
-			Path:   fmt.Sprintf("/_ingest/pipeline/%s", ingestPipelineName),
-			Body:   bytes.NewReader(bodyBytes),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodPut, fmt.Sprintf("/_ingest/pipeline/%s", ingestPipelineName), bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("error executing create ingest pipeline request: %w", err)
 	}
@@ -114,15 +107,12 @@ func (c *OpenSearchClient) updateIngestPipeline(ctx context.Context, embeddingMo
 		return fmt.Errorf("error marshaling ingest pipeline body: %w", err)
 	}
 
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodPut,
-			Path:   fmt.Sprintf("/_ingest/pipeline/%s", ingestPipelineName),
-			Body:   bytes.NewReader(bodyBytes),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodPut, fmt.Sprintf("/_ingest/pipeline/%s", ingestPipelineName), bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("error executing update ingest pipeline request: %w", err)
 	}
@@ -180,14 +170,12 @@ func (c *OpenSearchClient) getOrCreateSearchPipeline(ctx context.Context, rerank
 // getSearchPipeline retrieves the search pipeline if it exists.
 // Returns nil if the pipeline is not found (404).
 func (c *OpenSearchClient) getSearchPipeline(ctx context.Context) (*searchPipelineResponse, error) {
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodGet,
-			Path:   fmt.Sprintf("/_search/pipeline/%s", searchPipelineName),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/_search/pipeline/%s", searchPipelineName), nil)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return nil, fmt.Errorf("error executing get search pipeline request: %w", err)
 	}
@@ -219,15 +207,12 @@ func (c *OpenSearchClient) createSearchPipeline(ctx context.Context, rerankerMod
 		return fmt.Errorf("error marshaling search pipeline body: %w", err)
 	}
 
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodPut,
-			Path:   fmt.Sprintf("/_search/pipeline/%s", searchPipelineName),
-			Body:   bytes.NewReader(bodyBytes),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodPut, fmt.Sprintf("/_search/pipeline/%s", searchPipelineName), bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("error executing create search pipeline request: %w", err)
 	}
@@ -251,15 +236,12 @@ func (c *OpenSearchClient) updateSearchPipeline(ctx context.Context, rerankerMod
 		return fmt.Errorf("error marshaling search pipeline body: %w", err)
 	}
 
-	resp, err := c.client.Client.Do(
-		ctx,
-		opensearchapi.Request{
-			Method: http.MethodPut,
-			Path:   fmt.Sprintf("/_search/pipeline/%s", searchPipelineName),
-			Body:   bytes.NewReader(bodyBytes),
-		},
-		nil,
-	)
+	req, err := c.newAuthenticatedRequest(http.MethodPut, fmt.Sprintf("/_search/pipeline/%s", searchPipelineName), bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
 	if err != nil {
 		return fmt.Errorf("error executing update search pipeline request: %w", err)
 	}

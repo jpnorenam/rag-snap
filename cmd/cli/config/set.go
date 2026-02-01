@@ -16,7 +16,6 @@ type setCommand struct {
 
 	// flags
 	packageConfig bool
-	engineConfig  bool
 }
 
 func SetCommand(ctx *common.Context) *cobra.Command {
@@ -36,11 +35,6 @@ func SetCommand(ctx *common.Context) *cobra.Command {
 	// flags
 	cobraCmd.Flags().BoolVar(&cmd.packageConfig, "package", false, "set package configurations")
 	err := cobraCmd.Flags().MarkHidden("package")
-	if err != nil {
-		panic(err)
-	}
-	cobraCmd.Flags().BoolVar(&cmd.engineConfig, "engine", false, "set engine configuration")
-	err = cobraCmd.Flags().MarkHidden("engine")
 	if err != nil {
 		panic(err)
 	}
@@ -70,8 +64,6 @@ func (cmd *setCommand) setValue(keyValue string) error {
 	var err error
 	if cmd.packageConfig {
 		err = cmd.Config.Set(key, value, storage.PackageConfig)
-	} else if cmd.engineConfig {
-		err = cmd.Config.Set(key, value, storage.EngineConfig)
 	} else {
 		// Reject use of internal keys by the user
 		if slices.Contains(deprecatedConfig, key) {

@@ -10,7 +10,6 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
-	"github.com/jpnorenam/rag-snap/cmd/cli/engine"
 	"github.com/jpnorenam/rag-snap/cmd/cli/others"
 	"github.com/jpnorenam/rag-snap/cmd/cli/others/debug"
 	"github.com/jpnorenam/rag-snap/pkg/storage"
@@ -19,9 +18,7 @@ import (
 
 func main() {
 	ctx := &common.Context{
-		EnginesDir: env.Snap() + "/engines",
-		Cache:      storage.NewCache(),
-		Config:     storage.NewConfig(),
+		Config: storage.NewConfig(),
 	}
 
 	// Get snap name for dynamic commands
@@ -72,16 +69,8 @@ func main() {
 		config.SetCommand(ctx),
 	)
 
-	rootCmd.AddGroup(engine.Group("Management Commands:"))
-	rootCmd.AddCommand(
-		engine.ListCommand(ctx),
-		engine.ShowCommand(ctx),
-		engine.UseCommand(ctx),
-	)
-
 	// other commands (help is added by default)
 	rootCmd.AddCommand(
-		others.ShowMachineCommand(ctx),
 		others.RunCommand(ctx),
 		debug.DebugCommand(ctx),
 	)
