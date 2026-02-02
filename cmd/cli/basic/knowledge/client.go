@@ -13,8 +13,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/canonical/go-snapctl"
-	"github.com/canonical/go-snapctl/env"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	opensearch "github.com/opensearch-project/opensearch-go/v4"
 	opensearchapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
@@ -36,18 +34,13 @@ type OpenSearchClient struct {
 	searchPipeline   string
 }
 
-func Client(baseUrl string) error {
-	if env.SnapInstanceName() != "" {
-		serviceName := env.SnapInstanceName() + ".opensearch"
-		services, err := snapctl.Services(serviceName).Run()
-		if err != nil {
-			return fmt.Errorf("error getting services: %v", err)
-		}
-		if services[serviceName].Current == "inactive" {
-			return fmt.Errorf("opensearch not active\n\n%s",
-				common.SuggestStartServer())
-		}
-	}
+// headerTransport wraps an http.RoundTripper and adds default headers to all requests.
+type headerTransport struct {
+	transport http.RoundTripper
+}
+
+func Client(baseUrl string, init bool) error {
+	fmt.Printf("Using opensearch cluster at %v\n", baseUrl)
 
 	if err := handshake(baseUrl); err != nil {
 		return err
@@ -72,9 +65,11 @@ func Client(baseUrl string) error {
 		url:      baseUrl,
 	}
 
-	ctx := context.Background()
-	if err := client.Init(ctx); err != nil {
-		return fmt.Errorf("error initializing OpenSearch client: %v", err)
+	if init {
+		ctx := context.Background()
+		if err := client.Init(ctx); err != nil {
+			return fmt.Errorf("error initializing OpenSearch client: %v", err)
+		}
 	}
 
 	return nil
@@ -84,41 +79,67 @@ func Client(baseUrl string) error {
 // It creates or retrieves the model group, deploys models, and creates pipelines.
 func (c *OpenSearchClient) Init(ctx context.Context) error {
 	// Get or create the model group
+	stopProgress := common.StartProgressSpinner("Creating model group")
+	defer stopProgress()
 	modelGroupID, err := c.getOrCreateModelGroup(ctx)
 	if err != nil {
 		return fmt.Errorf("error setting up model group: %w", err)
 	}
+	stopProgress()
 
 	// Register and deploy the sentence transformer for embeddings
+	stopProgress = common.StartProgressSpinner("Setting up embedding model")
+	defer stopProgress()
 	embeddingModelID, err := c.registerAndDeploySentenceTransformer(ctx, modelGroupID, "", "")
 	if err != nil {
 		return fmt.Errorf("error setting up embedding model: %w", err)
 	}
 	c.embeddingModelID = embeddingModelID
+	stopProgress()
 
 	// Register and deploy the cross-encoder for reranking
+	stopProgress = common.StartProgressSpinner("Setting up rerank model")
+	defer stopProgress()
 	rerankModelID, err := c.registerAndDeployCrossEncoder(ctx, modelGroupID, "", "")
 	if err != nil {
 		return fmt.Errorf("error setting up rerank model: %w", err)
 	}
 	c.rerankModelID = rerankModelID
+	stopProgress()
 
 	// Create or update the ingest pipeline
+	stopProgress = common.StartProgressSpinner("Setting up ingest pipeline")
+	defer stopProgress()
 	if err := c.getOrCreateIngestPipeline(ctx, c.embeddingModelID); err != nil {
 		return fmt.Errorf("error setting up ingest pipeline: %w", err)
 	}
 	c.ingestPipeline = ingestPipelineName
+	stopProgress()
 
 	// Create or update the search pipeline
+	stopProgress = common.StartProgressSpinner("Setting up search pipeline")
+	defer stopProgress()
 	if err := c.getOrCreateSearchPipeline(ctx, c.rerankModelID); err != nil {
 		return fmt.Errorf("error setting up search pipeline: %w", err)
 	}
 	c.searchPipeline = searchPipelineName
+	stopProgress()
 
 	// Create or update the index template
+	stopProgress = common.StartProgressSpinner("Setting up index template")
+	defer stopProgress()
 	if err := c.getOrCreateIndexTemplate(ctx); err != nil {
 		return fmt.Errorf("error setting up index template: %w", err)
 	}
+	stopProgress()
+
+	// Ensure the default index exists
+	stopProgress = common.StartProgressSpinner("Setting up default index")
+	defer stopProgress()
+	if err := c.getOrCreateDefaultIndex(ctx); err != nil {
+		return fmt.Errorf("error setting up default index: %w", err)
+	}
+	stopProgress()
 
 	return nil
 }
@@ -139,9 +160,11 @@ func newOpenSearchClient(baseUrl string) (*opensearchapi.Client, error) {
 			Addresses: []string{baseUrl},
 			Username:  opensearchUsername,
 			Password:  opensearchPassword,
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{
-					InsecureSkipVerify: true,
+			Transport: &headerTransport{
+				transport: &http.Transport{
+					TLSClientConfig: &tls.Config{
+						InsecureSkipVerify: true,
+					},
 				},
 			},
 		},
@@ -154,7 +177,6 @@ func newOpenSearchClient(baseUrl string) (*opensearchapi.Client, error) {
 
 func handshake(baseUrl string) error {
 	stopProgress := common.StartProgressSpinner("Connecting to OpenSearch")
-	defer stopProgress()
 
 	parsedURL, err := url.Parse(baseUrl)
 	if err != nil {
@@ -178,6 +200,8 @@ func handshake(baseUrl string) error {
 		return err
 	}
 	conn.Close()
+
+	defer stopProgress()
 	return nil
 }
 
@@ -213,6 +237,13 @@ func checkServer(client *opensearchapi.Client) error {
 		}
 		time.Sleep(retryInterval)
 	}
+}
+
+func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return t.transport.RoundTrip(req)
 }
 
 // newAuthenticatedRequest creates an HTTP request with basic authentication.

@@ -3,6 +3,7 @@ package basic
 import (
 	"fmt"
 
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/spf13/cobra"
 )
@@ -49,7 +50,14 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 			if crossEncoder != "" {
 				fmt.Printf("  Cross-encoder model: %s\n", crossEncoder)
 			}
-			return nil
+
+			apiUrls, err := serverApiUrls(cmd.Context)
+			if err != nil {
+				return fmt.Errorf("error getting server api urls: %v", err)
+			}
+			knowledgeBaseUrl := apiUrls[opensearch]
+
+			return knowledge.Client(knowledgeBaseUrl, true)
 		},
 	}
 

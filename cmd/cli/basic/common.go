@@ -3,7 +3,6 @@ package basic
 import (
 	"fmt"
 	"net/url"
-	"os"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/spf13/cobra"
@@ -16,7 +15,7 @@ const (
 	openAi             = "openai"
 	confOpenAiHttpHost = "chat.http.host"
 	confOpenAiHttpPort = "chat.http.port"
-	envOpenAiBasePath  = "OPENAI_BASE_PATH"
+	confOpenAiHttpPath = "chat.http.path"
 
 	// [knowledge] OpenSearch snap API URLs
 	opensearch             = "opensearch"
@@ -41,27 +40,32 @@ func getConfigValue(ctx *common.Context, key string) (any, error) {
 }
 
 // buildServiceURL constructs an HTTP URL from host, port, and optional path.
-func buildServiceURL(host any, port any, path string) string {
+func buildServiceURL(host any, port any, path any, secure bool) string {
 	u := url.URL{
-		Scheme: "http",
-		Host:   fmt.Sprintf("%s:%v", host, port),
-		Path:   path,
+		Host: fmt.Sprintf("%s:%v", host, port),
+		Path: fmt.Sprintf("%v", path),
 	}
+
+	if secure {
+		u.Scheme = "https"
+	} else {
+		u.Scheme = "http"
+	}
+
 	return u.String()
 }
 
 func serverApiUrls(ctx *common.Context) (map[string]string, error) {
-	basePath, found := os.LookupEnv(envOpenAiBasePath)
-	if !found {
-		return nil, fmt.Errorf("%q env var is not set", envOpenAiBasePath)
+	openAiBasePath, err := getConfigValue(ctx, confOpenAiHttpPath)
+	if err != nil {
+		return nil, err
 	}
-
-	openAIHost, err := getConfigValue(ctx, confOpenAiHttpHost)
+	openAiHost, err := getConfigValue(ctx, confOpenAiHttpHost)
 	if err != nil {
 		return nil, err
 	}
 
-	openAIPort, err := getConfigValue(ctx, confOpenAiHttpPort)
+	openAiPort, err := getConfigValue(ctx, confOpenAiHttpPort)
 	if err != nil {
 		return nil, err
 	}
@@ -77,7 +81,7 @@ func serverApiUrls(ctx *common.Context) (map[string]string, error) {
 	}
 
 	return map[string]string{
-		openAi:     buildServiceURL(openAIHost, openAIPort, basePath),
-		opensearch: buildServiceURL(openSearchHost, openSearchPort, ""),
+		openAi:     buildServiceURL(openAiHost, openAiPort, openAiBasePath, false),
+		opensearch: buildServiceURL(openSearchHost, openSearchPort, "", true),
 	}, nil
 }

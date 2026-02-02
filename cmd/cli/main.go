@@ -24,7 +24,7 @@ func main() {
 	// Get snap name for dynamic commands
 	instanceName := env.SnapInstanceName()
 	if instanceName == "" {
-		instanceName = "cli"
+		instanceName = "rag"
 	}
 
 	// rootCmd is the base command

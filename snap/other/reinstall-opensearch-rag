@@ -1,0 +1,23 @@
+#!/bin/bash -eu
+
+sudo snap remove --purge opensearch
+
+sudo snap install opensearch --channel 2/edge
+sudo snap connect opensearch:process-control
+
+sudo snap run opensearch.setup                  \
+    --node-name vdb0                            \
+    --node-roles cluster_manager,data,ingest,ml \
+    --tls-priv-key-root-pass root1234           \
+    --tls-priv-key-admin-pass admin1234         \
+    --tls-priv-key-node-pass node1234           \
+    --tls-init-setup yes
+
+echo '-Xms6g' | sudo tee /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
+echo '-Xmx6g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
+
+sudo snap start opensearch.daemon
+
+sleep 10
+
+sudo snap run opensearch.security-init --tls-priv-key-admin-pass=admin1234

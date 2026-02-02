@@ -7,7 +7,7 @@ A CLI based client that
 ### Prerequisites
 Before starting, the RAG snap depends on OpenSearch and Inference snaps:
 
-1. Install a [Inference snap](https://github.com/canonical/inference-snaps) of your selection.
+#### Install a [Inference snap](https://github.com/canonical/inference-snaps) of your selection.
 
 Test your Inference snap installation:
 ```bash
@@ -21,11 +21,32 @@ curl http://localhost:8324/v1/chat/completions \
   }'
 ```
 
-2. Install and setup the [OpenSearch snap](https://github.com/canonical/opensearch-snap).
+#### Install and setup the [OpenSearch snap](https://github.com/canonical/opensearch-snap).
 
-Test your Inference snap installation:
+During the [creation of the certificates](https://github.com/canonical/opensearch-snap?tab=readme-ov-file#creating-certificates), ensure that the `ingest` and `ml` roles are set in the node.
+
+``` bash
+sudo snap run opensearch.setup                  \
+    --node-name vdb0                            \
+    --node-roles cluster_manager,data,ingest,ml \
+    --tls-priv-key-root-pass root1234           \
+    --tls-priv-key-admin-pass admin1234         \
+    --tls-priv-key-node-pass node1234           \
+    --tls-init-setup yes
+```
+
+Validate your OpenSearch snap node roles:
 ```bash
-curl -u admin:admin -k https://localhost:9200/_cluster/health?pretty
+curl -k -u admin:admin https://localhost:9200/_cat/nodes?v
+```
+
+Increase the JVM heap size to fit the sentence embedding and cross-encoder models.
+```bash
+# Todo: Which is the right way to this?
+echo '-Xms6g' | sudo tee /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
+echo '-Xmx6g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
+
+sudo snap restart opensearch
 ```
 
 ### Installation

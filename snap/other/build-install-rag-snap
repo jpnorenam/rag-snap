@@ -1,0 +1,5 @@
+#!/bin/bash -eu
+
+snapcraft -v
+
+sudo snap install --dangerous ./rag_*.snap

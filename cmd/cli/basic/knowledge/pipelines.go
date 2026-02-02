@@ -127,14 +127,14 @@ func (c *OpenSearchClient) updateIngestPipeline(ctx context.Context, embeddingMo
 }
 
 // buildIngestPipelineBody constructs the ingest pipeline JSON body.
-func buildIngestPipelineBody(embeddingModelID string) map[string]interface{} {
-	return map[string]interface{}{
+func buildIngestPipelineBody(embeddingModelID string) map[string]any {
+	return map[string]any{
 		"description": "rag-snap ingest pipeline",
-		"processors": []map[string]interface{}{
+		"processors": []map[string]any{
 			{
-				"text_embedding": map[string]interface{}{
+				"text_embedding": map[string]any{
 					"model_id": embeddingModelID,
-					"field_map": map[string]interface{}{
+					"field_map": map[string]any{
 						"content": "embedding",
 					},
 				},
@@ -256,15 +256,15 @@ func (c *OpenSearchClient) updateSearchPipeline(ctx context.Context, rerankerMod
 }
 
 // buildSearchPipelineBody constructs the search pipeline JSON body with rerank processor.
-func buildSearchPipelineBody(rerankerModelID string) map[string]interface{} {
-	return map[string]interface{}{
-		"response_processors": []map[string]interface{}{
+func buildSearchPipelineBody(rerankerModelID string) map[string]any {
+	return map[string]any{
+		"response_processors": []map[string]any{
 			{
-				"rerank": map[string]interface{}{
-					"ml_opensearch": map[string]interface{}{
+				"rerank": map[string]any{
+					"ml_opensearch": map[string]any{
 						"model_id": rerankerModelID,
 					},
-					"context": map[string]interface{}{
+					"context": map[string]any{
 						"document_fields": []string{"content"},
 					},
 				},
@@ -275,11 +275,11 @@ func buildSearchPipelineBody(rerankerModelID string) map[string]interface{} {
 
 // ingestPipelineResponse represents the response from GET /_ingest/pipeline/{name}
 type ingestPipelineResponse map[string]struct {
-	Description string                   `json:"description"`
-	Processors  []map[string]interface{} `json:"processors"`
+	Description string           `json:"description"`
+	Processors  []map[string]any `json:"processors"`
 }
 
 // searchPipelineResponse represents the response from GET /_search/pipeline/{name}
 type searchPipelineResponse map[string]struct {
-	ResponseProcessors []map[string]interface{} `json:"response_processors"`
+	ResponseProcessors []map[string]any `json:"response_processors"`
 }

@@ -43,9 +43,9 @@ func (c *OpenSearchClient) getOrCreateModelGroup(ctx context.Context) (string, e
 
 // findModelGroup searches for a model group by name and returns its ID if found.
 func (c *OpenSearchClient) findModelGroup(ctx context.Context, name string) (string, error) {
-	searchBody := map[string]interface{}{
-		"query": map[string]interface{}{
-			"match": map[string]interface{}{
+	searchBody := map[string]any{
+		"query": map[string]any{
+			"match": map[string]any{
 				"name": name,
 			},
 		},
@@ -90,7 +90,7 @@ func (c *OpenSearchClient) findModelGroup(ctx context.Context, name string) (str
 
 // createModelGroup creates a new model group with the given name and returns its ID.
 func (c *OpenSearchClient) createModelGroup(ctx context.Context, name string) (string, error) {
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"name":        name,
 		"description": "Model group for RAG snap models",
 	}
@@ -290,22 +290,22 @@ func (c *OpenSearchClient) findModelInGroup(
 	modelName,
 	modelVersion string,
 ) (string, error) {
-	searchBody := map[string]interface{}{
-		"query": map[string]interface{}{
-			"bool": map[string]interface{}{
-				"must": []map[string]interface{}{
+	searchBody := map[string]any{
+		"query": map[string]any{
+			"bool": map[string]any{
+				"must": []map[string]any{
 					{
-						"term": map[string]interface{}{
+						"term": map[string]any{
 							"model_group_id": modelGroupID,
 						},
 					},
 					{
-						"term": map[string]interface{}{
+						"term": map[string]any{
 							"name.keyword": modelName,
 						},
 					},
 					{
-						"term": map[string]interface{}{
+						"term": map[string]any{
 							"model_version": modelVersion,
 						},
 					},
@@ -382,7 +382,7 @@ func (c *OpenSearchClient) registerModel(
 	modelFormat,
 	functionName string,
 ) (string, error) {
-	requestBody := map[string]interface{}{
+	requestBody := map[string]any{
 		"name":           modelName,
 		"version":        modelVersion,
 		"model_group_id": modelGroupID,

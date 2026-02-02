@@ -14,31 +14,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/canonical/go-snapctl"
-	"github.com/canonical/go-snapctl/env"
-	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/chzyer/readline"
 	"github.com/fatih/color"
+	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 )
 
 func Client(baseUrl string, modelName string, verbose bool) error {
-	if env.SnapInstanceName() != "" {
-		// TODO: get app name dynamically
-		serviceName := env.SnapInstanceName() + ".server"
-		services, err := snapctl.Services(serviceName).Run()
-		if err != nil {
-			return fmt.Errorf("error getting services: %v", err)
-		}
-		if services[serviceName].Current == "inactive" {
-			return fmt.Errorf("server not active\n\n%s",
-				common.SuggestStartServer())
-		}
-	}
-
-	fmt.Printf("Using server at %v\n", baseUrl)
+	fmt.Printf("Using inference server at %v\n", baseUrl)
 
 	// Check if server is reachable
 	if err := handshake(baseUrl); err != nil {

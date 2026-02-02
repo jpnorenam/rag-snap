@@ -14,7 +14,8 @@ import (
 const (
 	indexTemplateName  = "rag-snap-index-template"
 	indexPatterns      = "rag-snap-*"
-	indexAlias         = "rag-snap-knowledge"
+	indexAlias         = "rag-snap"
+	indexDefault       = "rag-snap-default"
 	embeddingDimension = 768
 	efConstruction     = 256
 	bidirectionalLinks = 16
@@ -149,40 +150,40 @@ func (c *OpenSearchClient) updateIndexTemplate(ctx context.Context) error {
 }
 
 // buildIndexTemplateBody constructs the index template JSON body.
-func buildIndexTemplateBody() map[string]interface{} {
-	return map[string]interface{}{
+func buildIndexTemplateBody() map[string]any {
+	return map[string]any{
 		"index_patterns": []string{indexPatterns},
-		"template": map[string]interface{}{
-			"aliases": map[string]interface{}{
-				indexAlias: map[string]interface{}{},
+		"template": map[string]any{
+			"aliases": map[string]any{
+				indexAlias: map[string]any{},
 			},
-			"settings": map[string]interface{}{
-				"index": map[string]interface{}{
+			"settings": map[string]any{
+				"index": map[string]any{
 					"knn":                      true,
 					"knn.algo_param.ef_search": 100,
 					"number_of_shards":         "2",
 					"number_of_replicas":       "1",
 				},
 			},
-			"mappings": map[string]interface{}{
-				"properties": map[string]interface{}{
-					"source_id": map[string]interface{}{
+			"mappings": map[string]any{
+				"properties": map[string]any{
+					"source_id": map[string]any{
 						"type": "keyword",
 					},
-					"content": map[string]interface{}{
+					"content": map[string]any{
 						"type": "text",
 					},
-					"embedding": map[string]interface{}{
+					"embedding": map[string]any{
 						"type":       "knn_vector",
 						"dimension":  embeddingDimension,
 						"space_type": "l2",
-						"method": map[string]interface{}{
+						"method": map[string]any{
 							"name":   "hnsw",
 							"engine": "faiss",
-							"parameters": map[string]interface{}{
-								"encoder": map[string]interface{}{
+							"parameters": map[string]any{
+								"encoder": map[string]any{
 									"name": "sq",
-									"parameters": map[string]interface{}{
+									"parameters": map[string]any{
 										"type": "fp16",
 									},
 								},
@@ -191,7 +192,7 @@ func buildIndexTemplateBody() map[string]interface{} {
 							},
 						},
 					},
-					"created_at": map[string]interface{}{
+					"created_at": map[string]any{
 						"type":   "date",
 						"format": "yyyy-MM-dd HH:mm:ss",
 					},
@@ -208,10 +209,52 @@ type indexTemplateResponse struct {
 		IndexTemplate struct {
 			IndexPatterns []string `json:"index_patterns"`
 			Template      struct {
-				Settings map[string]interface{} `json:"settings"`
-				Mappings map[string]interface{} `json:"mappings"`
-				Aliases  map[string]interface{} `json:"aliases"`
+				Settings map[string]any `json:"settings"`
+				Mappings map[string]any `json:"mappings"`
+				Aliases  map[string]any `json:"aliases"`
 			} `json:"template"`
 		} `json:"index_template"`
 	} `json:"index_templates"`
+}
+
+// getOrCreateDefaultIndex ensures the default index exists.
+// If the index already exists, this is a no-op.
+func (c *OpenSearchClient) getOrCreateDefaultIndex(ctx context.Context) error {
+	// Check if the index exists
+	resp, err := c.client.Client.Do(
+		ctx,
+		opensearchapi.IndicesExistsReq{
+			Indices: []string{indexDefault},
+		},
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("error checking if index exists: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK {
+		// Index already exists
+		return nil
+	}
+
+	// Create the index (it will inherit settings from the template)
+	createResp, err := c.client.Client.Do(
+		ctx,
+		opensearchapi.IndicesCreateReq{
+			Index: indexDefault,
+		},
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("error creating default index: %w", err)
+	}
+	defer createResp.Body.Close()
+
+	if createResp.StatusCode != http.StatusOK && createResp.StatusCode != http.StatusCreated {
+		bodyBytes, _ := io.ReadAll(createResp.Body)
+		return fmt.Errorf("create default index request failed with status %d: %s", createResp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
 }
