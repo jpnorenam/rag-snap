@@ -42,27 +42,9 @@ type headerTransport struct {
 func Client(baseUrl string, init bool) error {
 	fmt.Printf("Using opensearch cluster at %v\n", baseUrl)
 
-	if err := handshake(baseUrl); err != nil {
-		return err
-	}
-
-	osClient, err := newOpenSearchClient(baseUrl)
+	client, err := newClient(baseUrl)
 	if err != nil {
-		return fmt.Errorf("error creating OpenSearch client: %v", err)
-	}
-
-	if err := checkServer(osClient); err != nil {
 		return err
-	}
-
-	opensearchUsername, _ := os.LookupEnv(envOpenSearchUsername)
-	opensearchPassword, _ := os.LookupEnv(envOpenSearchPassword)
-
-	client := &OpenSearchClient{
-		client:   osClient,
-		username: opensearchUsername,
-		password: opensearchPassword,
-		url:      baseUrl,
 	}
 
 	if init {
@@ -75,23 +57,69 @@ func Client(baseUrl string, init bool) error {
 	return nil
 }
 
+func ListIndexes(baseUrl string) ([]IndexInfo, error) {
+	client, err := newClient(baseUrl)
+	if err != nil {
+		return nil, err
+	}
+
+	ctx := context.Background()
+	return client.catIndexes(ctx)
+}
+
+func CreateIndex(baseUrl string, indexName string) error {
+	client, err := newClient(baseUrl)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	return client.getOrCreateIndex(ctx, indexName)
+}
+
+// newClient creates and validates an OpenSearch client connection.
+func newClient(baseUrl string) (*OpenSearchClient, error) {
+	if err := handshake(baseUrl); err != nil {
+		return nil, err
+	}
+
+	osClient, err := newOpenSearchClient(baseUrl)
+	if err != nil {
+		return nil, fmt.Errorf("error creating OpenSearch client: %v", err)
+	}
+
+	if err := checkServer(osClient); err != nil {
+		return nil, err
+	}
+
+	opensearchUsername, _ := os.LookupEnv(envOpenSearchUsername)
+	opensearchPassword, _ := os.LookupEnv(envOpenSearchPassword)
+
+	return &OpenSearchClient{
+		client:   osClient,
+		username: opensearchUsername,
+		password: opensearchPassword,
+		url:      baseUrl,
+	}, nil
+}
+
 // Init initializes the OpenSearch client by setting up models and pipelines.
 // It creates or retrieves the model group, deploys models, and creates pipelines.
 func (c *OpenSearchClient) Init(ctx context.Context) error {
 	// Get or create the model group
 	stopProgress := common.StartProgressSpinner("Creating model group")
-	defer stopProgress()
 	modelGroupID, err := c.getOrCreateModelGroup(ctx)
 	if err != nil {
+		stopProgress()
 		return fmt.Errorf("error setting up model group: %w", err)
 	}
 	stopProgress()
 
 	// Register and deploy the sentence transformer for embeddings
 	stopProgress = common.StartProgressSpinner("Setting up embedding model")
-	defer stopProgress()
 	embeddingModelID, err := c.registerAndDeploySentenceTransformer(ctx, modelGroupID, "", "")
 	if err != nil {
+		stopProgress()
 		return fmt.Errorf("error setting up embedding model: %w", err)
 	}
 	c.embeddingModelID = embeddingModelID
@@ -99,9 +127,9 @@ func (c *OpenSearchClient) Init(ctx context.Context) error {
 
 	// Register and deploy the cross-encoder for reranking
 	stopProgress = common.StartProgressSpinner("Setting up rerank model")
-	defer stopProgress()
 	rerankModelID, err := c.registerAndDeployCrossEncoder(ctx, modelGroupID, "", "")
 	if err != nil {
+		stopProgress()
 		return fmt.Errorf("error setting up rerank model: %w", err)
 	}
 	c.rerankModelID = rerankModelID
@@ -109,8 +137,8 @@ func (c *OpenSearchClient) Init(ctx context.Context) error {
 
 	// Create or update the ingest pipeline
 	stopProgress = common.StartProgressSpinner("Setting up ingest pipeline")
-	defer stopProgress()
 	if err := c.getOrCreateIngestPipeline(ctx, c.embeddingModelID); err != nil {
+		stopProgress()
 		return fmt.Errorf("error setting up ingest pipeline: %w", err)
 	}
 	c.ingestPipeline = ingestPipelineName
@@ -118,8 +146,8 @@ func (c *OpenSearchClient) Init(ctx context.Context) error {
 
 	// Create or update the search pipeline
 	stopProgress = common.StartProgressSpinner("Setting up search pipeline")
-	defer stopProgress()
 	if err := c.getOrCreateSearchPipeline(ctx, c.rerankModelID); err != nil {
+		stopProgress()
 		return fmt.Errorf("error setting up search pipeline: %w", err)
 	}
 	c.searchPipeline = searchPipelineName
@@ -127,16 +155,16 @@ func (c *OpenSearchClient) Init(ctx context.Context) error {
 
 	// Create or update the index template
 	stopProgress = common.StartProgressSpinner("Setting up index template")
-	defer stopProgress()
 	if err := c.getOrCreateIndexTemplate(ctx); err != nil {
+		stopProgress()
 		return fmt.Errorf("error setting up index template: %w", err)
 	}
 	stopProgress()
 
 	// Ensure the default index exists
 	stopProgress = common.StartProgressSpinner("Setting up default index")
-	defer stopProgress()
-	if err := c.getOrCreateDefaultIndex(ctx); err != nil {
+	if err := c.getOrCreateIndex(ctx, indexDefaultSubfix); err != nil {
+		stopProgress()
 		return fmt.Errorf("error setting up default index: %w", err)
 	}
 	stopProgress()
@@ -175,10 +203,11 @@ func newOpenSearchClient(baseUrl string) (*opensearchapi.Client, error) {
 	return client, nil
 }
 
-func handshake(baseUrl string) error {
+func handshake(baseURL string) error {
 	stopProgress := common.StartProgressSpinner("Connecting to OpenSearch")
+	defer stopProgress()
 
-	parsedURL, err := url.Parse(baseUrl)
+	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
 		return fmt.Errorf("invalid base URL: %w", err)
 	}
@@ -201,7 +230,6 @@ func handshake(baseUrl string) error {
 	}
 	conn.Close()
 
-	defer stopProgress()
 	return nil
 }
 

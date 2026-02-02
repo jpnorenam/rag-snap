@@ -15,7 +15,7 @@ const (
 	indexTemplateName  = "rag-snap-index-template"
 	indexPatterns      = "rag-snap-*"
 	indexAlias         = "rag-snap"
-	indexDefault       = "rag-snap-default"
+	indexDefaultSubfix = "default"
 	embeddingDimension = 768
 	efConstruction     = 256
 	bidirectionalLinks = 16
@@ -217,14 +217,58 @@ type indexTemplateResponse struct {
 	} `json:"index_templates"`
 }
 
-// getOrCreateDefaultIndex ensures the default index exists.
+// IndexInfo contains information about an index.
+type IndexInfo struct {
+	Name      string `json:"index"`
+	Health    string `json:"health"`
+	Status    string `json:"status"`
+	DocsCount string `json:"docs.count"`
+	StoreSize string `json:"store.size"`
+}
+
+// listIndexes retrieves all indexes matching the indexPatterns pattern.
+func (c *OpenSearchClient) catIndexes(ctx context.Context) ([]IndexInfo, error) {
+	resp, err := c.client.Client.Do(
+		ctx,
+		opensearchapi.CatIndicesReq{
+			Indices: []string{indexPatterns},
+			Params: opensearchapi.CatIndicesParams{
+				Pretty: true,
+			},
+		},
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("error listing indexes: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		// No indexes match the pattern
+		return []IndexInfo{}, nil
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("list indexes request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var indexes []IndexInfo
+	if err := json.NewDecoder(resp.Body).Decode(&indexes); err != nil {
+		return nil, fmt.Errorf("error decoding indexes response: %w", err)
+	}
+
+	return indexes, nil
+}
+
+// getOrCreateIndex ensures the index exists.
 // If the index already exists, this is a no-op.
-func (c *OpenSearchClient) getOrCreateDefaultIndex(ctx context.Context) error {
+func (c *OpenSearchClient) getOrCreateIndex(ctx context.Context, indexNameSubfix string) error {
 	// Check if the index exists
 	resp, err := c.client.Client.Do(
 		ctx,
 		opensearchapi.IndicesExistsReq{
-			Indices: []string{indexDefault},
+			Indices: []string{fmt.Sprintf("%s-%s", indexAlias, indexNameSubfix)},
 		},
 		nil,
 	)
@@ -242,18 +286,18 @@ func (c *OpenSearchClient) getOrCreateDefaultIndex(ctx context.Context) error {
 	createResp, err := c.client.Client.Do(
 		ctx,
 		opensearchapi.IndicesCreateReq{
-			Index: indexDefault,
+			Index: fmt.Sprintf("%s-%s", indexAlias, indexNameSubfix),
 		},
 		nil,
 	)
 	if err != nil {
-		return fmt.Errorf("error creating default index: %w", err)
+		return fmt.Errorf("error creating index: %w", err)
 	}
 	defer createResp.Body.Close()
 
 	if createResp.StatusCode != http.StatusOK && createResp.StatusCode != http.StatusCreated {
 		bodyBytes, _ := io.ReadAll(createResp.Body)
-		return fmt.Errorf("create default index request failed with status %d: %s", createResp.StatusCode, string(bodyBytes))
+		return fmt.Errorf("create index request failed with status %d: %s", createResp.StatusCode, string(bodyBytes))
 	}
 
 	return nil

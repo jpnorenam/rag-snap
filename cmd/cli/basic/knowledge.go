@@ -12,6 +12,14 @@ type knowledgeCommand struct {
 	*common.Context
 }
 
+func (cmd *knowledgeCommand) opensearchURL() (string, error) {
+	apiUrls, err := serverApiUrls(cmd.Context)
+	if err != nil {
+		return "", fmt.Errorf("getting server API URLs: %w", err)
+	}
+	return apiUrls[opensearch], nil
+}
+
 func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 	var cmd knowledgeCommand
 	cmd.Context = ctx
@@ -25,6 +33,7 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 
 	cobraCmd.AddCommand(
 		cmd.initCommand(),
+		cmd.listCommand(),
 		cmd.createCommand(),
 		cmd.ingestCommand(),
 		cmd.searchCommand(),
@@ -42,8 +51,8 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 		Use:   "init",
 		Short: "Initialize the knowledge base pipelines and index template",
 		Long:  "Create and initialize an OpenSearch pipelines and index template for storing knowledge base documents.",
-		Args:  cobra.ArbitraryArgs,
-		RunE: func(_ *cobra.Command, args []string) error {
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
 			if sentenceTransformer != "" {
 				fmt.Printf("  Sentence transformer model: %s\n", sentenceTransformer)
 			}
@@ -51,13 +60,12 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 				fmt.Printf("  Cross-encoder model: %s\n", crossEncoder)
 			}
 
-			apiUrls, err := serverApiUrls(cmd.Context)
+			url, err := cmd.opensearchURL()
 			if err != nil {
-				return fmt.Errorf("error getting server api urls: %v", err)
+				return err
 			}
-			knowledgeBaseUrl := apiUrls[opensearch]
 
-			return knowledge.Client(knowledgeBaseUrl, true)
+			return knowledge.Client(url, true)
 		},
 	}
 
@@ -65,6 +73,39 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 	cobraCmd.Flags().StringVarP(&crossEncoder, "cross-encoder", "c", "", "Cross-encoder model name")
 
 	return cobraCmd
+}
+
+func (cmd *knowledgeCommand) listCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List knowledge base indexes",
+		Long:  "List all OpenSearch indexes matching the knowledge base pattern.",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			url, err := cmd.opensearchURL()
+			if err != nil {
+				return err
+			}
+
+			indexes, err := knowledge.ListIndexes(url)
+			if err != nil {
+				return fmt.Errorf("listing indexes: %w", err)
+			}
+
+			if len(indexes) == 0 {
+				fmt.Println("No knowledge base indexes found.")
+				return nil
+			}
+
+			fmt.Printf("%-30s %-10s %-10s %-12s %-10s\n", "INDEX", "HEALTH", "STATUS", "DOCS", "SIZE")
+			for _, idx := range indexes {
+				fmt.Printf("%-30s %-10s %-10s %-12s %-10s\n",
+					idx.Name, idx.Health, idx.Status, idx.DocsCount, idx.StoreSize)
+			}
+
+			return nil
+		},
+	}
 }
 
 func (cmd *knowledgeCommand) createCommand() *cobra.Command {
@@ -75,7 +116,17 @@ func (cmd *knowledgeCommand) createCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			indexName := args[0]
-			fmt.Printf("[MOCK] Initializing knowledge base index: %s\n", indexName)
+
+			url, err := cmd.opensearchURL()
+			if err != nil {
+				return err
+			}
+
+			if err := knowledge.CreateIndex(url, indexName); err != nil {
+				return fmt.Errorf("creating index: %w", err)
+			}
+
+			fmt.Printf("Index '%s' created successfully.\n", indexName)
 			return nil
 		},
 	}
