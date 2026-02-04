@@ -3,20 +3,40 @@ base: core24
 version: &snap-version "v0.0.1"
 summary: RAG CLI application
 description: |
-  This snap configures OpenSearch snap models, pipelines, and indexes 
+  This snap configures OpenSearch snap models, pipelines, and indexes
   for a RAG implementation connected to the Inference snap.
 
 grade: devel
 confinement: strict
 
+platforms:
+  amd64:
+
+system-usernames:
+  snap_daemon: shared
+
 assumes:
   - snapd2.68 # for components support
+
+plugs:
+  shmem-perf-analyzer:
+    interface: shared-memory
+    private: true
+  sys-fs-cgroup-service:
+    interface: system-files
+    read:
+      - /sys/fs/cgroup/system.slice/snap.rag-tika.daemon.service
 
 compression: lzo
 
 environment:
   # Workaround until it gets set by snapd
   SNAP_COMPONENTS: /snap/$SNAP_INSTANCE_NAME/components/$SNAP_REVISION
+  SNAP_CURRENT: /snap/$SNAP_INSTANCE_NAME/current
+  SNAP_DATA_CURRENT: /var/snap/$SNAP_INSTANCE_NAME/current
+  JAVA_HOME: ${SNAP}/usr/lib/jvm/java-21-openjdk-amd64
+  PATH: ${JAVA_HOME}/jre/bin:$PATH
+  HOME: ${SNAP_COMMON}/home/snap_daemon
 
 parts:
   app-scripts:
@@ -29,6 +49,7 @@ parts:
     plugin: nil
     stage-packages:
       - pciutils
+      - util-linux
 
   go-cli:
     plugin: go
@@ -45,6 +66,66 @@ parts:
     stage-snaps:
       - yq # install hook
 
+  tika:
+    plugin: nil
+    build-packages:
+      - ca-certificates
+      - ca-certificates-java
+      - ssl-cert
+      - openssl
+      - openjdk-21-jre-headless
+      - gnupg2
+      - wget
+    stage-packages:
+      - openjdk-21-jdk-headless
+    override-build: |
+      apt-get update; apt-get upgrade -y; apt-get autoremove --purge -y; apt-get clean -y
+      update-ca-certificates -f
+
+      # setup trust store
+      trust_store="${CRAFT_PART_INSTALL}/etc/ssl/certs/java/"
+      mkdir -p "${trust_store}"
+      cp /etc/ssl/certs/java/cacerts "${trust_store}"
+
+      # download tika-server
+      TIKA_VERSION="3.1.0"
+
+      NEAREST_URL="https://dlcdn.apache.org/tika/${TIKA_VERSION}/tika-server-standard-${TIKA_VERSION}.jar"
+      ARCHIVE_URL="https://archive.apache.org/dist/tika/${TIKA_VERSION}/tika-server-standard-${TIKA_VERSION}.jar"
+      BACKUP_URL="https://downloads.apache.org/tika/${TIKA_VERSION}/tika-server-standard-${TIKA_VERSION}.jar"
+      DEFAULT_ASC_URL="https://downloads.apache.org/tika/${TIKA_VERSION}/tika-server-standard-${TIKA_VERSION}.jar.asc"
+      ARCHIVE_ASC_URL="https://archive.apache.org/dist/tika/${TIKA_VERSION}/tika-server-standard-${TIKA_VERSION}.jar.asc"
+
+      tika_jar="tika-server-standard-${TIKA_VERSION}.jar"
+
+      # import Apache Tika GPG keys
+      wget -t 10 --max-redirect 1 --retry-connrefused -qO- https://downloads.apache.org/tika/KEYS | gpg --import
+
+      # download JAR with fallback mirrors
+      wget -t 10 --max-redirect 1 --retry-connrefused "${NEAREST_URL}" -O "${tika_jar}" \
+        || rm -f "${tika_jar}"
+      [ -f "${tika_jar}" ] || wget "${ARCHIVE_URL}" -O "${tika_jar}" \
+        || rm -f "${tika_jar}"
+      [ -f "${tika_jar}" ] || wget "${BACKUP_URL}" -O "${tika_jar}" \
+        || rm -f "${tika_jar}"
+      [ -f "${tika_jar}" ] || exit 1
+
+      # download and verify signature
+      wget -t 10 --max-redirect 1 --retry-connrefused "${DEFAULT_ASC_URL}" -O "${tika_jar}.asc" \
+        || rm -f "${tika_jar}.asc"
+      [ -f "${tika_jar}.asc" ] || wget "${ARCHIVE_ASC_URL}" -O "${tika_jar}.asc" \
+        || rm -f "${tika_jar}.asc"
+      [ -f "${tika_jar}.asc" ] || exit 1
+      gpg --verify "${tika_jar}.asc" "${tika_jar}"
+
+      # install tika server
+      tika_dir="${CRAFT_PART_INSTALL}/opt/tika"
+      mkdir -p "${tika_dir}"
+      cp "${tika_jar}" "${tika_dir}/tika-server.jar"
+
+      # clean up
+      rm -f "${tika_jar}" "${tika_jar}.asc"
+
 apps:
   rag:
     command: bin/cli
@@ -54,3 +135,24 @@ apps:
       - network
     environment:
       RAG: $SNAP/bin/rag.sh
+
+  tika-server:
+    daemon: simple
+    install-mode: disable
+    command: bin/tika-start.sh
+    restart-condition: always
+    restart-delay: 20s
+    plugs:
+      - network
+      - network-bind
+      - hardware-observe
+      - log-observe
+      - mount-observe
+      - process-control
+      - shmem-perf-analyzer
+      - system-observe
+      - sys-fs-cgroup-service
+      - intel-qat
+    environment:
+      JAVA_OPTS: "-Xms512m -Xmx2g"
+      LD_LIBRARY_PATH: "${LD_LIBRARY_PATH}:${KNN_LIB_DIR}"

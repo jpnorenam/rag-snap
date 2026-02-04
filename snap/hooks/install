@@ -11,10 +11,14 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 # Set generic configurations
 #
 
-rag set --package chat.http.port="8324"
-rag set --package chat.http.host="127.0.0.1"
-rag set --package knowledge.http.port="9200"
-rag set --package knowledge.http.host="127.0.0.1"
-rag set --package knowledge.username="admin"
-rag set --package knowledge.password="admin"
-# rag set --package verbose="false"
+# sudo rag set --package chat.http.path="v1"
+# sudo rag set --package chat.http.port="8324"
+# sudo rag set --package chat.http.host="127.0.0.1"
+# sudo rag set --package knowledge.http.port="9200"
+# sudo rag set --package knowledge.http.host="127.0.0.1"
+# sudo rag set --package knowledge.username="admin"
+# sudo rag set --package knowledge.password="admin"
+# sudo rag set --package verbose="false"
+# 
+# export OPENSEARCH_USERNAME="admin"
+# export OPENSEARCH_PASSWORD="admin"
