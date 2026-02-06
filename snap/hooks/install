@@ -16,9 +16,12 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 # sudo rag set --package chat.http.host="127.0.0.1"
 # sudo rag set --package knowledge.http.port="9200"
 # sudo rag set --package knowledge.http.host="127.0.0.1"
-# sudo rag set --package knowledge.username="admin"
-# sudo rag set --package knowledge.password="admin"
+# sudo rag set --package tika.http.path="tika"
+# sudo rag set --package tika.http.port="9998"
+# sudo rag set --package tika.http.host="127.0.0.1"
 # sudo rag set --package verbose="false"
 # 
 # export OPENSEARCH_USERNAME="admin"
 # export OPENSEARCH_PASSWORD="admin"
+# 
+# sudo snap start rag.tika-server

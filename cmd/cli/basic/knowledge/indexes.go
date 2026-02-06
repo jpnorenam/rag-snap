@@ -13,8 +13,8 @@ import (
 
 const (
 	indexTemplateName  = "rag-snap-index-template"
-	indexPatterns      = "rag-snap-*"
-	indexAlias         = "rag-snap"
+	indexPatterns      = "rag-snap-context-*"
+	indexAlias         = "rag-snap-context"
 	indexDefaultSubfix = "default"
 	embeddingDimension = 768
 	efConstruction     = 256

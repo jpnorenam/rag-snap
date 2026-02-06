@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# Delete all ML models from an OpenSearch cluster
+# Usage: ./delete_ml_models.sh <opensearch_url> [username] [password]
+
+OPENSEARCH_URL="${1:-https://localhost:9200}"
+USERNAME="${2:-admin}"
+PASSWORD="${3:-admin}"
+
+CURL_OPTS="-s -k -u ${USERNAME}:${PASSWORD}"
+
+echo "Fetching all ML models from ${OPENSEARCH_URL}..."
+
+# Get all model IDs
+MODEL_IDS=$(curl ${CURL_OPTS} -X POST "${OPENSEARCH_URL}/_plugins/_ml/models/_search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": { "match_all": {} },
+    "size": 10000,
+    "_source": ["_id"]
+  }' | grep -o '"_id":"[^"]*"' | sed 's/"_id":"//g' | sed 's/"//g')
+
+if [ -z "$MODEL_IDS" ]; then
+  echo "No models found."
+  exit 0
+fi
+
+echo "Found models:"
+echo "$MODEL_IDS"
+echo ""
+
+# Undeploy and delete each model
+for MODEL_ID in $MODEL_IDS; do
+  echo "--- Processing model: ${MODEL_ID} ---"
+
+  # Undeploy the model first (ignore errors if not deployed)
+  echo "  Undeploying..."
+  curl ${CURL_OPTS} -X POST "${OPENSEARCH_URL}/_plugins/_ml/models/${MODEL_ID}/_undeploy" \
+    -H "Content-Type: application/json" 2>/dev/null
+  echo ""
+
+  # Wait briefly for undeploy to complete
+  sleep 2
+
+  # Delete the model
+  echo "  Deleting..."
+  RESPONSE=$(curl ${CURL_OPTS} -X DELETE "${OPENSEARCH_URL}/_plugins/_ml/models/${MODEL_ID}" \
+    -H "Content-Type: application/json")
+  echo "  Response: ${RESPONSE}"
+  echo ""
+done
+
+echo "Done. All models processed."

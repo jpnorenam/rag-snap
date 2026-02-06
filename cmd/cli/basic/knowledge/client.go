@@ -169,6 +169,14 @@ func (c *OpenSearchClient) Init(ctx context.Context) error {
 	}
 	stopProgress()
 
+	// Ensure the sources metadata index exists
+	stopProgress = common.StartProgressSpinner("Setting up sources metadata index")
+	if err := c.getOrCreateSourcesIndex(ctx); err != nil {
+		stopProgress()
+		return fmt.Errorf("error setting up sources metadata index: %w", err)
+	}
+	stopProgress()
+
 	return nil
 }
 

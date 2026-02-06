@@ -2,10 +2,18 @@ package basic
 
 import (
 	"fmt"
+	"path/filepath"
+	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/processing"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/spf13/cobra"
+)
+
+const (
+	// dateFormat matches the OpenSearch index mapping format.
+	knowledgeDateFormat = "2006-01-02 15:04:05"
 )
 
 type knowledgeCommand struct {
@@ -30,6 +38,8 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 		Long:    "Manage the OpenSearch knowledge base for RAG.\nSupports initializing pipelines, creating indices, ingesting documents, searching, and removing documents.",
 		GroupID: groupID,
 	}
+
+	addDebugFlags(cobraCmd, ctx)
 
 	cobraCmd.AddCommand(
 		cmd.initCommand(),
@@ -76,15 +86,42 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 }
 
 func (cmd *knowledgeCommand) listCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "list",
-		Short: "List knowledge base indexes",
-		Long:  "List all OpenSearch indexes matching the knowledge base pattern.",
-		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
+	var showSources bool
+
+	cobraCmd := &cobra.Command{
+		Use:   "list [index_name]",
+		Short: "List knowledge base indexes or sources",
+		Long:  "List all OpenSearch indexes matching the knowledge base pattern.\nUse --sources to list ingested source documents instead.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
 			url, err := cmd.opensearchURL()
 			if err != nil {
 				return err
+			}
+
+			if showSources {
+				var indexFilter string
+				if len(args) > 0 {
+					indexFilter = args[0]
+				}
+
+				sources, err := knowledge.ListSourceMetadata(url, indexFilter)
+				if err != nil {
+					return fmt.Errorf("listing sources: %w", err)
+				}
+
+				if len(sources) == 0 {
+					fmt.Println("No ingested sources found.")
+					return nil
+				}
+
+				fmt.Printf("%-20s %-30s %-12s %-8s %-20s\n", "SOURCE ID", "FILE NAME", "STATUS", "CHUNKS", "INGESTED AT")
+				for _, s := range sources {
+					fmt.Printf("%-20s %-30s %-12s %-8d %-20s\n",
+						s.SourceID, s.FileName, s.Status, s.ChunkCount, s.IngestedAt)
+				}
+
+				return nil
 			}
 
 			indexes, err := knowledge.ListIndexes(url)
@@ -106,6 +143,10 @@ func (cmd *knowledgeCommand) listCommand() *cobra.Command {
 			return nil
 		},
 	}
+
+	cobraCmd.Flags().BoolVarP(&showSources, "sources", "s", false, "List ingested source documents instead of indexes")
+
+	return cobraCmd
 }
 
 func (cmd *knowledgeCommand) createCommand() *cobra.Command {
@@ -134,17 +175,81 @@ func (cmd *knowledgeCommand) createCommand() *cobra.Command {
 
 func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "ingest <index_name> <file_path> <metadata_id>",
+		Use:   "ingest <index_name> <file_path> <source_id>",
 		Short: "Ingest a document into the knowledge base",
-		Long:  "Ingest a document from the specified file path into the OpenSearch index with the given metadata ID.",
+		Long:  "Ingest a document from the specified file path into the OpenSearch index with the given source ID.",
 		Args:  cobra.ExactArgs(3),
 		RunE: func(_ *cobra.Command, args []string) error {
 			indexName := args[0]
 			filePath := args[1]
-			metadataID := args[2]
-			fmt.Printf("[MOCK] Ingesting document into index: %s\n", indexName)
-			fmt.Printf("  File: %s\n", filePath)
-			fmt.Printf("  Metadata ID: %s\n", metadataID)
+			sourceID := args[2]
+
+			apiUrls, err := serverApiUrls(cmd.Context)
+			if err != nil {
+				return fmt.Errorf("getting server API URLs: %w", err)
+			}
+
+			result, err := processing.Ingest(apiUrls[tika], filePath, sourceID)
+			if err != nil {
+				return fmt.Errorf("ingesting document: %w", err)
+			}
+
+			// Build source metadata with status=processing
+			now := time.Now().UTC().Format(knowledgeDateFormat)
+			meta := knowledge.SourceMetadata{
+				SourceID:      sourceID,
+				FileName:      filepath.Base(filePath),
+				FilePath:      filePath,
+				Checksum:      result.Checksum,
+				IndexName:     indexName,
+				ChunkCount:    len(result.Chunks),
+				ChunkSize:     processing.DefaultChunkSize,
+				ChunkOverlap:  processing.DefaultChunkOverlap,
+				ContentLength: result.ContentLength,
+				Status:        knowledge.StatusProcessing,
+				IngestedAt:    now,
+				UpdatedAt:     now,
+			}
+			if result.TikaMetadata != nil {
+				meta.ContentType = result.TikaMetadata.ContentType
+				meta.Title = result.TikaMetadata.Title
+				meta.Author = result.TikaMetadata.Author
+				meta.Language = result.TikaMetadata.Language
+			}
+
+			// Write metadata BEFORE bulk indexing
+			if err := knowledge.IndexSourceMetadata(apiUrls[opensearch], meta); err != nil {
+				return fmt.Errorf("writing source metadata: %w", err)
+			}
+
+			// Convert chunks to documents and bulk index
+			docs := make([]knowledge.Document, len(result.Chunks))
+			for i, c := range result.Chunks {
+				docs[i] = knowledge.Document{
+					Content:   c.Content,
+					SourceID:  c.SourceID,
+					CreatedAt: c.CreatedAt,
+				}
+			}
+
+			bulkResult, err := knowledge.BulkIndex(apiUrls[opensearch], indexName, docs)
+			if err != nil {
+				_ = knowledge.UpdateSourceStatus(apiUrls[opensearch], sourceID, knowledge.StatusFailed)
+				return fmt.Errorf("indexing chunks: %w", err)
+			}
+
+			// Update metadata status to completed
+			// Todo validate bulkResult errors == 0?
+			if err := knowledge.UpdateSourceStatus(apiUrls[opensearch], sourceID, knowledge.StatusCompleted); err != nil {
+				return fmt.Errorf("updating source status: %w", err)
+			}
+
+			fmt.Printf("Ingested %d/%d chunks into index '%s'\n",
+				bulkResult.Indexed, bulkResult.Total, indexName)
+			if bulkResult.Errors > 0 {
+				fmt.Printf("  Errors: %d\n", bulkResult.Errors)
+			}
+
 			return nil
 		},
 	}
@@ -168,15 +273,38 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 
 func (cmd *knowledgeCommand) forgetCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:   "forget <index_name> <metadata_id>",
-		Short: "Remove documents from the knowledge base",
-		Long:  "Remove all documents with the specified metadata ID from the OpenSearch index.",
+		Use:   "forget <index_name> <source_id>",
+		Short: "Remove a source and its chunks from the knowledge base",
+		Long:  "Remove all chunks with the specified source ID from the OpenSearch index and delete the source metadata record.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			indexName := args[0]
-			metadataID := args[1]
-			fmt.Printf("[MOCK] Forgetting documents from index: %s\n", indexName)
-			fmt.Printf("  Metadata ID: %s\n", metadataID)
+			sourceID := args[1]
+
+			url, err := cmd.opensearchURL()
+			if err != nil {
+				return err
+			}
+
+			// Verify source exists
+			if _, err := knowledge.GetSourceMetadata(url, sourceID); err != nil {
+				return fmt.Errorf("source not found: %w", err)
+			}
+
+			// Delete chunks from the KNN index
+			deleted, err := knowledge.DeleteChunksBySourceID(url, indexName, sourceID)
+			if err != nil {
+				return fmt.Errorf("deleting chunks: %w", err)
+			}
+
+			// Delete the metadata record
+			if err := knowledge.DeleteSourceMetadata(url, sourceID); err != nil {
+				return fmt.Errorf("deleting source metadata: %w", err)
+			}
+
+			fmt.Printf("Deleted %d chunks and metadata for source '%s' from index '%s'\n",
+				deleted, sourceID, indexName)
+
 			return nil
 		},
 	}

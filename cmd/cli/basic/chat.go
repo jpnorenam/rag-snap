@@ -26,6 +26,8 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 		RunE:              cmd.run,
 	}
 
+	addDebugFlags(cobraCmd, ctx)
+
 	return cobraCmd
 }
 
