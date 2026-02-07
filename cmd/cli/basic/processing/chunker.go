@@ -77,7 +77,7 @@ func recursiveSplit(text string, maxSize int) []string {
 
 	for _, sep := range separators {
 		parts := strings.SplitAfter(text, sep)
-		if len(parts) > 1 {
+		if len(parts) > 1 && len(parts[0]) < len(text) {
 			return mergeParts(parts, maxSize)
 		}
 	}

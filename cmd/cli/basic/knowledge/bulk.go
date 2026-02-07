@@ -28,27 +28,19 @@ type BulkResult struct {
 
 // BulkIndex indexes documents into the specified OpenSearch index
 // using the bulk API with the ingest pipeline for embedding generation.
-func BulkIndex(baseUrl, indexName string, documents []Document) (*BulkResult, error) {
+func (c *OpenSearchClient) BulkIndex(ctx context.Context, indexName string, documents []Document) (*BulkResult, error) {
 	stopProgress := common.StartProgressSpinner(fmt.Sprintf("Indexing %d chunks", len(documents)))
 	defer stopProgress()
 
-	client, err := newClient(baseUrl)
-	if err != nil {
-		return nil, err
-	}
-
-	ctx := context.Background()
-	return client.bulkIndex(ctx, indexName, documents)
+	return c.bulkIndex(ctx, indexName, documents)
 }
 
 func (c *OpenSearchClient) bulkIndex(ctx context.Context, indexName string, documents []Document) (*BulkResult, error) {
-	fullName := fmt.Sprintf("%s-%s", indexAlias, indexName)
-
 	var buf bytes.Buffer
 	for _, doc := range documents {
 		action := map[string]any{
 			"index": map[string]any{
-				"_index": fullName,
+				"_index": indexName,
 			},
 		}
 		actionJSON, err := json.Marshal(action)

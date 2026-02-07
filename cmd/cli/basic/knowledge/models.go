@@ -11,10 +11,10 @@ import (
 )
 
 const (
-	defaultSentenceTransformerName    = "huggingface/sentence-transformers/msmarco-distilbert-base-tas-b"
+	DefaultSentenceTransformerName    = "huggingface/sentence-transformers/msmarco-distilbert-base-tas-b"
 	defaultSentenceTransformerVersion = "1.0.2"
 
-	defaultCrossEncoderName    = "huggingface/cross-encoders/ms-marco-MiniLM-L-12-v2"
+	DefaultCrossEncoderName    = "huggingface/cross-encoders/ms-marco-MiniLM-L-12-v2"
 	defaultCrossEncoderVersion = "1.0.2"
 
 	modelGroupName = "rag-snap-models"
@@ -160,7 +160,7 @@ func (c *OpenSearchClient) registerAndDeploySentenceTransformer(
 	modelVersion string,
 ) (string, error) {
 	if modelName == "" {
-		modelName = defaultSentenceTransformerName
+		modelName = DefaultSentenceTransformerName
 	}
 	if modelVersion == "" {
 		modelVersion = defaultSentenceTransformerVersion
@@ -226,7 +226,7 @@ func (c *OpenSearchClient) registerAndDeployCrossEncoder(
 	modelVersion string,
 ) (string, error) {
 	if modelName == "" {
-		modelName = defaultCrossEncoderName
+		modelName = DefaultCrossEncoderName
 	}
 	if modelVersion == "" {
 		modelVersion = defaultCrossEncoderVersion

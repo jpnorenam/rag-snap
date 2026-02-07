@@ -21,7 +21,7 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 # sudo rag set --package tika.http.host="127.0.0.1"
 # sudo rag set --package verbose="false"
 # 
-# export OPENSEARCH_USERNAME="admin"
-# export OPENSEARCH_PASSWORD="admin"
+export OPENSEARCH_USERNAME="admin"
+export OPENSEARCH_PASSWORD="admin"
 # 
 # sudo snap start rag.tika-server

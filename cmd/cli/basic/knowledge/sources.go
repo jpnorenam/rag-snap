@@ -19,8 +19,8 @@ const (
 	StatusCompleted  = "completed"
 	StatusFailed     = "failed"
 
-	// sourcesDateFormat matches the OpenSearch date mapping format.
-	sourcesDateFormat = "2006-01-02 15:04:05"
+	// DateFormat matches the OpenSearch date mapping format.
+	DateFormat = "2006-01-02 15:04:05"
 )
 
 // SourceMetadata tracks a single ingested source document.
@@ -44,13 +44,8 @@ type SourceMetadata struct {
 }
 
 // CreateSourcesIndex creates the sources metadata index if it does not exist.
-func CreateSourcesIndex(baseUrl string) error {
-	client, err := newClient(baseUrl)
-	if err != nil {
-		return err
-	}
-	ctx := context.Background()
-	return client.getOrCreateSourcesIndex(ctx)
+func (c *OpenSearchClient) CreateSourcesIndex(ctx context.Context) error {
+	return c.getOrCreateSourcesIndex(ctx)
 }
 
 // getOrCreateSourcesIndex checks if the sources metadata index exists and creates it if not.
@@ -136,13 +131,8 @@ func buildSourcesIndexBody() map[string]any {
 }
 
 // IndexSourceMetadata indexes (upserts) a source metadata document.
-func IndexSourceMetadata(baseUrl string, meta SourceMetadata) error {
-	client, err := newClient(baseUrl)
-	if err != nil {
-		return err
-	}
-	ctx := context.Background()
-	return client.indexSourceMetadata(ctx, meta)
+func (c *OpenSearchClient) IndexSourceMetadata(ctx context.Context, meta SourceMetadata) error {
+	return c.indexSourceMetadata(ctx, meta)
 }
 
 func (c *OpenSearchClient) indexSourceMetadata(ctx context.Context, meta SourceMetadata) error {
@@ -172,13 +162,8 @@ func (c *OpenSearchClient) indexSourceMetadata(ctx context.Context, meta SourceM
 }
 
 // UpdateSourceStatus updates the status and updated_at fields of a source metadata document.
-func UpdateSourceStatus(baseUrl string, sourceID, status string) error {
-	client, err := newClient(baseUrl)
-	if err != nil {
-		return err
-	}
-	ctx := context.Background()
-	return client.updateSourceStatus(ctx, sourceID, status)
+func (c *OpenSearchClient) UpdateSourceStatus(ctx context.Context, sourceID, status string) error {
+	return c.updateSourceStatus(ctx, sourceID, status)
 }
 
 func (c *OpenSearchClient) updateSourceStatus(ctx context.Context, sourceID, status string) error {
@@ -215,13 +200,8 @@ func (c *OpenSearchClient) updateSourceStatus(ctx context.Context, sourceID, sta
 }
 
 // GetSourceMetadata retrieves a single source metadata document by ID.
-func GetSourceMetadata(baseUrl string, sourceID string) (*SourceMetadata, error) {
-	client, err := newClient(baseUrl)
-	if err != nil {
-		return nil, err
-	}
-	ctx := context.Background()
-	return client.getSourceMetadata(ctx, sourceID)
+func (c *OpenSearchClient) GetSourceMetadata(ctx context.Context, sourceID string) (*SourceMetadata, error) {
+	return c.getSourceMetadata(ctx, sourceID)
 }
 
 func (c *OpenSearchClient) getSourceMetadata(ctx context.Context, sourceID string) (*SourceMetadata, error) {
@@ -257,13 +237,8 @@ func (c *OpenSearchClient) getSourceMetadata(ctx context.Context, sourceID strin
 }
 
 // ListSourceMetadata lists all source metadata documents, optionally filtered by index name.
-func ListSourceMetadata(baseUrl string, indexName string) ([]SourceMetadata, error) {
-	client, err := newClient(baseUrl)
-	if err != nil {
-		return nil, err
-	}
-	ctx := context.Background()
-	return client.listSourceMetadata(ctx, indexName)
+func (c *OpenSearchClient) ListSourceMetadata(ctx context.Context, indexName string) ([]SourceMetadata, error) {
+	return c.listSourceMetadata(ctx, indexName)
 }
 
 func (c *OpenSearchClient) listSourceMetadata(ctx context.Context, indexName string) ([]SourceMetadata, error) {
@@ -328,13 +303,8 @@ func (c *OpenSearchClient) listSourceMetadata(ctx context.Context, indexName str
 }
 
 // DeleteSourceMetadata deletes a source metadata document by ID.
-func DeleteSourceMetadata(baseUrl string, sourceID string) error {
-	client, err := newClient(baseUrl)
-	if err != nil {
-		return err
-	}
-	ctx := context.Background()
-	return client.deleteSourceMetadata(ctx, sourceID)
+func (c *OpenSearchClient) DeleteSourceMetadata(ctx context.Context, sourceID string) error {
+	return c.deleteSourceMetadata(ctx, sourceID)
 }
 
 func (c *OpenSearchClient) deleteSourceMetadata(ctx context.Context, sourceID string) error {
@@ -360,18 +330,11 @@ func (c *OpenSearchClient) deleteSourceMetadata(ctx context.Context, sourceID st
 
 // DeleteChunksBySourceID deletes all chunks with the given source_id from a KNN index.
 // Returns the number of deleted documents.
-func DeleteChunksBySourceID(baseUrl string, indexName string, sourceID string) (int, error) {
-	client, err := newClient(baseUrl)
-	if err != nil {
-		return 0, err
-	}
-	ctx := context.Background()
-	return client.deleteChunksBySourceID(ctx, indexName, sourceID)
+func (c *OpenSearchClient) DeleteChunksBySourceID(ctx context.Context, indexName string, sourceID string) (int, error) {
+	return c.deleteChunksBySourceID(ctx, indexName, sourceID)
 }
 
 func (c *OpenSearchClient) deleteChunksBySourceID(ctx context.Context, indexName string, sourceID string) (int, error) {
-	fullName := fmt.Sprintf("%s-%s", indexAlias, indexName)
-
 	query := map[string]any{
 		"query": map[string]any{
 			"term": map[string]any{
@@ -385,7 +348,7 @@ func (c *OpenSearchClient) deleteChunksBySourceID(ctx context.Context, indexName
 		return 0, fmt.Errorf("error marshaling delete query: %w", err)
 	}
 
-	path := fmt.Sprintf("/%s/_delete_by_query", fullName)
+	path := fmt.Sprintf("/%s/_delete_by_query", indexName)
 	req, err := c.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return 0, fmt.Errorf("error creating request: %w", err)
@@ -414,5 +377,5 @@ func (c *OpenSearchClient) deleteChunksBySourceID(ctx context.Context, indexName
 
 // now returns the current UTC time formatted for OpenSearch date fields.
 func now() string {
-	return time.Now().UTC().Format(sourcesDateFormat)
+	return time.Now().UTC().Format(DateFormat)
 }

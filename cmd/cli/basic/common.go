@@ -5,6 +5,7 @@ import (
 	"net/url"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
+	"github.com/jpnorenam/rag-snap/cmd/cli/config"
 	"github.com/jpnorenam/rag-snap/pkg/storage"
 	"github.com/spf13/cobra"
 )
@@ -41,13 +42,16 @@ func Group(title string) *cobra.Group {
 	}
 }
 
-// getConfigValue retrieves a single configuration value by key.
-func getConfigValue(ctx *common.Context, key string) (any, error) {
-	configMap, err := ctx.Config.Get(key)
+// getConfigString retrieves a single configuration value as a non-empty string.
+func getConfigString(ctx *common.Context, key string) (string, error) {
+	val, err := config.GetString(ctx.Config, key)
 	if err != nil {
-		return nil, fmt.Errorf("error getting %q: %v", key, err)
+		return "", err
 	}
-	return configMap[key], nil
+	if val == "" {
+		return "", fmt.Errorf("config key %q is not set", key)
+	}
+	return val, nil
 }
 
 // buildServiceURL constructs an HTTP URL from host, port, and optional path.
@@ -74,7 +78,10 @@ func addDebugFlags(cobraCmd *cobra.Command, ctx *common.Context) {
 	var configFile string
 
 	cobraCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug mode (requires --config)")
+	cobraCmd.PersistentFlags().MarkHidden("debug") // Todo: this isn't working, debug flag still shows up in help.
+
 	cobraCmd.PersistentFlags().StringVar(&configFile, "config", "", "Path to config file (required with --debug)")
+	cobraCmd.PersistentFlags().MarkHidden("config") // Todo: this isn't working, debug flag still shows up in help.
 
 	original := cobraCmd.PersistentPreRunE
 	cobraCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
@@ -115,46 +122,37 @@ func addDebugFlags(cobraCmd *cobra.Command, ctx *common.Context) {
 }
 
 func serverApiUrls(ctx *common.Context) (map[string]string, error) {
-	if ctx.Debug {
-		return serverApiUrlsFromFile(ctx)
+	openAiHost, err := getConfigString(ctx, confOpenAiHttpHost)
+	if err != nil {
+		return nil, err
 	}
-
-	openAiBasePath, err := getConfigValue(ctx, confOpenAiHttpPath)
+	openAiPort, err := getConfigString(ctx, confOpenAiHttpPort)
+	if err != nil {
+		return nil, err
+	}
+	openAiBasePath, err := getConfigString(ctx, confOpenAiHttpPath)
 	if err != nil {
 		return nil, err
 	}
 
-	openAiHost, err := getConfigValue(ctx, confOpenAiHttpHost)
+	openSearchHost, err := getConfigString(ctx, confOpenSearchHttpHost)
+	if err != nil {
+		return nil, err
+	}
+	openSearchPort, err := getConfigString(ctx, confOpenSearchHttpPort)
 	if err != nil {
 		return nil, err
 	}
 
-	openAiPort, err := getConfigValue(ctx, confOpenAiHttpPort)
+	tikaHost, err := getConfigString(ctx, confTikaHttpHost)
 	if err != nil {
 		return nil, err
 	}
-
-	openSearchHost, err := getConfigValue(ctx, confOpenSearchHttpHost)
+	tikaPort, err := getConfigString(ctx, confTikaHttpPort)
 	if err != nil {
 		return nil, err
 	}
-
-	openSearchPort, err := getConfigValue(ctx, confOpenSearchHttpPort)
-	if err != nil {
-		return nil, err
-	}
-
-	tikaHost, err := getConfigValue(ctx, confTikaHttpHost)
-	if err != nil {
-		return nil, err
-	}
-
-	tikaPort, err := getConfigValue(ctx, confTikaHttpPort)
-	if err != nil {
-		return nil, err
-	}
-
-	tikeBasePath, err := getConfigValue(ctx, confTikaHttpPath)
+	tikaBasePath, err := getConfigString(ctx, confTikaHttpPath)
 	if err != nil {
 		return nil, err
 	}
@@ -162,31 +160,6 @@ func serverApiUrls(ctx *common.Context) (map[string]string, error) {
 	return map[string]string{
 		openAi:     buildServiceURL(openAiHost, openAiPort, openAiBasePath, false),
 		opensearch: buildServiceURL(openSearchHost, openSearchPort, "", true),
-		tika:       buildServiceURL(tikaHost, tikaPort, tikeBasePath, false),
-	}, nil
-}
-
-// serverApiUrlsFromFile reads all config values at once from the debug config file.
-func serverApiUrlsFromFile(ctx *common.Context) (map[string]string, error) {
-	all, err := ctx.Config.GetAll()
-	if err != nil {
-		return nil, fmt.Errorf("reading debug config: %w", err)
-	}
-
-	required := []string{
-		confOpenAiHttpHost, confOpenAiHttpPort, confOpenAiHttpPath,
-		confOpenSearchHttpHost, confOpenSearchHttpPort,
-		confTikaHttpHost, confTikaHttpPort, confTikaHttpPath,
-	}
-	for _, key := range required {
-		if _, ok := all[key]; !ok {
-			return nil, fmt.Errorf("missing required key %q in config file", key)
-		}
-	}
-
-	return map[string]string{
-		openAi:     buildServiceURL(all[confOpenAiHttpHost], all[confOpenAiHttpPort], all[confOpenAiHttpPath], false),
-		opensearch: buildServiceURL(all[confOpenSearchHttpHost], all[confOpenSearchHttpPort], "", true),
-		tika:       buildServiceURL(all[confTikaHttpHost], all[confTikaHttpPort], all[confTikaHttpPath], false),
+		tika:       buildServiceURL(tikaHost, tikaPort, tikaBasePath, false),
 	}, nil
 }

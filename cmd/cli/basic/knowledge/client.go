@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
+	"github.com/jpnorenam/rag-snap/pkg/storage"
 	opensearch "github.com/opensearch-project/opensearch-go/v4"
 	opensearchapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 )
@@ -21,6 +22,9 @@ import (
 const (
 	envOpenSearchUsername = "OPENSEARCH_USERNAME"
 	envOpenSearchPassword = "OPENSEARCH_PASSWORD"
+
+	ConfEmbeddingModelID = "knowledge.model.embedding"
+	ConfRerankModelID    = "knowledge.model.rerank"
 )
 
 type OpenSearchClient struct {
@@ -39,163 +43,155 @@ type headerTransport struct {
 	transport http.RoundTripper
 }
 
-func Client(baseUrl string, init bool) error {
-	fmt.Printf("Using opensearch cluster at %v\n", baseUrl)
-
-	client, err := newClient(baseUrl)
-	if err != nil {
-		return err
+// InitPipelines initializes OpenSearch pipelines, models, indexes, and templates.
+// InitPipelines initializes OpenSearch pipelines, models, indexes, and templates.
+func (c *OpenSearchClient) InitPipelines(ctx context.Context, cfg storage.Config) error {
+	if err := c.Init(ctx, cfg); err != nil {
+		return fmt.Errorf("error initializing OpenSearch client: %w", err)
 	}
-
-	if init {
-		ctx := context.Background()
-		if err := client.Init(ctx); err != nil {
-			return fmt.Errorf("error initializing OpenSearch client: %v", err)
-		}
-	}
-
 	return nil
 }
 
-func ListIndexes(baseUrl string) ([]IndexInfo, error) {
-	client, err := newClient(baseUrl)
-	if err != nil {
-		return nil, err
-	}
-
-	ctx := context.Background()
-	return client.catIndexes(ctx)
+// ListIndexes retrieves all indexes matching the knowledge base pattern.
+func (c *OpenSearchClient) ListIndexes(ctx context.Context) ([]IndexInfo, error) {
+	return c.catIndexes(ctx)
 }
 
-func CreateIndex(baseUrl string, indexName string) error {
-	client, err := newClient(baseUrl)
-	if err != nil {
-		return err
-	}
-
-	ctx := context.Background()
-	return client.getOrCreateIndex(ctx, indexName)
+// CreateIndex ensures the named index exists.
+func (c *OpenSearchClient) CreateIndex(ctx context.Context, indexName string) error {
+	return c.getOrCreateIndex(ctx, indexName)
 }
 
-// newClient creates and validates an OpenSearch client connection.
-func newClient(baseUrl string) (*OpenSearchClient, error) {
+// NewClient creates and validates an OpenSearch client connection.
+func NewClient(baseUrl string) (*OpenSearchClient, error) {
 	if err := handshake(baseUrl); err != nil {
 		return nil, err
 	}
 
-	osClient, err := newOpenSearchClient(baseUrl)
+	username, found := os.LookupEnv(envOpenSearchUsername)
+	if !found {
+		return nil, fmt.Errorf("%q env var is not set", envOpenSearchUsername)
+	}
+	password, found := os.LookupEnv(envOpenSearchPassword)
+	if !found {
+		return nil, fmt.Errorf("%q env var is not set", envOpenSearchPassword)
+	}
+
+	osClient, err := newOpenSearchClient(baseUrl, username, password)
 	if err != nil {
-		return nil, fmt.Errorf("error creating OpenSearch client: %v", err)
+		return nil, fmt.Errorf("error creating OpenSearch client: %w", err)
 	}
 
 	if err := checkServer(osClient); err != nil {
 		return nil, err
 	}
 
-	opensearchUsername, _ := os.LookupEnv(envOpenSearchUsername)
-	opensearchPassword, _ := os.LookupEnv(envOpenSearchPassword)
-
 	return &OpenSearchClient{
 		client:   osClient,
-		username: opensearchUsername,
-		password: opensearchPassword,
+		username: username,
+		password: password,
 		url:      baseUrl,
 	}, nil
 }
 
+// withProgress runs fn while displaying a progress spinner with the given message.
+func withProgress(message string, fn func() error) error {
+	stop := common.StartProgressSpinner(message)
+	err := fn()
+	stop()
+	return err
+}
+
 // Init initializes the OpenSearch client by setting up models and pipelines.
 // It creates or retrieves the model group, deploys models, and creates pipelines.
-func (c *OpenSearchClient) Init(ctx context.Context) error {
+// The resolved model IDs are persisted to the snap config via cfg.
+func (c *OpenSearchClient) Init(ctx context.Context, cfg storage.Config) error {
 	// Get or create the model group
-	stopProgress := common.StartProgressSpinner("Creating model group")
-	modelGroupID, err := c.getOrCreateModelGroup(ctx)
-	if err != nil {
-		stopProgress()
+	var modelGroupID string
+	if err := withProgress("Creating model group", func() error {
+		var err error
+		modelGroupID, err = c.getOrCreateModelGroup(ctx)
+		return err
+	}); err != nil {
 		return fmt.Errorf("error setting up model group: %w", err)
 	}
-	stopProgress()
 
 	// Register and deploy the sentence transformer for embeddings
-	stopProgress = common.StartProgressSpinner("Setting up embedding model")
-	embeddingModelID, err := c.registerAndDeploySentenceTransformer(ctx, modelGroupID, "", "")
-	if err != nil {
-		stopProgress()
+	if err := withProgress("Setting up embedding model", func() error {
+		embeddingModelID, err := c.registerAndDeploySentenceTransformer(ctx, modelGroupID, "", "")
+		if err != nil {
+			return err
+		}
+		c.embeddingModelID = embeddingModelID
+		if cfg != nil {
+			return cfg.Set(ConfEmbeddingModelID, embeddingModelID, storage.PackageConfig)
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("error setting up embedding model: %w", err)
 	}
-	c.embeddingModelID = embeddingModelID
-	stopProgress()
 
 	// Register and deploy the cross-encoder for reranking
-	stopProgress = common.StartProgressSpinner("Setting up rerank model")
-	rerankModelID, err := c.registerAndDeployCrossEncoder(ctx, modelGroupID, "", "")
-	if err != nil {
-		stopProgress()
+	if err := withProgress("Setting up rerank model", func() error {
+		rerankModelID, err := c.registerAndDeployCrossEncoder(ctx, modelGroupID, "", "")
+		if err != nil {
+			return err
+		}
+		c.rerankModelID = rerankModelID
+		if cfg != nil {
+			return cfg.Set(ConfRerankModelID, rerankModelID, storage.PackageConfig)
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("error setting up rerank model: %w", err)
 	}
-	c.rerankModelID = rerankModelID
-	stopProgress()
 
 	// Create or update the ingest pipeline
-	stopProgress = common.StartProgressSpinner("Setting up ingest pipeline")
-	if err := c.getOrCreateIngestPipeline(ctx, c.embeddingModelID); err != nil {
-		stopProgress()
+	if err := withProgress("Setting up ingest pipeline", func() error {
+		return c.getOrCreateIngestPipeline(ctx, c.embeddingModelID)
+	}); err != nil {
 		return fmt.Errorf("error setting up ingest pipeline: %w", err)
 	}
 	c.ingestPipeline = ingestPipelineName
-	stopProgress()
 
 	// Create or update the search pipeline
-	stopProgress = common.StartProgressSpinner("Setting up search pipeline")
-	if err := c.getOrCreateSearchPipeline(ctx, c.rerankModelID); err != nil {
-		stopProgress()
+	if err := withProgress("Setting up search pipeline", func() error {
+		return c.getOrCreateSearchPipeline(ctx, c.rerankModelID)
+	}); err != nil {
 		return fmt.Errorf("error setting up search pipeline: %w", err)
 	}
 	c.searchPipeline = searchPipelineName
-	stopProgress()
 
 	// Create or update the index template
-	stopProgress = common.StartProgressSpinner("Setting up index template")
-	if err := c.getOrCreateIndexTemplate(ctx); err != nil {
-		stopProgress()
+	if err := withProgress("Setting up index template", func() error {
+		return c.getOrCreateIndexTemplate(ctx)
+	}); err != nil {
 		return fmt.Errorf("error setting up index template: %w", err)
 	}
-	stopProgress()
 
 	// Ensure the default index exists
-	stopProgress = common.StartProgressSpinner("Setting up default index")
-	if err := c.getOrCreateIndex(ctx, indexDefaultSubfix); err != nil {
-		stopProgress()
+	if err := withProgress("Setting up default index", func() error {
+		return c.getOrCreateIndex(ctx, indexDefaultSubfix)
+	}); err != nil {
 		return fmt.Errorf("error setting up default index: %w", err)
 	}
-	stopProgress()
 
 	// Ensure the sources metadata index exists
-	stopProgress = common.StartProgressSpinner("Setting up sources metadata index")
-	if err := c.getOrCreateSourcesIndex(ctx); err != nil {
-		stopProgress()
+	if err := withProgress("Setting up sources metadata index", func() error {
+		return c.getOrCreateSourcesIndex(ctx)
+	}); err != nil {
 		return fmt.Errorf("error setting up sources metadata index: %w", err)
 	}
-	stopProgress()
 
 	return nil
 }
 
-func newOpenSearchClient(baseUrl string) (*opensearchapi.Client, error) {
-
-	opensearchUsername, found := os.LookupEnv(envOpenSearchUsername)
-	if !found {
-		return nil, fmt.Errorf("%q env var is not set", envOpenSearchUsername)
-	}
-
-	opensearchPassword, found := os.LookupEnv(envOpenSearchPassword)
-	if !found {
-		return nil, fmt.Errorf("%q env var is not set", envOpenSearchPassword)
-	}
+func newOpenSearchClient(baseUrl, username, password string) (*opensearchapi.Client, error) {
 	client, err := opensearchapi.NewClient(opensearchapi.Config{
 		Client: opensearch.Config{
 			Addresses: []string{baseUrl},
-			Username:  opensearchUsername,
-			Password:  opensearchPassword,
+			Username:  username,
+			Password:  password,
 			Transport: &headerTransport{
 				transport: &http.Transport{
 					TLSClientConfig: &tls.Config{

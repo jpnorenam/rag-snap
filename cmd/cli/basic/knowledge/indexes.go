@@ -21,6 +21,26 @@ const (
 	bidirectionalLinks = 16
 )
 
+// FullIndexName returns the full index name for a given suffix.
+func FullIndexName(suffix string) string {
+	return fmt.Sprintf("%s-%s", indexAlias, suffix)
+}
+
+// KnowledgeBaseNameFromIndex extracts the knowledge base name from a full index name.
+// For example, "rag-snap-context-default" -> "default".
+func KnowledgeBaseNameFromIndex(indexName string) (string, error) {
+	prefix := indexAlias + "-"
+	if !bytes.HasPrefix([]byte(indexName), []byte(prefix)) {
+		return "", fmt.Errorf("index name %q does not start with expected prefix %q", indexName, prefix)
+	}
+	return indexName[len(prefix):], nil
+}
+
+// DefaultIndexName returns the full name of the default index.
+func DefaultIndexName() string {
+	return FullIndexName(indexDefaultSubfix)
+}
+
 // getOrCreateIndexTemplate checks if the index template exists and creates or updates it.
 func (c *OpenSearchClient) getOrCreateIndexTemplate(ctx context.Context) error {
 	template, err := c.getIndexTemplate(ctx)
@@ -263,12 +283,12 @@ func (c *OpenSearchClient) catIndexes(ctx context.Context) ([]IndexInfo, error) 
 
 // getOrCreateIndex ensures the index exists.
 // If the index already exists, this is a no-op.
-func (c *OpenSearchClient) getOrCreateIndex(ctx context.Context, indexNameSubfix string) error {
+func (c *OpenSearchClient) getOrCreateIndex(ctx context.Context, indexName string) error {
 	// Check if the index exists
 	resp, err := c.client.Client.Do(
 		ctx,
 		opensearchapi.IndicesExistsReq{
-			Indices: []string{fmt.Sprintf("%s-%s", indexAlias, indexNameSubfix)},
+			Indices: []string{indexName},
 		},
 		nil,
 	)
@@ -286,7 +306,7 @@ func (c *OpenSearchClient) getOrCreateIndex(ctx context.Context, indexNameSubfix
 	createResp, err := c.client.Client.Do(
 		ctx,
 		opensearchapi.IndicesCreateReq{
-			Index: fmt.Sprintf("%s-%s", indexAlias, indexNameSubfix),
+			Index: indexName,
 		},
 		nil,
 	)

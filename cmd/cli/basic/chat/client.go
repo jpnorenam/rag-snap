@@ -22,6 +22,21 @@ import (
 	"github.com/openai/openai-go/v3/packages/ssestream"
 )
 
+// FindModelName queries the OpenAI-compatible API for available models
+// and returns the first model name. Returns an error if the server is
+// unreachable or returns no models.
+func FindModelName(baseUrl string) (string, error) {
+	modelService := openai.NewModelService(option.WithBaseURL(baseUrl))
+	modelPage, err := modelService.List(context.Background())
+	if err != nil {
+		return "", err
+	}
+	if len(modelPage.Data) == 0 {
+		return "", fmt.Errorf("server returned no models")
+	}
+	return modelPage.Data[0].ID, nil
+}
+
 func Client(baseUrl string, modelName string, verbose bool) error {
 	fmt.Printf("Using inference server at %v\n", baseUrl)
 
@@ -61,7 +76,7 @@ func Client(baseUrl string, modelName string, verbose bool) error {
 		FuncFilterInputRune: filterInput,
 	})
 	if err != nil {
-		return fmt.Errorf("error initializing readline: %v", err)
+		return fmt.Errorf("error initializing readline: %w", err)
 	}
 	defer rl.Close()
 	//rl.CaptureExitSignal() // Should readline capture and handle the exit signal? - Can be used to interrupt the chat response stream.

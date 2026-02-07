@@ -43,8 +43,8 @@ curl -k -u admin:admin https://localhost:9200/_cat/nodes?v
 Increase the JVM heap size to fit the sentence embedding and cross-encoder models.
 ```bash
 # Todo: Which is the right way to this?
-echo '-Xms6g' | sudo tee /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
-echo '-Xmx6g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
+echo '-Xms4g' | sudo tee /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
+echo '-Xmx8g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
 
 sudo snap restart opensearch
 ```
@@ -52,6 +52,8 @@ sudo snap restart opensearch
 ### Installation
 
 ```bash
-sudo snap rag
-```
+## Once uploaded into snapstore
+# sudo snap rag
 
+sudo snap install --dangerous ./rag_*.snap
+```
