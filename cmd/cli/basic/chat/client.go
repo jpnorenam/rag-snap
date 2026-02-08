@@ -46,6 +46,15 @@ func Client(baseUrl string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 		return err
 	}
 
+	defaultKnowledgeBase, _ := knowledge.KnowledgeBaseNameFromIndex(knowledge.DefaultIndexName())
+
+	if knowledgeClient != nil {
+		fmt.Printf(
+			"Using the `%s` knowledge base at %v\n\t> Use /active-context to see other available knowledge bases\n\n",
+			defaultKnowledgeBase,
+			knowledgeClient.URL())
+	}
+
 	if modelName == "" {
 		var err error
 		modelName, err = findModelName(baseUrl, verbose)

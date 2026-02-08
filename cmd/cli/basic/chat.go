@@ -39,6 +39,7 @@ func (cmd *chatCommand) run(_ *cobra.Command, _ []string) error {
 	}
 
 	knowledgeClient, err := knowledge.NewClient(apiUrls[opensearch])
+
 	if err != nil {
 		if cmd.Verbose {
 			fmt.Printf("Knowledge base not available: %v\n", err)

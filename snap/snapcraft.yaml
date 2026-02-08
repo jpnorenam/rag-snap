@@ -133,6 +133,7 @@ apps:
     plugs:
       # To access server over network socket
       - network
+      - home
     environment:
       RAG: $SNAP/bin/rag.sh
 

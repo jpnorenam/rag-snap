@@ -38,6 +38,11 @@ type OpenSearchClient struct {
 	searchPipeline   string
 }
 
+// URL returns the OpenSearch server URL.
+func (c *OpenSearchClient) URL() string {
+	return c.url
+}
+
 // headerTransport wraps an http.RoundTripper and adds default headers to all requests.
 type headerTransport struct {
 	transport http.RoundTripper
