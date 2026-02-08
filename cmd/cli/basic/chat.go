@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +37,15 @@ func (cmd *chatCommand) run(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return fmt.Errorf("error getting server api urls: %w", err)
 	}
-	chatBaseUrl := apiUrls[openAi]
 
-	return chat.Client(chatBaseUrl, "", cmd.Verbose)
+	knowledgeClient, err := knowledge.NewClient(apiUrls[opensearch])
+	if err != nil {
+		if cmd.Verbose {
+			fmt.Printf("Knowledge base not available: %v\n", err)
+		}
+	}
+
+	embeddingModelID, _ := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
+
+	return chat.Client(apiUrls[openAi], knowledgeClient, embeddingModelID, "", cmd.Verbose)
 }

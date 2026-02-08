@@ -41,5 +41,5 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("the --base-url parameter is required")
 	}
 
-	return chat.Client(cmd.baseUrl, cmd.modelName, cmd.Verbose)
+	return chat.Client(cmd.baseUrl, nil, "", cmd.modelName, cmd.Verbose)
 }

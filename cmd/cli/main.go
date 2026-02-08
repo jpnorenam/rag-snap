@@ -59,8 +59,8 @@ func main() {
 	rootCmd.AddGroup(basic.Group("Basic Commands:"))
 	rootCmd.AddCommand(
 		basic.StatusCommand(ctx),
-		basic.ChatCommand(ctx),
-		basic.KnowledgeCommand(ctx),
+		basic.ChatCommand(ctx), 		// Todo: add an alias c
+		basic.KnowledgeCommand(ctx),	// Todo: add an alias k
 	)
 
 	rootCmd.AddGroup(config.Group("Configuration Commands:"))

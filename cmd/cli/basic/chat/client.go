@@ -16,6 +16,7 @@ import (
 
 	"github.com/chzyer/readline"
 	"github.com/fatih/color"
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -37,7 +38,7 @@ func FindModelName(baseUrl string) (string, error) {
 	return modelPage.Data[0].ID, nil
 }
 
-func Client(baseUrl string, modelName string, verbose bool) error {
+func Client(baseUrl string, knowledgeClient *knowledge.OpenSearchClient, embeddingModelID string, modelName string, verbose bool) error {
 	fmt.Printf("Using inference server at %v\n", baseUrl)
 
 	// Check if server is reachable
@@ -65,20 +66,28 @@ func Client(baseUrl string, modelName string, verbose bool) error {
 
 	fmt.Println("Type your prompt, then ENTER to submit. CTRL-C to quit.")
 
-	rl, err := readline.NewEx(&readline.Config{
-		Prompt: color.RedString("» "),
-		//HistoryFile:     "/tmp/readline.tmp",
-		//AutoComplete:    completer,
-		InterruptPrompt: "^C",
-		//EOFPrompt:       "exit", // Does not work as expected
+	// Build autocomplete for slash commands.
+	var completions []readline.PrefixCompleterInterface
+	for _, cmd := range slashCommands {
+		completions = append(completions, readline.PcItem(cmd))
+	}
+
+	rlConfig := &readline.Config{
+		Prompt:                 color.RedString("» "),
+		AutoComplete:           readline.NewPrefixCompleter(completions...),
+		Listener:               slashHinter(),
+		DisableAutoSaveHistory: true,
+		InterruptPrompt:        "^C",
 
 		HistorySearchFold:   true,
 		FuncFilterInputRune: filterInput,
-	})
+	}
+
+	rl, err := readline.NewEx(rlConfig)
 	if err != nil {
 		return fmt.Errorf("error initializing readline: %w", err)
 	}
-	defer rl.Close()
+	defer func() { rl.Close() }()
 	//rl.CaptureExitSignal() // Should readline capture and handle the exit signal? - Can be used to interrupt the chat response stream.
 	log.SetOutput(rl.Stderr())
 
@@ -89,8 +98,15 @@ func Client(baseUrl string, modelName string, verbose bool) error {
 		Model: modelName,
 	}
 
+	session := &Session{
+		KnowledgeClient:  knowledgeClient,
+		EmbeddingModelID: embeddingModelID,
+		ActiveIndexes:    []string{knowledge.DefaultIndexName()},
+	}
+
 	for {
 		prompt, err := rl.Readline()
+		clearSlashHints()
 		if errors.Is(err, readline.ErrInterrupt) {
 			if len(prompt) == 0 {
 				break
@@ -104,8 +120,21 @@ func Client(baseUrl string, modelName string, verbose bool) error {
 			break
 		}
 
+		// Handle slash commands (e.g. /active-context) without sending to the LLM.
+		if strings.HasPrefix(prompt, "/") {
+			rl.Close()
+			handleSlashCommand(prompt, session)
+			rl, err = readline.NewEx(rlConfig)
+			if err != nil {
+				return fmt.Errorf("error reinitializing readline: %w", err)
+			}
+			log.SetOutput(rl.Stderr())
+			continue
+		}
+
 		if len(prompt) > 0 {
-			params, err = handlePrompt(client, params, prompt, verbose)
+			rl.SaveHistory(prompt)
+			params, err = handlePrompt(client, params, prompt, session, verbose)
 			if err != nil {
 				return err
 			}
@@ -230,17 +259,33 @@ func findModelName(baseUrl string, verbose bool) (string, error) {
 	} // end for
 }
 
-func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, prompt string, verbose bool) (openai.ChatCompletionNewParams, error) {
-	params.Messages = append(params.Messages, openai.UserMessage(prompt))
+func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, prompt string, session *Session, verbose bool) (openai.ChatCompletionNewParams, error) {
+	// Retrieve RAG context from knowledge base (no-op when unavailable).
+	ragContext := retrieveContext(session, prompt, verbose)
 
-	paramDebugString, _ := json.Marshal(params)
+	// Build the message sent to the LLM: augmented when context is found,
+	// plain otherwise.
+	llmPrompt := prompt
+	if ragContext != "" {
+		llmPrompt = buildRAGPrompt(ragContext, prompt)
+	}
+
+	// Build a temporary copy of the message history so the augmented prompt
+	// is sent to the API but only the original prompt is kept in history.
+	apiMessages := make([]openai.ChatCompletionMessageParamUnion, len(params.Messages))
+	copy(apiMessages, params.Messages)
+	apiMessages = append(apiMessages, openai.UserMessage(llmPrompt))
+
+	apiParams := params
+	apiParams.Messages = apiMessages
 
 	if verbose {
+		paramDebugString, _ := json.Marshal(apiParams)
 		fmt.Printf("Sending request: %s\n", paramDebugString)
 	}
 
 	stopProgress := common.StartProgressSpinner("Waiting for a response")
-	stream := client.Chat.Completions.NewStreaming(context.Background(), params)
+	stream := client.Chat.Completions.NewStreaming(context.Background(), apiParams)
 	stopProgress()
 
 	appendParam, err := processStream(stream)
@@ -248,7 +293,9 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 		return params, err
 	}
 
-	// Store previous prompts for context
+	// Store the original prompt (not the augmented one) plus the assistant
+	// response in the conversation history.
+	params.Messages = append(params.Messages, openai.UserMessage(prompt))
 	if appendParam != nil {
 		params.Messages = append(params.Messages, *appendParam)
 	}
