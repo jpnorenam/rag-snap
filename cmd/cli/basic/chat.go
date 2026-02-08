@@ -19,6 +19,7 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 
 	cobraCmd := &cobra.Command{
 		Use:               "chat",
+		Aliases:           []string{"c"},
 		Short:             "Start the chat CLI",
 		Long:              "Chat with the server via its OpenAI API.\nThis CLI supports text-based prompting only.",
 		GroupID:           groupID,

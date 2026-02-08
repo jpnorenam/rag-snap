@@ -50,6 +50,7 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 
 	cobraCmd := &cobra.Command{
 		Use:     "knowledge",
+		Aliases: []string{"k"},
 		Short:   "Manage knowledge base",
 		Long:    "Manage the OpenSearch knowledge base for RAG.\nSupports initializing pipelines, creating indices, ingesting documents, searching, and removing documents.",
 		GroupID: groupID,
