@@ -9,7 +9,6 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/processing"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
-	"github.com/jpnorenam/rag-snap/pkg/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -92,11 +91,7 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 				return err
 			}
 
-			var cfg storage.Config
-			if !cmd.Debug {
-				cfg = cmd.Config
-			}
-			return client.InitPipelines(context.Background(), cfg)
+			return client.InitPipelines(context.Background())
 		},
 	}
 
@@ -286,7 +281,7 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 				fullIndexNames = []string{knowledge.DefaultIndexName()}
 			}
 
-			results, err := client.Search(context.Background(), fullIndexNames, query, modelID, k)
+			results, err := client.Search(context.Background(), fullIndexNames, query, query, modelID, k)
 			if err != nil {
 				return fmt.Errorf("searching: %w", err)
 			}

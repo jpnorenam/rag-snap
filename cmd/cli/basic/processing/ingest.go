@@ -37,10 +37,23 @@ func Ingest(tikaURL, filePath, sourceID string) (*IngestResult, error) {
 		return nil, err
 	}
 
-	content, err := tika.Extract(filePath)
+	rawHTML, err := tika.ExtractHTML(filePath)
 	stopProgress()
 	if err != nil {
 		return nil, fmt.Errorf("content extraction failed: %w", err)
+	}
+
+	rawHTML = strings.TrimSpace(rawHTML)
+	if rawHTML == "" {
+		return nil, fmt.Errorf("no content extracted from %s", filepath.Base(filePath))
+	}
+
+	// 3. Convert HTML to Markdown (preserves table structure)
+	stopProgress = common.StartProgressSpinner("Converting to Markdown")
+	content, err := HTMLToMarkdown(rawHTML)
+	stopProgress()
+	if err != nil {
+		return nil, fmt.Errorf("HTML to Markdown conversion failed: %w", err)
 	}
 
 	content = strings.TrimSpace(content)
@@ -48,13 +61,13 @@ func Ingest(tikaURL, filePath, sourceID string) (*IngestResult, error) {
 		return nil, fmt.Errorf("no content extracted from %s", filepath.Base(filePath))
 	}
 
-	// 3. Extract metadata (non-fatal on error)
+	// 4. Extract metadata (non-fatal on error)
 	var tikaMeta *TikaMetadata
 	tikaMeta, _ = tika.ExtractMetadata(filePath)
 
-	// 4. Chunk the extracted text
+	// 5. Chunk the Markdown content (structure-aware)
 	stopProgress = common.StartProgressSpinner("Chunking content")
-	chunks := ChunkText(content, sourceID, ChunkOptions{
+	chunks := ChunkMarkdown(content, sourceID, ChunkOptions{
 		Size:    DefaultChunkSize,
 		Overlap: DefaultChunkOverlap,
 	})

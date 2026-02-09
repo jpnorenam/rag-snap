@@ -269,8 +269,15 @@ func findModelName(baseUrl string, verbose bool) (string, error) {
 }
 
 func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, prompt string, session *Session, verbose bool) (openai.ChatCompletionNewParams, error) {
+	// Rewrite the query for richer BM25 matching using conversation context.
+	// On the first turn (no history) this returns the original prompt.
+	lexicalQuery := prompt
+	if session.KnowledgeClient != nil {
+		lexicalQuery = rewriteSearchQuery(client, params.Model, params.Messages, prompt, verbose)
+	}
+
 	// Retrieve RAG context from knowledge base (no-op when unavailable).
-	ragContext := retrieveContext(session, prompt, verbose)
+	ragContext := retrieveContext(session, prompt, lexicalQuery, verbose)
 
 	// Build the message sent to the LLM: augmented when context is found,
 	// plain otherwise.
@@ -293,10 +300,10 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 		fmt.Printf("Sending request: %s\n", paramDebugString)
 	}
 
-	stopProgress := common.StartProgressSpinner("Waiting for a response")
+	stopProgress := common.StartProgressSpinner("Generating an answer")
 	stream := client.Chat.Completions.NewStreaming(context.Background(), apiParams)
 	stopProgress()
-
+	
 	appendParam, err := processStream(stream)
 	if err != nil {
 		return params, err

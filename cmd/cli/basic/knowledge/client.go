@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
-	"github.com/jpnorenam/rag-snap/pkg/storage"
 	opensearch "github.com/opensearch-project/opensearch-go/v4"
 	opensearchapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 )
@@ -50,8 +49,8 @@ type headerTransport struct {
 
 // InitPipelines initializes OpenSearch pipelines, models, indexes, and templates.
 // InitPipelines initializes OpenSearch pipelines, models, indexes, and templates.
-func (c *OpenSearchClient) InitPipelines(ctx context.Context, cfg storage.Config) error {
-	if err := c.Init(ctx, cfg); err != nil {
+func (c *OpenSearchClient) InitPipelines(ctx context.Context) error {
+	if err := c.Init(ctx); err != nil {
 		return fmt.Errorf("error initializing OpenSearch client: %w", err)
 	}
 	return nil
@@ -110,7 +109,7 @@ func withProgress(message string, fn func() error) error {
 // Init initializes the OpenSearch client by setting up models and pipelines.
 // It creates or retrieves the model group, deploys models, and creates pipelines.
 // The resolved model IDs are persisted to the snap config via cfg.
-func (c *OpenSearchClient) Init(ctx context.Context, cfg storage.Config) error {
+func (c *OpenSearchClient) Init(ctx context.Context) error {
 	// Get or create the model group
 	var modelGroupID string
 	if err := withProgress("Creating model group", func() error {
@@ -128,9 +127,7 @@ func (c *OpenSearchClient) Init(ctx context.Context, cfg storage.Config) error {
 			return err
 		}
 		c.embeddingModelID = embeddingModelID
-		if cfg != nil {
-			return cfg.Set(ConfEmbeddingModelID, embeddingModelID, storage.PackageConfig)
-		}
+		fmt.Printf("run `sudo rag set --package knowledge.model.embedding=\"%s\"`\n", embeddingModelID)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("error setting up embedding model: %w", err)
@@ -143,9 +140,7 @@ func (c *OpenSearchClient) Init(ctx context.Context, cfg storage.Config) error {
 			return err
 		}
 		c.rerankModelID = rerankModelID
-		if cfg != nil {
-			return cfg.Set(ConfRerankModelID, rerankModelID, storage.PackageConfig)
-		}
+		fmt.Printf("run `sudo rag set --package knowledge.model.rerank=\"%s\"`\n", rerankModelID)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("error setting up rerank model: %w", err)

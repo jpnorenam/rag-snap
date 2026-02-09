@@ -9,6 +9,11 @@ Before starting, the RAG snap depends on OpenSearch and Inference snaps:
 
 #### Install a [Inference snap](https://github.com/canonical/inference-snaps) of your selection.
 
+Ensure you are using the right engine for better performance:
+```bash
+sudo <inference-snap> show-engine
+```
+
 Test your Inference snap installation:
 ```bash
 curl http://localhost:8324/v1/chat/completions \

@@ -21,23 +21,24 @@ type SearchHit struct {
 	CreatedAt string  `json:"created_at"`
 }
 
-// Search performs a neural search with reranking across the given indexes,
-// merges the results, and returns them sorted by score descending.
+// Search performs a hybrid search (BM25 + neural) with reranking across the
+// given indexes, merges the results, and returns them sorted by score descending.
 // Indexes should be full index names (e.g. "rag-snap-context-default").
-// The embeddingModelID is the deployed sentence-transformer model ID
-// previously stored by 'knowledge init'.
-func (c *OpenSearchClient) Search(ctx context.Context, indexes []string, query, embeddingModelID string, k int) ([]SearchHit, error) {
+// The query parameter is used for neural embedding and reranking.
+// The lexicalQuery parameter is used for BM25 matching and may include
+// additional context (e.g. recent conversation queries) for richer lexical recall.
+func (c *OpenSearchClient) Search(ctx context.Context, indexes []string, query, lexicalQuery, embeddingModelID string, k int) ([]SearchHit, error) {
 	stopProgress := common.StartProgressSpinner("Searching knowledge base")
 	defer stopProgress()
 
-	return c.search(ctx, indexes, query, embeddingModelID, k)
+	return c.search(ctx, indexes, query, lexicalQuery, embeddingModelID, k)
 }
 
-func (c *OpenSearchClient) search(ctx context.Context, indexes []string, query, embeddingModelID string, k int) ([]SearchHit, error) {
+func (c *OpenSearchClient) search(ctx context.Context, indexes []string, query, lexicalQuery, embeddingModelID string, k int) ([]SearchHit, error) {
 	// Search each index individually and collect all hits.
 	var allHits []SearchHit
 	for _, index := range indexes {
-		hits, err := c.neuralSearch(ctx, index, query, embeddingModelID, k)
+		hits, err := c.hybridSearch(ctx, index, query, lexicalQuery, embeddingModelID, k)
 		if err != nil {
 			return nil, fmt.Errorf("searching index %q: %w", index, err)
 		}
@@ -52,13 +53,13 @@ func (c *OpenSearchClient) search(ctx context.Context, indexes []string, query, 
 	return allHits, nil
 }
 
-// neuralSearch executes a neural search with reranking on a single index.
-func (c *OpenSearchClient) neuralSearch(
+// hybridSearch executes a hybrid (BM25 + neural) search with reranking on a single index.
+func (c *OpenSearchClient) hybridSearch(
 	ctx context.Context,
-	indexName, query, embeddingModelID string,
+	indexName, query, lexicalQuery, embeddingModelID string,
 	k int,
 ) ([]SearchHit, error) {
-	body := buildSearchBody(query, embeddingModelID, k)
+	body := buildSearchBody(query, lexicalQuery, embeddingModelID, k)
 
 	bodyBytes, err := json.Marshal(body)
 	if err != nil {
@@ -101,18 +102,34 @@ func (c *OpenSearchClient) neuralSearch(
 	return hits, nil
 }
 
-// buildSearchBody constructs the neural search request body with reranking context.
-func buildSearchBody(query, embeddingModelID string, k int) map[string]any {
+// buildSearchBody constructs a hybrid search request body combining BM25
+// lexical matching with neural KNN, plus reranking context.
+// The lexicalQuery is used for BM25 matching and may be enriched with
+// conversation history. The query is used for neural embedding and reranking.
+func buildSearchBody(query, lexicalQuery, embeddingModelID string, k int) map[string]any {
 	return map[string]any{
 		"_source": map[string]any{
 			"excludes": []string{"embedding"},
 		},
 		"query": map[string]any{
-			"neural": map[string]any{
-				"embedding": map[string]any{
-					"query_text": query,
-					"model_id":   embeddingModelID,
-					"k":          k,
+			"hybrid": map[string]any{
+				"queries": []map[string]any{
+					{
+						"match": map[string]any{
+							"content": map[string]any{
+								"query": lexicalQuery,
+							},
+						},
+					},
+					{
+						"neural": map[string]any{
+							"embedding": map[string]any{
+								"query_text": query,
+								"model_id":   embeddingModelID,
+								"k":          k,
+							},
+						},
+					},
 				},
 			},
 		},

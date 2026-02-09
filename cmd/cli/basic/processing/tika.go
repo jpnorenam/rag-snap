@@ -70,6 +70,40 @@ func (t *TikaClient) Extract(filePath string) (string, error) {
 	return string(content), nil
 }
 
+// ExtractHTML sends a file to the Tika server and returns the extracted content as HTML.
+// Tika returns XHTML with <table>, <h1>–<h6>, <p> tags that preserve document structure.
+func (t *TikaClient) ExtractHTML(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("opening file: %w", err)
+	}
+	defer file.Close()
+
+	req, err := http.NewRequest(http.MethodPut, t.baseURL+"/tika", file)
+	if err != nil {
+		return "", fmt.Errorf("creating request: %w", err)
+	}
+	req.Header.Set("Accept", "text/html")
+
+	resp, err := t.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("tika request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("tika returned status %d: %s", resp.StatusCode, string(body))
+	}
+
+	content, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading response: %w", err)
+	}
+
+	return string(content), nil
+}
+
 // ExtractMetadata sends a file to the Tika /meta endpoint and returns parsed metadata.
 func (t *TikaClient) ExtractMetadata(filePath string) (*TikaMetadata, error) {
 	file, err := os.Open(filePath)

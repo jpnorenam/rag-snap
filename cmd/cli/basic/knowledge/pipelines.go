@@ -255,9 +255,25 @@ func (c *OpenSearchClient) updateSearchPipeline(ctx context.Context, rerankerMod
 	return nil
 }
 
-// buildSearchPipelineBody constructs the search pipeline JSON body with rerank processor.
+// buildSearchPipelineBody constructs the search pipeline JSON body with
+// score normalization (for hybrid BM25 + neural) followed by cross-encoder reranking.
 func buildSearchPipelineBody(rerankerModelID string) map[string]any {
 	return map[string]any{
+		"phase_results_processors": []map[string]any{
+			{
+				"normalization-processor": map[string]any{
+					"normalization": map[string]any{
+						"technique": "min_max",
+					},
+					"combination": map[string]any{
+						"technique": "arithmetic_mean",
+						"parameters": map[string]any{
+							"weights": []float64{0.3, 0.7},
+						},
+					},
+				},
+			},
+		},
 		"response_processors": []map[string]any{
 			{
 				"rerank": map[string]any{

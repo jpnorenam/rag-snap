@@ -77,11 +77,3 @@ func (cmd *setCommand) setValue(keyValue string) error {
 
 	return nil
 }
-
-// SetPackageValue stores a key-value pair as package configuration.
-func SetPackageValue(cfg storage.Config, key, value string) error {
-	if err := cfg.Set(key, value, storage.PackageConfig); err != nil {
-		return fmt.Errorf("error setting value %q for %q: %v", value, key, err)
-	}
-	return nil
-}
