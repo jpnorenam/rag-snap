@@ -18,21 +18,20 @@ const (
 	confOpenAiHttpHost = "chat.http.host"
 	confOpenAiHttpPort = "chat.http.port"
 	confOpenAiHttpPath = "chat.http.path"
-	// TODO add optional bearer token config keys
-	// TODO add optional TLS enabled config keys
+	confOpenAiHttpTLS  = "chat.http.tls"
 
 	// [knowledge] OpenSearch snap API URLs
 	opensearch             = "opensearch"
 	confOpenSearchHttpHost = "knowledge.http.host"
 	confOpenSearchHttpPort = "knowledge.http.port"
-	// TODO add optional TLS enabled config keys
+	confOpenSearchHttpTLS  = "knowledge.http.tls"
 
 	// [tika] Tika snap API URLs
 	tika             = "tika"
 	confTikaHttpHost = "tika.http.host"
 	confTikaHttpPort = "tika.http.port"
 	confTikaHttpPath = "tika.http.path"
-	// TODO add optional TLS enabled config keys
+	confTikaHttpTLS  = "tika.http.tls"
 )
 
 func Group(title string) *cobra.Group {
@@ -121,6 +120,16 @@ func addDebugFlags(cobraCmd *cobra.Command, ctx *common.Context) {
 	}
 }
 
+// getConfigBool retrieves a config value as a boolean.
+// Returns the fallback when the key is unset or empty.
+func getConfigBool(ctx *common.Context, key string, fallback bool) bool {
+	val, err := config.GetString(ctx.Config, key)
+	if err != nil || val == "" {
+		return fallback
+	}
+	return val == "true" || val == "1"
+}
+
 func serverApiUrls(ctx *common.Context) (map[string]string, error) {
 	openAiHost, err := getConfigString(ctx, confOpenAiHttpHost)
 	if err != nil {
@@ -134,6 +143,7 @@ func serverApiUrls(ctx *common.Context) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	openAiTLS := getConfigBool(ctx, confOpenAiHttpTLS, false)
 
 	openSearchHost, err := getConfigString(ctx, confOpenSearchHttpHost)
 	if err != nil {
@@ -143,6 +153,7 @@ func serverApiUrls(ctx *common.Context) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	openSearchTLS := getConfigBool(ctx, confOpenSearchHttpTLS, true)
 
 	tikaHost, err := getConfigString(ctx, confTikaHttpHost)
 	if err != nil {
@@ -156,10 +167,11 @@ func serverApiUrls(ctx *common.Context) (map[string]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	tikaTLS := getConfigBool(ctx, confTikaHttpTLS, false)
 
 	return map[string]string{
-		openAi:     buildServiceURL(openAiHost, openAiPort, openAiBasePath, false),
-		opensearch: buildServiceURL(openSearchHost, openSearchPort, "", true),
-		tika:       buildServiceURL(tikaHost, tikaPort, tikaBasePath, false),
+		openAi:     buildServiceURL(openAiHost, openAiPort, openAiBasePath, openAiTLS),
+		opensearch: buildServiceURL(openSearchHost, openSearchPort, "", openSearchTLS),
+		tika:       buildServiceURL(tikaHost, tikaPort, tikaBasePath, tikaTLS),
 	}, nil
 }

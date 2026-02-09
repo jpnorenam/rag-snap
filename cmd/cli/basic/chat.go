@@ -23,7 +23,7 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 		Short:             "Start the chat CLI",
 		Long:              "Chat with the server via its OpenAI API.\nThis CLI supports text-based prompting only.",
 		GroupID:           groupID,
-		Args:              cobra.NoArgs,
+		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE:              cmd.run,
 	}
@@ -33,7 +33,7 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 	return cobraCmd
 }
 
-func (cmd *chatCommand) run(_ *cobra.Command, _ []string) error {
+func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 	apiUrls, err := serverApiUrls(cmd.Context)
 	if err != nil {
 		return fmt.Errorf("error getting server api urls: %w", err)
@@ -49,5 +49,10 @@ func (cmd *chatCommand) run(_ *cobra.Command, _ []string) error {
 
 	embeddingModelID, _ := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
 
-	return chat.Client(apiUrls[openAi], knowledgeClient, embeddingModelID, "", cmd.Verbose)
+	var llmModelName string
+	if len(args) > 0 {
+		llmModelName = args[0]
+	}
+
+	return chat.Client(apiUrls[openAi], knowledgeClient, embeddingModelID, llmModelName, cmd.Verbose)
 }

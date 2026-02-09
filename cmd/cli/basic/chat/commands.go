@@ -13,11 +13,11 @@ import (
 )
 
 const (
-	cmdActiveContext = "/active-context"
+	cmdUseKnowledge = "/use-knowledge"
 )
 
 // slashCommands lists every registered slash command name.
-var slashCommands = []string{cmdActiveContext}
+var slashCommands = []string{cmdUseKnowledge}
 
 // slashHinter returns a readline listener that displays matching slash
 // commands below the input line as the user types, filtering the list
@@ -76,13 +76,13 @@ func handleSlashCommand(input string, session *Session) bool {
 	cmd := strings.TrimSpace(input)
 
 	switch {
-	case cmd == cmdActiveContext:
+	case cmd == cmdUseKnowledge:
 		if err := selectActiveContext(session); err != nil {
 			fmt.Printf("Error: %v\n", err)
 		}
 		return true
 	default:
-		fmt.Printf("Unknown command: %s\nAvailable commands: %s\n", cmd, cmdActiveContext)
+		fmt.Printf("Unknown command: %s\nAvailable commands: %s\n", cmd, cmdUseKnowledge)
 		return false
 	}
 }

@@ -200,7 +200,9 @@ func formatConversationForRewrite(messages []openai.ChatCompletionMessageParamUn
 // buildRAGPrompt wraps the user's original prompt with the retrieved
 // context so the LLM can ground its answer.
 func buildRAGPrompt(ragContext, prompt string) string {
-	return fmt.Sprintf(`Use the following context to answer the question. If the context is not relevant, answer based on your own knowledge.
+	return fmt.Sprintf(`Answer the question using only the provided context. 
+If the context contains relevant information, cite specific parts in your response. 
+If the context is insufficient or irrelevant to answer the question, clearly state what information is missing and do not fabricate an answer.
 
 Context:
 %s
