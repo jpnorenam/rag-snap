@@ -1,6 +1,6 @@
 # RAG Snap
 
-A CLI based client that 
+A CLI based RAG implementation to locally manage knowledge bases and chat with them.
 
 ## Quick start
 
@@ -115,16 +115,18 @@ Create an `example` knowledge base:
 rag k create example
 ```
 
-List the knowledge bases with `rag k list`
+List the knowledge bases with `rag k list`.
 
 Ingest files into the `example` and `default`:
 ```bash
-rag k ingest example <path-to-local-file-a/url-file-a> <source-id-file-a>
+rag k ingest example <path-to-local-file-a> <source-id-file-a>
 
-rag k ingest default <path-to-local-file-b/url-file-b> <source-id-file-b>
+rag k ingest default <path-to-local-file-b> <source-id-file-b>
 ```
 
-List the added sources with `rag k list -s`
+Currently, only supports local files. Urls and GSuite docs are planned.
+
+List the added sources with `rag k list -s`.
 
 
 ### Chat with your Knowledge Bases
