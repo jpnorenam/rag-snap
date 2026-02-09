@@ -11,17 +11,18 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 # Set generic configurations
 #
 
-# sudo rag set --package chat.http.path="v1"
-# sudo rag set --package chat.http.port="8324"
-# sudo rag set --package chat.http.host="127.0.0.1"
-# sudo rag set --package knowledge.http.port="9200"
-# sudo rag set --package knowledge.http.host="127.0.0.1"
-# sudo rag set --package tika.http.path="tika"
-# sudo rag set --package tika.http.port="9998"
-# sudo rag set --package tika.http.host="127.0.0.1"
-# sudo rag set --package verbose="false"
+# sudo $SNAP_INSTANCE_NAME set --package chat.http.host="127.0.0.1"
+# sudo $SNAP_INSTANCE_NAME set --package chat.http.port="8324"
+# sudo $SNAP_INSTANCE_NAME set --package chat.http.path="v1"
+# sudo $SNAP_INSTANCE_NAME set --package knowledge.http.host="127.0.0.1"
+# sudo $SNAP_INSTANCE_NAME set --package knowledge.http.port="9200"
+# sudo $SNAP_INSTANCE_NAME set --package knowledge.http.tls="true"
+# sudo $SNAP_INSTANCE_NAME set --package tika.http.path="tika"
+# sudo $SNAP_INSTANCE_NAME set --package tika.http.port="9998"
+# sudo $SNAP_INSTANCE_NAME set --package tika.http.host="127.0.0.1"
+# sudo $SNAP_INSTANCE_NAME set --package verbose="false"
 # 
 export OPENSEARCH_USERNAME="admin"
 export OPENSEARCH_PASSWORD="admin"
 # 
-# sudo snap start rag.tika-server
+# sudo snap start $SNAP_INSTANCE_NAME.tika-server

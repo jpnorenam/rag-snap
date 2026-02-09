@@ -6,3 +6,5 @@ tag="snap.$SNAP_INSTANCE_NAME.hook.post-refresh"
 exec 1> >(tee >(logger --tag=$tag))
 # Redirect stderr to stderr+syslog
 exec 2> >(logger --stderr --priority error --tag=$tag)
+
+# snap start $SNAP_INSTANCE_NAME.tika-server
