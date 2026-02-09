@@ -127,7 +127,7 @@ func (c *OpenSearchClient) Init(ctx context.Context) error {
 			return err
 		}
 		c.embeddingModelID = embeddingModelID
-		fmt.Printf("run `sudo rag set --package knowledge.model.embedding=\"%s\"`\n", embeddingModelID)
+		fmt.Printf("\n run `sudo rag set --package %s=\"%s\"`\n", ConfEmbeddingModelID, embeddingModelID)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("error setting up embedding model: %w", err)
@@ -140,7 +140,7 @@ func (c *OpenSearchClient) Init(ctx context.Context) error {
 			return err
 		}
 		c.rerankModelID = rerankModelID
-		fmt.Printf("run `sudo rag set --package knowledge.model.rerank=\"%s\"`\n", rerankModelID)
+		fmt.Printf("run `sudo rag set --package %s=\"%s\"`\n", ConfRerankModelID, rerankModelID)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("error setting up rerank model: %w", err)
