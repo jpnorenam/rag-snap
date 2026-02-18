@@ -12,6 +12,17 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 )
 
+// MaxIngestFileSize is the maximum allowed file size for ingestion (50 MB).
+const MaxIngestFileSize = 50 * 1024 * 1024
+
+// ValidateFileSize returns an error if the given size exceeds MaxIngestFileSize.
+func ValidateFileSize(size int64) error {
+	if size > MaxIngestFileSize {
+		return fmt.Errorf("file size %d bytes exceeds maximum allowed %d bytes (50 MB)", size, int64(MaxIngestFileSize))
+	}
+	return nil
+}
+
 // IngestResult holds the output of the Ingest pipeline.
 type IngestResult struct {
 	Chunks        []Chunk
@@ -27,6 +38,10 @@ func Ingest(tikaURL, filePath, sourceID string) (*IngestResult, error) {
 	checksum, fileSize, err := checksumAndSize(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("computing file checksum: %w", err)
+	}
+
+	if err := ValidateFileSize(fileSize); err != nil {
+		return nil, err
 	}
 
 	// 2. Extract content via Tika

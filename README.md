@@ -1,6 +1,6 @@
 # RAG Snap
 
-A CLI based RAG implementation to locally manage knowledge bases and chat with them.
+A CLI-based RAG implementation to locally manage knowledge bases and chat with them.
 
 ## Quick start
 
@@ -26,10 +26,9 @@ Validate your OpenSearch snap node roles:
 curl -k -u admin:admin https://localhost:9200/_cat/nodes?v
 ```
 
-Increase the JVM heap size to fit the sentence embedding and cross-encoder models.
+Increase the JVM heap size to fit the sentence-transformer and cross-encoder models (at least 6 GB is recommended; adjust to your machine's available RAM):
 ```bash
-# Todo: Which is the right way to this?
-echo '-Xms4g' | sudo tee /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
+echo '-Xms6g' | sudo tee /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
 echo '-Xmx8g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
 
 sudo snap restart opensearch
@@ -37,7 +36,7 @@ sudo snap restart opensearch
 
 #### (Recommended) Install a [Inference snap](https://github.com/canonical/inference-snaps) of your selection.
 
-Ensure you are using the right engine avilable in your machine for better performance:
+Ensure you are using the right engine available in your machine for better performance:
 ```bash
 sudo <inference-snap-name> show-engine
 ```
@@ -57,15 +56,12 @@ curl http://localhost:8324/v1/chat/completions \
 ### Installation
 
 ```bash
-## Once published into Snapstore
-# sudo snap rag
-
 sudo snap install --dangerous ./rag_*.snap
 ```
 
 ### Package setup
 
-The package supports a set of configurations for it's different features:
+The package comes with sensible defaults set by the install hook. Override them only if your services run on non-default hosts or ports:
 ```bash
 sudo rag set --package chat.http.host="127.0.0.1"
 sudo rag set --package chat.http.port="8324"
@@ -78,7 +74,7 @@ sudo rag set --package tika.http.port="9998"
 sudo rag set --package tika.http.host="127.0.0.1"
 ```
 
-The optional secrets like `OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, and `CHAT_API_KEY` are provided via enviroment variables:
+The optional secrets like `OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, and `CHAT_API_KEY` are provided via environment variables:
 ```bash
 export OPENSEARCH_USERNAME="admin"
 export OPENSEARCH_PASSWORD="admin"
@@ -92,23 +88,30 @@ sudo snap start rag.tika-server
 The status of the snap can be checked with `rag status`.
 
 
-## Usage
+## Basic Usage
 
-### Intialize your Knowledge Base, Pipelines and Models.
+### Initialize pipelines and models
 
 ```bash
 rag knowledge init
 ```
 
-It will print the the models id so you can add them to the package config
+It will print the model IDs so you can add them to the package config:
 ```bash
 sudo rag set --package knowledge.model.embedding=<embedding-model-id>
 sudo rag set --package knowledge.model.rerank=<rerank-model-id>
 ```
 
-### Manage your Knowledge Bases
+### Manage your knowledge bases
 
-The initialization creates a `default` knowledge base, however your knowledge bases can be separated into contexts that later can be activated.
+`knowledge init` sets up the pipelines and index template, but does not create any index yet.
+Create your first knowledge base (the `default` name is used by chat when no other base is selected):
+
+```bash
+rag k create default
+```
+
+Additional knowledge bases can be created to separate content into distinct contexts that you can activate during a chat session.
 
 Create an `example` knowledge base:
 ```bash
@@ -117,19 +120,17 @@ rag k create example
 
 List the knowledge bases with `rag k list`.
 
-Ingest files into the `example` and `default`:
+Ingest files into the `example` and `default` bases:
 ```bash
-rag k ingest example <path-to-local-file-a> <source-id-file-a>
+rag k ingest example <source-id-file> --file <path-to-local-file>
 
-rag k ingest default <path-to-local-file-b> <source-id-file-b>
+rag k ingest default <source-id-url> --url <url-to-document>
 ```
-
-Currently, only supports local files. Urls and GSuite docs are planned.
 
 List the added sources with `rag k list -s`.
 
 
-### Chat with your Knowledge Bases
+### Chat with your knowledge bases
 
 Start a new conversation:
 ```bash
@@ -152,9 +153,10 @@ x toggle • ↑ up • ↓ down • / filter • enter submit • ctrl+a select
 » This a relevant question that can be answered from the example knowledge base ... ?
 ```
 
----
-**Note:** Additionally to the Inference snap, it is also possible to use an external OpenAI-compatible inference API.
-For example, using the AWS Bedrock inference service:
+### Using an external inference API
+
+In addition to the Inference snap, any OpenAI-compatible API can be used. For example, AWS Bedrock:
+
 ```bash
 sudo rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
 sudo rag set --package chat.http.port="443"
@@ -166,5 +168,6 @@ export CHAT_API_KEY="bedrock-api-key-****"
 rag chat mistral.mistral-large-3-675b-instruct
 ```
 
-*Warning:* If you are using a third-party inference API be aware of not sending confidential information as part of the provided context or prompt.
+> **Warning:** When using a third-party inference API, your prompts and retrieved context are sent to an external service. Do not ingest or ask about confidential information in that configuration.
 
+For a more detail usage, please see the [usage docs](docs/usage.md).

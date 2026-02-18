@@ -375,6 +375,49 @@ func (c *OpenSearchClient) deleteChunksBySourceID(ctx context.Context, indexName
 	return deleteResp.Deleted, nil
 }
 
+// DeleteSourceMetadataByIndex deletes all source metadata records whose index_name matches
+// the given indexName. Returns the number of deleted documents.
+func (c *OpenSearchClient) DeleteSourceMetadataByIndex(ctx context.Context, indexName string) (int, error) {
+	query := map[string]any{
+		"query": map[string]any{
+			"term": map[string]any{
+				"index_name": indexName,
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(query)
+	if err != nil {
+		return 0, fmt.Errorf("error marshaling delete query: %w", err)
+	}
+
+	path := fmt.Sprintf("/%s/_delete_by_query", sourcesIndexName)
+	req, err := c.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return 0, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	if err != nil {
+		return 0, fmt.Errorf("error deleting source metadata: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("delete source metadata by index failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var deleteResp struct {
+		Deleted int `json:"deleted"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&deleteResp); err != nil {
+		return 0, fmt.Errorf("error decoding delete response: %w", err)
+	}
+
+	return deleteResp.Deleted, nil
+}
+
 // now returns the current UTC time formatted for OpenSearch date fields.
 func now() string {
 	return time.Now().UTC().Format(DateFormat)

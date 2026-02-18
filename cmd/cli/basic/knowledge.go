@@ -1,9 +1,12 @@
 package basic
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
@@ -64,6 +67,8 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 		cmd.ingestCommand(),
 		cmd.searchCommand(),
 		cmd.forgetCommand(),
+		cmd.metadataCommand(),
+		cmd.deleteCommand(),
 	)
 
 	return cobraCmd
@@ -156,15 +161,43 @@ func (cmd *knowledgeCommand) createCommand() *cobra.Command {
 }
 
 func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "ingest <knowledge_base_name> <file_path> <source_id>",
+	var fileFlag string
+	var urlFlag string
+
+	cobraCmd := &cobra.Command{
+		Use:   "ingest <knowledge_base_name> <source_id>",
 		Short: "Ingest a document into the knowledge base",
-		Long:  "Ingest a document from the specified file path into the knowledge base index with the given source ID.",
-		Args:  cobra.ExactArgs(3),
+		Long:  "Ingest a document into the knowledge base index with the given source ID.\nProvide the document via --file (local path) or --url (remote URL).",
+		Args:  cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			knowledgeBaseName := args[0]
-			filePath := args[1]
-			sourceID := args[2]
+			sourceID := args[1]
+
+			// Validate mutual exclusivity
+			if fileFlag == "" && urlFlag == "" {
+				return fmt.Errorf("either --file or --url must be specified")
+			}
+			if fileFlag != "" && urlFlag != "" {
+				return fmt.Errorf("--file and --url are mutually exclusive")
+			}
+
+			// Resolve the file path
+			var filePath string
+			var metadataPath string // stored in SourceMetadata.FilePath
+			var webMeta *processing.WebMetadata
+			if urlFlag != "" {
+				crawled, wm, cleanup, err := processing.CrawlURL(urlFlag)
+				if err != nil {
+					return fmt.Errorf("Crawling URL: %w", err)
+				}
+				defer cleanup()
+				filePath = crawled
+				metadataPath = urlFlag
+				webMeta = wm
+			} else {
+				filePath = fileFlag
+				metadataPath = fileFlag
+			}
 
 			indexName := knowledge.FullIndexName(knowledgeBaseName)
 
@@ -190,7 +223,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 			meta := knowledge.SourceMetadata{
 				SourceID:      sourceID,
 				FileName:      filepath.Base(filePath),
-				FilePath:      filePath,
+				FilePath:      metadataPath,
 				Checksum:      result.Checksum,
 				IndexName:     indexName,
 				ChunkCount:    len(result.Chunks),
@@ -206,6 +239,14 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 				meta.Title = result.TikaMetadata.Title
 				meta.Author = result.TikaMetadata.Author
 				meta.Language = result.TikaMetadata.Language
+			}
+			if webMeta != nil {
+				if meta.Title == "" {
+					meta.Title = webMeta.Title
+				}
+				if meta.Author == "" {
+					meta.Author = webMeta.Author
+				}
 			}
 
 			// Write metadata BEFORE bulk indexing
@@ -244,18 +285,23 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 			return nil
 		},
 	}
+
+	cobraCmd.Flags().StringVarP(&fileFlag, "file", "f", "", "Local file path to ingest")
+	cobraCmd.Flags().StringVarP(&urlFlag, "url", "u", "", "URL to download and ingest")
+
+	return cobraCmd
 }
 
 func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 	var (
-		indexes []string
-		k       int
+		bases []string
+		k     int
 	)
 
 	cobraCmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search the knowledge base",
-		Long:  "Search for documents across knowledge bases.\nIf no indexes are specified with --index, the default index is searched.\nResults from all indexes are merged and sorted by relevance score.",
+		Long:  "Search for documents across knowledge bases.\nIf no bases are specified with --index, the default index is searched.\nResults from all bases are merged and sorted by relevance score.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			query := args[0]
@@ -273,8 +319,8 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 
 			// Resolve index names: use provided suffixes or default index.
 			var fullIndexNames []string
-			if len(indexes) > 0 {
-				for _, suffix := range indexes {
+			if len(bases) > 0 {
+				for _, suffix := range bases {
 					fullIndexNames = append(fullIndexNames, knowledge.FullIndexName(suffix))
 				}
 			} else {
@@ -307,7 +353,7 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 		},
 	}
 
-	cobraCmd.Flags().StringSliceVarP(&indexes, "index", "i", nil, "Index name(s) to search (can be repeated; defaults to default index)")
+	cobraCmd.Flags().StringSliceVarP(&bases, "bases", "b", nil, "Knowledge base name(s) to search (comma-separated string list, defaults to 'default')")
 	cobraCmd.Flags().IntVarP(&k, "top", "k", 10, "Number of results per index")
 
 	return cobraCmd
@@ -351,6 +397,119 @@ func (cmd *knowledgeCommand) forgetCommand() *cobra.Command {
 			fmt.Printf("Deleted %d chunks and metadata for source '%s' from index '%s'\n",
 				deleted, sourceID, indexName)
 
+			return nil
+		},
+	}
+}
+
+func (cmd *knowledgeCommand) metadataCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "metadata <knowledge_base_name> <source_id>",
+		Short: "Show metadata for an ingested source",
+		Long:  "Display the stored metadata for a source document ingested into the knowledge base.",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			sourceID := args[1]
+
+			client, err := cmd.opensearchClient()
+			if err != nil {
+				return err
+			}
+
+			meta, err := client.GetSourceMetadata(context.Background(), sourceID)
+			if err != nil {
+				return fmt.Errorf("source not found: %w", err)
+			}
+
+			knowledgeBaseName, _ := knowledge.KnowledgeBaseNameFromIndex(meta.IndexName)
+
+			fmt.Printf("Source ID:      %s\n", meta.SourceID)
+			fmt.Printf("Knowledge base: %s\n", knowledgeBaseName)
+			fmt.Printf("Status:         %s\n", meta.Status)
+			fmt.Printf("File name:      %s\n", meta.FileName)
+			fmt.Printf("File path:      %s\n", meta.FilePath)
+			fmt.Printf("Content type:   %s\n", meta.ContentType)
+			fmt.Printf("Content length: %d bytes\n", meta.ContentLength)
+			fmt.Printf("Checksum:       %s\n", meta.Checksum)
+			fmt.Printf("Chunks:         %d (size=%d, overlap=%d)\n", meta.ChunkCount, meta.ChunkSize, meta.ChunkOverlap)
+			fmt.Printf("Ingested at:    %s\n", meta.IngestedAt)
+			fmt.Printf("Updated at:     %s\n", meta.UpdatedAt)
+			if meta.Title != "" {
+				fmt.Printf("Title:          %s\n", meta.Title)
+			}
+			if meta.Author != "" {
+				fmt.Printf("Author:         %s\n", meta.Author)
+			}
+			if meta.Language != "" {
+				fmt.Printf("Language:       %s\n", meta.Language)
+			}
+
+			return nil
+		},
+	}
+}
+
+func (cmd *knowledgeCommand) deleteCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "delete <knowledge_base_name>",
+		Short: "Delete a knowledge base index and all its sources",
+		Long:  "Delete an OpenSearch index and all associated source metadata records.\nRequires typing the knowledge base name to confirm.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			knowledgeBaseName := args[0]
+			indexName := knowledge.FullIndexName(knowledgeBaseName)
+
+			client, err := cmd.opensearchClient()
+			if err != nil {
+				return err
+			}
+
+			ctx := context.Background()
+
+			// Show the sources that will be deleted.
+			sources, err := client.ListSourceMetadata(ctx, indexName)
+			if err != nil {
+				return fmt.Errorf("listing sources: %w", err)
+			}
+
+			if len(sources) == 0 {
+				fmt.Printf("Knowledge base '%s' has no ingested sources.\n", knowledgeBaseName)
+			} else {
+				fmt.Printf("The following %d source(s) will be permanently deleted:\n\n", len(sources))
+				fmt.Printf("  %-50s %-12s %-8s %-20s\n", "SOURCE ID", "STATUS", "CHUNKS", "INGESTED AT")
+				for _, s := range sources {
+					fmt.Printf("  %-50s %-12s %-8d %-20s\n", s.SourceID, s.Status, s.ChunkCount, s.IngestedAt)
+				}
+				fmt.Println()
+			}
+
+			// Confirmation prompt.
+			fmt.Printf("This will permanently delete the index '%s' and all its data.\n", indexName)
+			fmt.Printf("Type the knowledge base name to confirm: ")
+
+			reader := bufio.NewReader(os.Stdin)
+			input, err := reader.ReadString('\n')
+			if err != nil {
+				return fmt.Errorf("reading confirmation: %w", err)
+			}
+			input = strings.TrimSpace(input)
+
+			if input != knowledgeBaseName {
+				return fmt.Errorf("confirmation does not match — deletion aborted")
+			}
+
+			// Delete all source metadata records for this index.
+			deleted, err := client.DeleteSourceMetadataByIndex(ctx, indexName)
+			if err != nil {
+				return fmt.Errorf("deleting source metadata: %w", err)
+			}
+
+			// Delete the index itself.
+			if err := client.DeleteIndex(ctx, indexName); err != nil {
+				return fmt.Errorf("deleting index: %w", err)
+			}
+
+			fmt.Printf("Deleted index '%s' and %d source metadata record(s).\n", indexName, deleted)
 			return nil
 		},
 	}

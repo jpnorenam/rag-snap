@@ -281,6 +281,28 @@ func (c *OpenSearchClient) catIndexes(ctx context.Context) ([]IndexInfo, error) 
 	return indexes, nil
 }
 
+// DeleteIndex deletes the OpenSearch index with the given name.
+func (c *OpenSearchClient) DeleteIndex(ctx context.Context, indexName string) error {
+	resp, err := c.client.Client.Do(
+		ctx,
+		opensearchapi.IndicesDeleteReq{
+			Indices: []string{indexName},
+		},
+		nil,
+	)
+	if err != nil {
+		return fmt.Errorf("error deleting index: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("delete index request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
+}
+
 // getOrCreateIndex ensures the index exists.
 // If the index already exists, this is a no-op.
 func (c *OpenSearchClient) getOrCreateIndex(ctx context.Context, indexName string) error {
