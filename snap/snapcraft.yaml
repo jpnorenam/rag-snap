@@ -66,6 +66,16 @@ parts:
     stage-snaps:
       - yq # install hook
 
+  elasticdump:
+    plugin: nil
+    build-packages:
+      - nodejs
+      - npm
+    stage-packages:
+      - nodejs # runtime dependency: elasticdump shebang requires node on PATH
+    override-build: |
+      npm install -g elasticdump@6.124.2 --prefix "${CRAFT_PART_INSTALL}/usr"
+
   tika:
     plugin: nil
     build-packages:
