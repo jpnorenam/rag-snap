@@ -3,3 +3,18 @@ CLAUDE.md
 *.snap
 /bin
 *__debug*
+# Snapcraft build directories
+parts/
+stage/
+prime/
+*.snap
+# Snapcraft & compile artifacts
+.craft/
+rag
+# Local test environment files
+dev.config
+bin-fake/
+snapctl-fake
+# Test files
+samples/
+batch-*.yaml

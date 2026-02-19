@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	opensearchapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 )
@@ -21,9 +22,10 @@ const (
 	bidirectionalLinks = 16
 )
 
+// CC: lowercase suffix — OpenSearch rejects index names with uppercase letters
 // FullIndexName returns the full index name for a given suffix.
 func FullIndexName(suffix string) string {
-	return fmt.Sprintf("%s-%s", indexAlias, suffix)
+	return fmt.Sprintf("%s-%s", indexAlias, strings.ToLower(suffix))
 }
 
 // KnowledgeBaseNameFromIndex extracts the knowledge base name from a full index name.
