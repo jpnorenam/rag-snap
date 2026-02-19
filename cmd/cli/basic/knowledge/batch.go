@@ -53,17 +53,27 @@ func ProcessBatch(ctx context.Context, client *OpenSearchClient, tikaURL string,
 }
 
 func processSingleJob(ctx context.Context, client *OpenSearchClient, tikaURL string, job BatchJob) error {
-	if job.Type != "file" {
-		return fmt.Errorf("unsupported job type: %s", job.Type)
-	}
-
-	absPath, err := filepath.Abs(job.Source)
-	if err != nil {
-		return fmt.Errorf("resolving path: %w", err)
-	}
-
-	if _, err := os.Stat(absPath); os.IsNotExist(err) {
-		return fmt.Errorf("file not found: %s", absPath)
+	// CC: resolve the source to a local file path depending on job type
+	var absPath string
+	switch job.Type {
+	case "file":
+		path, err := filepath.Abs(job.Source)
+		if err != nil {
+			return fmt.Errorf("resolving path: %w", err)
+		}
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return fmt.Errorf("file not found: %s", path)
+		}
+		absPath = path
+	case "url":
+		crawled, _, cleanup, err := processing.CrawlURL(job.Source)
+		if err != nil {
+			return fmt.Errorf("crawling URL: %w", err)
+		}
+		defer cleanup()
+		absPath = crawled
+	default:
+		return fmt.Errorf("unsupported job type %q (supported: file, url)", job.Type)
 	}
 
 	// CC: use FullIndexName so bulk goes to "rag-snap-context-<kb>" (with KNN mappings), not the raw KB name
