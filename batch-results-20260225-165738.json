@@ -1,0 +1,31 @@
+{
+  "generated_at": "2026-02-25T19:57:38Z",
+  "model": "mistral.mistral-large-3-675b-instruct",
+  "results": [
+    {
+      "id": "what-is-ubuntu-pro",
+      "question": "What is Ubuntu Pro and what does it include?",
+      "answer": "Ubuntu Pro is a subscription service by Canonical for extended security, compliance, and support. It includes:\n\n- **10 years of security updates** for over 2,300 packages in the *Main* and *Universe* repositories.\n- **Kernel Livepatch** for zero-downtime kernel updates.\n- **FIPS 140-2 certified modules** and **CIS compliance tools** for regulatory needs.\n- **Ubuntu Security Guide (USG)** for automated hardening.\n- **24/7 enterprise support** (for paid subscriptions) (Canonical, Ubuntu Pro).\n\nFree for personal use (up to 5 machines)."
+    },
+    {
+      "id": "security-coverage",
+      "question": "What security coverage and CVE patching does Ubuntu Pro provide?",
+      "answer": "Ubuntu Pro provides **security coverage for CVEs** across the main, universe, and non-free repositories for 10 years, including **esm-apps** and **esm-infra** for extended support. It also includes **automated CVE patching** with prioritized fixes and livepatch for kernel updates without reboots (*Canonical, 2023*)."
+    },
+    {
+      "id": "personal-plan",
+      "question": "What are the terms and limitations of the Ubuntu Pro Personal plan?",
+      "answer": "Ubuntu Pro Personal is free for up to 5 machines, includes security patching for 10 years, and covers the full Ubuntu Main and Universe repositories (context). No commercial support or FIPS certification is included."
+    },
+    {
+      "id": "assurance-scope",
+      "question": "What does the Ubuntu Pro Assurance program cover?",
+      "answer": "Ubuntu Pro Assurance covers security patching for CVEs in the Main and Universe repositories, extended support (10 years), FIPS-certified modules, Livepatch for kernel updates without reboot, and compliance features (CIS, DISA-STIG) (Ubuntu Pro documentation)."
+    },
+    {
+      "id": "service-terms",
+      "question": "What are the key obligations and restrictions in the Ubuntu Pro service terms?",
+      "answer": "Insufficient context to answer this question."
+    }
+  ]
+}
