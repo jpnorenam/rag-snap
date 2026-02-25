@@ -22,6 +22,7 @@ using any `knowledge` sub-command.
 | `knowledge list --sources` | List ingested source documents |
 | `knowledge create <name>` | Create a new knowledge base |
 | `knowledge ingest <name> <source-id>` | Ingest a document into a knowledge base |
+| `knowledge ingest-batch <config.yaml>` | Ingest multiple documents from a YAML config file |
 | `knowledge search <query>` | Semantic + lexical search across one or more bases |
 | `knowledge metadata <name> <source-id>` | Show metadata for an ingested source |
 | `knowledge forget <name> <source-id>` | Remove a source and all its chunks |
@@ -34,7 +35,8 @@ using any `knowledge` sub-command.
 ```
 1. knowledge init          # once per OpenSearch cluster
 2. knowledge create <name> # once per topic / project
-3. knowledge ingest …      # repeat for each document
+3. knowledge ingest …          # repeat for each document
+   knowledge ingest-batch …    # or ingest many at once from a YAML file
 4. knowledge search …      # ad-hoc or used by chat
 5. knowledge forget …      # when a source is outdated
 6. knowledge delete …      # when a whole base is no longer needed
@@ -167,6 +169,77 @@ Ingested 37 chunks into index 'rag-kb-wiki-rag'
 
 ---
 
+### `knowledge ingest-batch`
+
+Ingest multiple documents in a single command using a YAML configuration file. Each job is
+processed sequentially; a failure on one job is reported and skipped — the remaining jobs
+continue.
+
+```
+rag knowledge ingest-batch <config.yaml>
+```
+
+#### YAML schema
+
+```yaml
+version: "1.0"
+jobs:
+  - type: file | url        # "file" for local paths, "url" for static web pages
+    source: <path or URL>   # absolute or relative path, or full https:// URL
+    name: <source_id>       # unique identifier for this source (optional, defaults to filename)
+    target_kb: <name>       # knowledge base to ingest into (optional, defaults to "default")
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `type` | Yes | `file` for a local file, `url` for a static web page |
+| `source` | Yes | Absolute/relative file path or `https://` URL |
+| `name` | No | Source identifier used in `metadata`, `forget`, and search results. Defaults to the filename. Must be unique across the cluster. |
+| `target_kb` | No | Knowledge base name. Defaults to `default`. The base must already exist (`knowledge create`). Knowledge base names are case-insensitive. |
+
+**Example config — mixed files and URLs**
+
+```yaml
+version: "1.0"
+jobs:
+  - type: file
+    source: "/home/user/docs/api-reference.pdf"
+    name: "api-reference"
+    target_kb: "project-docs"
+
+  - type: file
+    source: "/home/user/docs/architecture.pdf"
+    name: "architecture"
+    target_kb: "project-docs"
+
+  - type: url
+    source: "https://example.com/blog/release-notes"
+    name: "release-notes"
+    target_kb: "project-docs"
+```
+
+**Example — run a batch**
+
+```bash
+$ rag knowledge ingest-batch ~/docs/batch.yaml
+
+Found 3 jobs in batch file version 1.0
+[1/3] Processing: /home/user/docs/api-reference.pdf
+✅ Success: /home/user/docs/api-reference.pdf
+[2/3] Processing: /home/user/docs/architecture.pdf
+✅ Success: /home/user/docs/architecture.pdf
+[3/3] Processing: https://example.com/blog/release-notes
+✅ Success: https://example.com/blog/release-notes
+```
+
+> **Note on errors:** A failed job prints the reason and moves on to the next job. Run
+> `knowledge list --sources` after the batch to verify which sources were successfully indexed.
+
+> **Note on URLs:** The same restriction as `knowledge ingest --url` applies — pages that require
+> JavaScript to render will fail. Save the rendered HTML locally and use `type: file` instead.
+
+---
+
 ### `knowledge search`
 
 Run a hybrid semantic + lexical search across one or more knowledge bases.
@@ -294,11 +367,13 @@ rag knowledge init
 # 2. Create a knowledge base for project documentation
 rag knowledge create project-docs
 
-# 3. Ingest documents
+# 3. Ingest documents (one at a time, or all at once with a batch file)
 rag knowledge ingest project-docs design-doc   --file ~/docs/design.pdf
 rag knowledge ingest project-docs api-ref      --file ~/docs/api-reference.html
 rag knowledge ingest project-docs release-blog \
     --url https://example.com/blog/v2-release
+# alternatively:
+rag knowledge ingest-batch ~/docs/project-docs-batch.yaml
 
 # 4. Verify what was ingested
 rag knowledge list project-docs --sources
