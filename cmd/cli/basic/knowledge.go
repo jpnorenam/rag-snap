@@ -572,8 +572,6 @@ func (cmd *knowledgeCommand) listSources(ctx context.Context, client *knowledge.
 	return nil
 }
 
-// Definition of the new batch ingest command, which processes multiple documents defined in a YAML config file.
-
 func (cmd *knowledgeCommand) batchIngestCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "ingest-batch [config.yaml]",
@@ -582,23 +580,19 @@ func (cmd *knowledgeCommand) batchIngestCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			yamlFile := args[0]
-			ctx := context.Background() // O cmd.Context si prefieres heredar
+			ctx := context.Background()
 
-			// 1. Get URLs from the server
 			apiUrls, err := serverApiUrls(cmd.Context)
 			if err != nil {
 				return fmt.Errorf("getting server API URLs: %w", err)
 			}
-			tikaURL := apiUrls[tika] // 'tika' is defined in the common package as a constant key for retrieving the Tika URL.
 
-			// 2. Initialize OpenSearch client
 			client, err := cmd.opensearchClient()
 			if err != nil {
 				return err
 			}
 
-			// 3. Execute the batch processing function defined in the knowledge package, passing the client, Tika URL, and YAML file path.
-			return knowledge.ProcessBatch(ctx, client, tikaURL, yamlFile)
+			return knowledge.ProcessBatch(ctx, client, apiUrls[tika], yamlFile)
 		},
 	}
 }

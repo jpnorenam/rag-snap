@@ -19,7 +19,6 @@ type Document struct {
 	CreatedAt string `json:"created_at"`
 }
 
-// CC: added FirstError to surface the OpenSearch reason from the first failed bulk item
 // BulkResult contains statistics about a completed bulk indexing operation.
 type BulkResult struct {
 	Total      int
@@ -82,7 +81,6 @@ func (c *OpenSearchClient) bulkIndex(ctx context.Context, indexName string, docu
 		return nil, fmt.Errorf("bulk request returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// CC: parse Error as a struct so we can extract the human-readable reason
 	var bulkResp struct {
 		Errors bool `json:"errors"`
 		Items  []struct {

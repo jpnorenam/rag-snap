@@ -22,8 +22,8 @@ const (
 	bidirectionalLinks = 16
 )
 
-// CC: lowercase suffix — OpenSearch rejects index names with uppercase letters
 // FullIndexName returns the full index name for a given suffix.
+// The suffix is lowercased because OpenSearch rejects index names containing uppercase letters.
 func FullIndexName(suffix string) string {
 	return fmt.Sprintf("%s-%s", indexAlias, strings.ToLower(suffix))
 }
