@@ -397,6 +397,15 @@ The `chat` command (alias `c`) opens an interactive REPL that sends your prompts
 server and, when a knowledge base is available, automatically retrieves relevant context before
 each answer (RAG).
 
+### Sub-commands at a glance
+
+| Command | Description |
+|---|---|
+| `chat [model]` | Open an interactive RAG chat session |
+| `chat batch <manifest.yaml>` | Run questions from a YAML file and export answers to JSON |
+
+---
+
 ### Starting a session
 
 ```
@@ -427,6 +436,103 @@ CHAT_API_KEY=sk-… rag chat
 ```
 
 The client waits up to 60 seconds for the model to finish loading before giving up.
+
+---
+
+### `chat batch`
+
+Run a list of questions from a YAML manifest through the RAG+LLM pipeline non-interactively.
+Each question is answered in sequence, printed to the terminal, and the full set of results is
+written to a timestamped JSON file in the current working directory.
+
+This is the recommended approach for batch Q&A workflows such as RFP responses, compliance
+questionnaires, and documentation audits.
+
+```
+rag chat batch <manifest.yaml>
+```
+
+#### YAML schema
+
+```yaml
+version: "1.0"
+model: <model_id>             # optional; inherits from config or auto-detected from server
+knowledge_bases:              # optional; defaults to the default knowledge base
+  - <name>
+questions:
+  - id: <identifier>          # optional; included in the output file for traceability
+    question: <text>
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `version` | Yes | Schema version. Use `"1.0"`. |
+| `model` | No | LLM model identifier. Falls back to the `chat.model` config value, then to server auto-detection. |
+| `knowledge_bases` | No | List of knowledge base names to search for context. Defaults to the `default` base. |
+| `questions[].id` | No | Identifier for the question, used in the output JSON for traceability. |
+| `questions[].question` | Yes | The question text sent to the LLM. |
+
+**Example manifest**
+
+```yaml
+version: "1.0"
+knowledge_bases:
+  - project-docs
+questions:
+  - id: "security-policy"
+    question: "What is the data retention policy?"
+
+  - id: "sla"
+    question: "What are the service level objectives?"
+
+  - id: "compliance"
+    question: "Which compliance certifications does the product hold?"
+```
+
+**Example — run a batch**
+
+```bash
+$ rag chat batch ~/rfp/questions.yaml
+
+Found 3 questions in batch manifest version 1.0
+[1/3] Question: What is the data retention policy?
+Answer: Data is retained for 90 days by default, configurable up to 7 years for compliance tiers.
+---
+[2/3] Question: What are the service level objectives?
+Answer: The product targets 99.9% uptime with a 4-hour RTO and 1-hour RPO for business-critical tiers.
+---
+[3/3] Question: Which compliance certifications does the product hold?
+Answer: The product holds SOC 2 Type II, ISO 27001, and FedRAMP Moderate certifications.
+---
+
+Results saved to batch-results-20250225-143022.json
+```
+
+**Output file format**
+
+Results are written to `batch-results-YYYYMMDD-HHMMSS.json` in the current working directory:
+
+```json
+{
+  "generated_at": "2025-02-25T14:30:22Z",
+  "model": "mistral.mistral-large-3-675b-instruct",
+  "results": [
+    {
+      "id": "security-policy",
+      "question": "What is the data retention policy?",
+      "answer": "Data is retained for 90 days by default, configurable up to 7 years for compliance tiers."
+    }
+  ]
+}
+```
+
+> **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run)
+> prints the error and moves on. All answers collected before the failure are still written to the
+> output file.
+
+> **Note on model selection:** If the inference server does not support model auto-detection
+> (e.g. AWS Bedrock), set the model explicitly in the manifest or configure a default with
+> `sudo rag set --package chat.model="<model-id>"` once after installation.
 
 ---
 

@@ -49,6 +49,14 @@ func LoadBatchManifest(path string) (*BatchManifest, error) {
 	if err := yaml.Unmarshal(data, &manifest); err != nil {
 		return nil, fmt.Errorf("parsing manifest yaml: %w", err)
 	}
+	if len(manifest.Questions) == 0 {
+		return nil, fmt.Errorf("manifest contains no questions")
+	}
+	for i, q := range manifest.Questions {
+		if q.Question == "" {
+			return nil, fmt.Errorf("question %d has an empty question field", i+1)
+		}
+	}
 	return &manifest, nil
 }
 
@@ -86,20 +94,15 @@ func ProcessBatchChat(
 		ActiveIndexes:    activeIndexes,
 	}
 
-	// System-only message history: no prior turns, so rewriteSearchQuery performs
-	// keyword extraction from each question in isolation.
-	systemMessages := []openai.ChatCompletionMessageParamUnion{
-		openai.SystemMessage(ragSystemPrompt),
-	}
-
 	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)
 
-	var results []BatchResult
+	results := make([]BatchResult, 0, len(manifest.Questions))
 
 	for i, q := range manifest.Questions {
 		fmt.Printf("[%d/%d] Question: %s\n", i+1, len(manifest.Questions), q.Question)
 
-		lexicalQuery := rewriteSearchQuery(client, modelName, systemMessages, q.Question, verbose)
+		// nil history: each question is extracted in isolation, with no prior conversation context.
+		lexicalQuery := rewriteSearchQuery(client, modelName, nil, q.Question, verbose)
 		ragContext := retrieveContext(session, q.Question, lexicalQuery, verbose)
 
 		llmPrompt := q.Question
@@ -115,7 +118,7 @@ func ProcessBatchChat(
 			Model: modelName,
 		})
 		if err != nil {
-			fmt.Printf("❌ Error on question %d: %v\n", i+1, err)
+			fmt.Printf("error on question %d: %v\n", i+1, err)
 			continue
 		}
 
@@ -133,9 +136,10 @@ func ProcessBatchChat(
 		})
 	}
 
-	filename := fmt.Sprintf("batch-results-%s.json", time.Now().Format("20060102-150405"))
+	now := time.Now()
+	filename := fmt.Sprintf("batch-results-%s.json", now.Format("20060102-150405"))
 	out := batchOutput{
-		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		GeneratedAt: now.UTC().Format(time.RFC3339),
 		Model:       modelName,
 		Results:     results,
 	}
