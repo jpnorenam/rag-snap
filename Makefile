@@ -39,6 +39,13 @@ vet:
 	go vet ./...
 
 # ------------------------------------------------------------------------------
+#  Lint
+
+.PHONY: lint
+lint:
+	golangci-lint run ./...
+
+# ------------------------------------------------------------------------------
 #  Testing
 
 .PHONY: test
@@ -64,4 +71,4 @@ clean:
 #  All
 
 .PHONY: all
-all: tidy fmt vet test build
+all: tidy fmt vet lint test build
