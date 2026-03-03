@@ -69,6 +69,8 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 		cmd.forgetCommand(),
 		cmd.metadataCommand(),
 		cmd.deleteCommand(),
+		// New command added
+		cmd.batchIngestCommand(),
 	)
 
 	return cobraCmd
@@ -278,8 +280,9 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 
 			fmt.Printf("Ingested %d/%d chunks into index '%s'\n",
 				bulkResult.Indexed, bulkResult.Total, indexName)
+			// CC: print OpenSearch error reason so failures are self-diagnosable
 			if bulkResult.Errors > 0 {
-				fmt.Printf("  Errors: %d\n", bulkResult.Errors)
+				fmt.Printf("  Errors: %d (%s)\n", bulkResult.Errors, bulkResult.FirstError)
 			}
 
 			return nil
@@ -567,4 +570,29 @@ func (cmd *knowledgeCommand) listSources(ctx context.Context, client *knowledge.
 	}
 
 	return nil
+}
+
+func (cmd *knowledgeCommand) batchIngestCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ingest-batch [config.yaml]",
+		Short: "Ingest multiple documents from a YAML configuration file",
+		Long:  `Reads a YAML file defining a list of documents and ingests them into OpenSearch.`,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			yamlFile := args[0]
+			ctx := context.Background()
+
+			apiUrls, err := serverApiUrls(cmd.Context)
+			if err != nil {
+				return fmt.Errorf("getting server API URLs: %w", err)
+			}
+
+			client, err := cmd.opensearchClient()
+			if err != nil {
+				return err
+			}
+
+			return knowledge.ProcessBatch(ctx, client, apiUrls[tika], yamlFile)
+		},
+	}
 }

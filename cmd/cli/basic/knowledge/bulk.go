@@ -21,9 +21,10 @@ type Document struct {
 
 // BulkResult contains statistics about a completed bulk indexing operation.
 type BulkResult struct {
-	Total   int
-	Indexed int
-	Errors  int
+	Total      int
+	Indexed    int
+	Errors     int
+	FirstError string // reason from the first failed item, empty on full success
 }
 
 // BulkIndex indexes documents into the specified OpenSearch index
@@ -85,7 +86,10 @@ func (c *OpenSearchClient) bulkIndex(ctx context.Context, indexName string, docu
 		Items  []struct {
 			Index struct {
 				Status int `json:"status"`
-				Error  any `json:"error"`
+				Error  struct {
+					Type   string `json:"type"`
+					Reason string `json:"reason"`
+				} `json:"error"`
 			} `json:"index"`
 		} `json:"items"`
 	}
@@ -102,6 +106,9 @@ func (c *OpenSearchClient) bulkIndex(ctx context.Context, indexName string, docu
 			result.Indexed++
 		} else {
 			result.Errors++
+			if result.FirstError == "" && item.Index.Error.Reason != "" {
+				result.FirstError = fmt.Sprintf("%s: %s", item.Index.Error.Type, item.Index.Error.Reason)
+			}
 		}
 	}
 
