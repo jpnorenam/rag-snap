@@ -36,10 +36,10 @@ using any `knowledge` sub-command.
 1. knowledge init          # once per OpenSearch cluster
 2. knowledge create <name> # once per topic / project
 3. knowledge ingest …          # repeat for each document
-   knowledge ingest-batch …    # or ingest many at once from a YAML file
-4. knowledge search …      # ad-hoc or used by chat
-5. knowledge forget …      # when a source is outdated
-6. knowledge delete …      # when a whole base is no longer needed
+4. knowledge ingest-batch <yaml>    # or ingest many at once from a YAML file
+5. knowledge search …      # ad-hoc or used by chat
+6. knowledge forget …      # when a source is outdated
+7. knowledge delete …      # when a whole base is no longer needed
 ```
 
 ---
