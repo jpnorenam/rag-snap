@@ -34,7 +34,9 @@ echo '-Xmx8g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.opti
 sudo snap restart opensearch
 ```
 
-#### (Recommended) Use [AWS Bedrock as the Inference Server](https://github.com/jpnorenam/rag-snap/blob/feature/bulk-question-answer/docs/bedrock_guide.md)
+#### (Recommended) Use [AWS Bedrock as the Inference Server](docs/bedrock_guide.md)
+
+> **Warning:** When using a third-party inference API, your prompts and retrieved context are sent to an external service. Do not ingest or ask about confidential information in that configuration.
 
 #### (Alternative) Install a [Inference snap](https://github.com/canonical/inference-snaps) of your selection.
 
@@ -77,6 +79,10 @@ sudo rag set --package knowledge.http.tls="true"
 sudo rag set --package tika.http.path="tika"
 sudo rag set --package tika.http.port="9998"
 sudo rag set --package tika.http.host="127.0.0.1"
+
+export CHAT_API_KEY="bedrock-api-key-****"
+
+rag chat mistral.mistral-large-3-675b-instruct
 ```
 
 #### If you are using an Inference Snap
@@ -161,7 +167,9 @@ Using inference server at http://127.0.0.1:8324/v1
 Using the `default` knowledge base at https://127.0.0.1:9200
 	> Use `/use-knowledge` to see other available knowledge bases
 
-Type your prompt, then ENTER to submit. CTRL-C to quit.
+Type your prompt, then ENTER to submit. CTRL-C to qexport CHAT_API_KEY="bedrock-api-key-****"
+
+rag chat mistral.mistral-large-3-675b-instructuit.
 » /use-knowledge 
 ┃ Select active knowledge bases
 ┃   • default (27 docs, 671.1kb)
@@ -170,22 +178,5 @@ x toggle • ↑ up • ↓ down • / filter • enter submit • ctrl+a select
 
 » This a relevant question that can be answered from the example knowledge base ... ?
 ```
-
-### Using an external inference API
-
-In addition to the Inference snap, any OpenAI-compatible API can be used. For example, AWS Bedrock:
-
-```bash
-sudo rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
-sudo rag set --package chat.http.port="443"
-sudo rag set --package chat.http.tls="true"
-sudo rag set --package chat.http.path="openai/v1"
-
-export CHAT_API_KEY="bedrock-api-key-****"
-
-rag chat mistral.mistral-large-3-675b-instruct
-```
-
-> **Warning:** When using a third-party inference API, your prompts and retrieved context are sent to an external service. Do not ingest or ask about confidential information in that configuration.
 
 For a more detail usage, please see the [usage docs](docs/usage.md).
