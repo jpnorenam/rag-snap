@@ -34,7 +34,9 @@ echo '-Xmx8g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.opti
 sudo snap restart opensearch
 ```
 
-#### (Recommended) Install a [Inference snap](https://github.com/canonical/inference-snaps) of your selection.
+#### (Recommended) Use [AWS Bedrock as the Inference Server](https://github.com/jpnorenam/rag-snap/blob/feature/bulk-question-answer/docs/bedrock_guide.md)
+
+#### (Alternative) Install a [Inference snap](https://github.com/canonical/inference-snaps) of your selection.
 
 Ensure you are using the right engine available in your machine for better performance:
 ```bash
@@ -62,6 +64,22 @@ sudo snap install --dangerous ./rag_*.snap
 ### Package setup
 
 The package comes with sensible defaults set by the install hook. Override them only if your services run on non-default hosts or ports:
+
+#### If you are using Bedrock as the Inference Server
+```bash
+sudo rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
+sudo rag set --package chat.http.port="443"
+sudo rag set --package chat.http.tls="true"
+sudo rag set --package chat.http.path="openai/v1"
+sudo rag set --package knowledge.http.host="127.0.0.1"
+sudo rag set --package knowledge.http.port="9200"
+sudo rag set --package knowledge.http.tls="true"
+sudo rag set --package tika.http.path="tika"
+sudo rag set --package tika.http.port="9998"
+sudo rag set --package tika.http.host="127.0.0.1"
+```
+
+#### If you are using an Inference Snap
 ```bash
 sudo rag set --package chat.http.host="127.0.0.1"
 sudo rag set --package chat.http.port="8324"
