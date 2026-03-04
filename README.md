@@ -167,9 +167,10 @@ Using inference server at http://127.0.0.1:8324/v1
 Using the `default` knowledge base at https://127.0.0.1:9200
 	> Use `/use-knowledge` to see other available knowledge bases
 
-Type your prompt, then ENTER to submit. CTRL-C to qexport CHAT_API_KEY="bedrock-api-key-****"
+Type your prompt, then ENTER to submit. CTRL-C to quit
+export CHAT_API_KEY="bedrock-api-key-****"
 
-rag chat mistral.mistral-large-3-675b-instructuit.
+rag chat mistral.mistral-large-3-675b-instruct
 » /use-knowledge 
 ┃ Select active knowledge bases
 ┃   • default (27 docs, 671.1kb)

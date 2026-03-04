@@ -111,9 +111,14 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 	//rl.CaptureExitSignal() // Should readline capture and handle the exit signal? - Can be used to interrupt the chat response stream.
 	log.SetOutput(rl.Stderr())
 
+	initialSystemPrompt := "You are a helpful assistant."
+	if knowledgeClient != nil {
+		initialSystemPrompt = ragSystemPrompt
+	}
+
 	params := openai.ChatCompletionNewParams{
 		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage("You are a helpful assistant."),
+			openai.SystemMessage(initialSystemPrompt),
 		},
 		Model: llmModelName,
 	}
