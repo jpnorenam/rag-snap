@@ -27,10 +27,10 @@ API keys]** in:
 
 7. Set the **snap configuration** and **environment variable** with your API key:
 
-`sudo rag set-package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"`\
-`sudo rag set -package chat.http.port="443"`\
-`sudo rag set -package chat.http.tls="true"`\
-`sudo rag set -package chat.http.path="openai/v1"`\
+`sudo rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"`\
+`sudo rag set --package chat.http.port="443"`\
+`sudo rag set --package chat.http.tls="true"`\
+`sudo rag set --package chat.http.path="openai/v1"`\
 `export CHAT_API_KEY="bedrock-api-key-YmVkcm9jay5hbWF6b25hd3MuY29tLY..."`
 
 Note: ensure the API key was generated in the **same AWS region** from your chat.http.host
