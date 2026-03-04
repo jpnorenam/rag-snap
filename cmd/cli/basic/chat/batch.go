@@ -63,18 +63,18 @@ func LoadBatchManifest(path string) (*BatchManifest, error) {
 // ProcessBatchChat runs each question in the manifest through the RAG+LLM pipeline,
 // prints Q&A pairs to the terminal, and writes all results to a timestamped JSON file.
 func ProcessBatchChat(
-	baseUrl string,
+	baseURL string,
 	knowledgeClient *knowledge.OpenSearchClient,
 	embeddingModelID string,
 	manifest *BatchManifest,
 	verbose bool,
 ) error {
-	client := openai.NewClient(clientOptions(baseUrl)...)
+	client := openai.NewClient(clientOptions(baseURL)...)
 
 	modelName := manifest.Model
 	if modelName == "" {
 		var err error
-		modelName, err = findModelName(baseUrl, verbose)
+		modelName, err = findModelName(baseURL, verbose)
 		if err != nil {
 			return fmt.Errorf("resolving model name: %w", err)
 		}
@@ -96,6 +96,7 @@ func ProcessBatchChat(
 
 	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)
 
+	ctx := context.Background()
 	results := make([]BatchResult, 0, len(manifest.Questions))
 
 	for i, q := range manifest.Questions {
@@ -105,14 +106,16 @@ func ProcessBatchChat(
 		lexicalQuery := rewriteSearchQuery(client, modelName, nil, q.Question, verbose)
 		ragContext := retrieveContext(session, q.Question, lexicalQuery, verbose)
 
+		systemPrompt := "You are a helpful assistant."
 		llmPrompt := q.Question
 		if ragContext != "" {
+			systemPrompt = ragSystemPrompt
 			llmPrompt = buildRAGPrompt(ragContext, q.Question)
 		}
 
-		resp, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
+		resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 			Messages: []openai.ChatCompletionMessageParamUnion{
-				openai.SystemMessage(ragSystemPrompt),
+				openai.SystemMessage(systemPrompt),
 				openai.UserMessage(llmPrompt),
 			},
 			Model: modelName,
@@ -134,6 +137,10 @@ func ProcessBatchChat(
 			Question: q.Question,
 			Answer:   answer,
 		})
+	}
+
+	if len(results) == 0 {
+		return fmt.Errorf("all questions failed; no results to write")
 	}
 
 	now := time.Now()
