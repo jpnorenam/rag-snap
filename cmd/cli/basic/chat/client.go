@@ -24,8 +24,8 @@ import (
 	"github.com/openai/openai-go/v3/packages/ssestream"
 )
 
-func clientOptions(baseUrl string) []option.RequestOption {
-	opts := []option.RequestOption{option.WithBaseURL(baseUrl)}
+func clientOptions(baseURL string) []option.RequestOption {
+	opts := []option.RequestOption{option.WithBaseURL(baseURL)}
 	if key := os.Getenv("CHAT_API_KEY"); key != "" {
 		opts = append(opts, option.WithAPIKey(key))
 	}
@@ -35,8 +35,8 @@ func clientOptions(baseUrl string) []option.RequestOption {
 // FindModelName queries the OpenAI-compatible API for available models
 // and returns the first model name. Returns an error if the server is
 // unreachable or returns no models.
-func FindModelName(baseUrl string) (string, error) {
-	modelService := openai.NewModelService(clientOptions(baseUrl)...)
+func FindModelName(baseURL string) (string, error) {
+	modelService := openai.NewModelService(clientOptions(baseURL)...)
 	modelPage, err := modelService.List(context.Background())
 	if err != nil {
 		return "", err
@@ -47,11 +47,11 @@ func FindModelName(baseUrl string) (string, error) {
 	return modelPage.Data[0].ID, nil
 }
 
-func Client(baseUrl string, knowledgeClient *knowledge.OpenSearchClient, embeddingModelID string, llmModelName string, verbose bool) error {
-	fmt.Printf("Using inference server at %v\n", baseUrl)
+func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddingModelID string, llmModelName string, verbose bool) error {
+	fmt.Printf("Using inference server at %v\n", baseURL)
 
 	// Check if server is reachable
-	if err := handshake(baseUrl); err != nil {
+	if err := handshake(baseURL); err != nil {
 		return err
 	}
 
@@ -68,7 +68,7 @@ func Client(baseUrl string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 
 	if llmModelName == "" {
 		var err error
-		llmModelName, err = findModelName(baseUrl, verbose)
+		llmModelName, err = findModelName(baseURL, verbose)
 		if err != nil {
 			return err
 		}
@@ -78,7 +78,7 @@ func Client(baseUrl string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 	}
 
 	// OpenAI API Client
-	client := openai.NewClient(clientOptions(baseUrl)...)
+	client := openai.NewClient(clientOptions(baseURL)...)
 
 	if err := checkServer(client, llmModelName); err != nil {
 		return err
@@ -111,9 +111,14 @@ func Client(baseUrl string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 	//rl.CaptureExitSignal() // Should readline capture and handle the exit signal? - Can be used to interrupt the chat response stream.
 	log.SetOutput(rl.Stderr())
 
+	initialSystemPrompt := "You are a helpful assistant."
+	if knowledgeClient != nil {
+		initialSystemPrompt = ragSystemPrompt
+	}
+
 	params := openai.ChatCompletionNewParams{
 		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage("You are a helpful assistant."),
+			openai.SystemMessage(initialSystemPrompt),
 		},
 		Model: llmModelName,
 	}
@@ -165,11 +170,11 @@ func Client(baseUrl string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 	return nil
 }
 
-func handshake(baseUrl string) error {
+func handshake(baseURL string) error {
 	stopProgress := common.StartProgressSpinner("Connecting to server")
 	defer stopProgress()
 
-	parsedURL, err := url.Parse(baseUrl)
+	parsedURL, err := url.Parse(baseURL)
 	if err != nil {
 		return fmt.Errorf("invalid base URL: %w", err)
 	}
@@ -243,11 +248,11 @@ func checkServer(client openai.Client, modelName string) error {
 	}
 }
 
-func findModelName(baseUrl string, verbose bool) (string, error) {
+func findModelName(baseURL string, verbose bool) (string, error) {
 	stopProgress := common.StartProgressSpinner("Looking up model name")
 	defer stopProgress()
 
-	modelService := openai.NewModelService(clientOptions(baseUrl)...)
+	modelService := openai.NewModelService(clientOptions(baseURL)...)
 
 	const (
 		retryInterval = 5 * time.Second

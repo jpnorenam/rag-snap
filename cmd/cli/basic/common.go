@@ -19,6 +19,7 @@ const (
 	confOpenAiHttpPort = "chat.http.port"
 	confOpenAiHttpPath = "chat.http.path"
 	confOpenAiHttpTLS  = "chat.http.tls"
+	confChatModel      = "chat.model"
 
 	// [knowledge] OpenSearch snap API URLs
 	opensearch             = "opensearch"
