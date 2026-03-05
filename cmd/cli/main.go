@@ -60,6 +60,7 @@ func main() {
 	rootCmd.AddCommand(
 		basic.StatusCommand(ctx),
 		basic.ChatCommand(ctx),
+		basic.AnswerCommand(ctx),
 		basic.KnowledgeCommand(ctx),
 	)
 
