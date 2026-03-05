@@ -65,6 +65,7 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 		cmd.listCommand(),
 		cmd.createCommand(),
 		cmd.ingestCommand(),
+		cmd.ingestBatchCommand(),
 		cmd.searchCommand(),
 		cmd.forgetCommand(),
 		cmd.metadataCommand(),
@@ -539,6 +540,27 @@ func (cmd *knowledgeCommand) listIndexes(ctx context.Context, client *knowledge.
 	}
 
 	return nil
+}
+
+func (cmd *knowledgeCommand) ingestBatchCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ingest-batch <config.yaml>",
+		Short: "Ingest multiple documents from a YAML configuration file",
+		Long: "Reads a YAML file defining a list of ingestion jobs and processes each one.\n" +
+			"Supported job types: file, url, github-repo, gitea-repo.",
+		Args: cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			apiUrls, err := serverApiUrls(cmd.Context)
+			if err != nil {
+				return fmt.Errorf("getting server API URLs: %w", err)
+			}
+			client, err := cmd.opensearchClient()
+			if err != nil {
+				return err
+			}
+			return knowledge.ProcessBatch(context.Background(), client, apiUrls[tika], args[0])
+		},
+	}
 }
 
 // listSources lists all ingested source documents, optionally filtered by index name.

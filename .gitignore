@@ -3,22 +3,18 @@ CLAUDE.md
 *.snap
 /bin
 *__debug*
-# Snapcraft build directories
-parts/
-stage/
-prime/
-*.snap
-# Snapcraft & compile artifacts
-.craft/
-rag
-# Local test environment files
-dev.config
-bin-fake/
-snapctl-fake
-# Test files
-samples/
-batch-*.yaml
+# Test Files
 *.json
-batch-*.json
-ubuntu-pro-questions.yaml
-cli
+dev.config 
+/cli
+snapctl-fake
+rag
+# Folders
+.craft/
+bin-fake/
+parts/
+prime/
+samples/
+stage/
+test-kb/
+test-questions/
