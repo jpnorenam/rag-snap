@@ -1,5 +1,6 @@
 *.claude
 CLAUDE.md
+PLAN.md
 *.snap
 /bin
 *__debug*

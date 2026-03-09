@@ -69,12 +69,17 @@ parts:
   elasticdump:
     plugin: nil
     build-packages:
-      - nodejs
-      - npm
-    stage-packages:
-      - nodejs # runtime dependency: elasticdump shebang requires node on PATH
+      - curl
+      - xz-utils
     override-build: |
-      npm install -g elasticdump@6.124.2 --prefix "${CRAFT_PART_INSTALL}/usr"
+      # The Ubuntu nodejs package splits its built-in JS modules into separate
+      # .deb packages that are inaccessible inside snap strict confinement.
+      # Use the self-contained official Node.js tarball instead.
+      NODE_VERSION="20.19.0"
+      mkdir -p "${CRAFT_PART_INSTALL}/usr"
+      curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+        | tar -xJ --strip-components=1 -C "${CRAFT_PART_INSTALL}/usr"
+      "${CRAFT_PART_INSTALL}/usr/bin/npm" install -g elasticdump@6.124.2 --prefix "${CRAFT_PART_INSTALL}/usr"
 
   tika:
     plugin: nil
