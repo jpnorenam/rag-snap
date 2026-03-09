@@ -22,6 +22,7 @@ using any `knowledge` sub-command.
 | `knowledge list --sources` | List ingested source documents |
 | `knowledge create <name>` | Create a new knowledge base |
 | `knowledge ingest <name> <source-id>` | Ingest a document into a knowledge base |
+| `knowledge ingest-batch <config.yaml>` | Ingest multiple documents from a YAML config file |
 | `knowledge search <query>` | Semantic + lexical search across one or more bases |
 | `knowledge metadata <name> <source-id>` | Show metadata for an ingested source |
 | `knowledge forget <name> <source-id>` | Remove a source and all its chunks |
@@ -34,10 +35,11 @@ using any `knowledge` sub-command.
 ```
 1. knowledge init          # once per OpenSearch cluster
 2. knowledge create <name> # once per topic / project
-3. knowledge ingest …      # repeat for each document
-4. knowledge search …      # ad-hoc or used by chat
-5. knowledge forget …      # when a source is outdated
-6. knowledge delete …      # when a whole base is no longer needed
+3. knowledge ingest …          # repeat for each document
+4. knowledge ingest-batch <yaml>    # or ingest many at once from a YAML file
+5. knowledge search …      # ad-hoc or used by chat
+6. knowledge forget …      # when a source is outdated
+7. knowledge delete …      # when a whole base is no longer needed
 ```
 
 ---
@@ -164,6 +166,77 @@ Ingested 37 chunks into index 'rag-kb-wiki-rag'
 > **Note on JavaScript-heavy pages:** `--url` fetches and extracts static HTML. Pages that render
 > their content entirely in JavaScript (SPAs) will produce an error with a suggestion to save the
 > rendered page locally and use `--file` instead.
+
+---
+
+### `knowledge ingest-batch`
+
+Ingest multiple documents in a single command using a YAML configuration file. Each job is
+processed sequentially; a failure on one job is reported and skipped — the remaining jobs
+continue.
+
+```
+rag knowledge ingest-batch <config.yaml>
+```
+
+#### YAML schema
+
+```yaml
+version: "1.0"
+jobs:
+  - type: file | url        # "file" for local paths, "url" for static web pages
+    source: <path or URL>   # absolute or relative path, or full https:// URL
+    name: <source_id>       # unique identifier for this source (optional, defaults to filename)
+    target_kb: <name>       # knowledge base to ingest into (optional, defaults to "default")
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `type` | Yes | `file` for a local file, `url` for a static web page |
+| `source` | Yes | Absolute/relative file path or `https://` URL |
+| `name` | No | Source identifier used in `metadata`, `forget`, and search results. Defaults to the filename. Must be unique across the cluster. |
+| `target_kb` | No | Knowledge base name. Defaults to `default`. The base must already exist (`knowledge create`). Knowledge base names are case-insensitive. |
+
+**Example config — mixed files and URLs**
+
+```yaml
+version: "1.0"
+jobs:
+  - type: file
+    source: "/home/user/docs/api-reference.pdf"
+    name: "api-reference"
+    target_kb: "project-docs"
+
+  - type: file
+    source: "/home/user/docs/architecture.pdf"
+    name: "architecture"
+    target_kb: "project-docs"
+
+  - type: url
+    source: "https://example.com/blog/release-notes"
+    name: "release-notes"
+    target_kb: "project-docs"
+```
+
+**Example — run a batch**
+
+```bash
+$ rag knowledge ingest-batch ~/docs/batch.yaml
+
+Found 3 jobs in batch file version 1.0
+[1/3] Processing: /home/user/docs/api-reference.pdf
+✅ Success: /home/user/docs/api-reference.pdf
+[2/3] Processing: /home/user/docs/architecture.pdf
+✅ Success: /home/user/docs/architecture.pdf
+[3/3] Processing: https://example.com/blog/release-notes
+✅ Success: https://example.com/blog/release-notes
+```
+
+> **Note on errors:** A failed job prints the reason and moves on to the next job. Run
+> `knowledge list --sources` after the batch to verify which sources were successfully indexed.
+
+> **Note on URLs:** The same restriction as `knowledge ingest --url` applies — pages that require
+> JavaScript to render will fail. Save the rendered HTML locally and use `type: file` instead.
 
 ---
 
@@ -294,11 +367,13 @@ rag knowledge init
 # 2. Create a knowledge base for project documentation
 rag knowledge create project-docs
 
-# 3. Ingest documents
+# 3. Ingest documents (one at a time, or all at once with a batch file)
 rag knowledge ingest project-docs design-doc   --file ~/docs/design.pdf
 rag knowledge ingest project-docs api-ref      --file ~/docs/api-reference.html
 rag knowledge ingest project-docs release-blog \
     --url https://example.com/blog/v2-release
+# alternatively:
+rag knowledge ingest-batch ~/docs/project-docs-batch.yaml
 
 # 4. Verify what was ingested
 rag knowledge list project-docs --sources
@@ -321,6 +396,15 @@ rag knowledge delete project-docs
 The `chat` command (alias `c`) opens an interactive REPL that sends your prompts to the inference
 server and, when a knowledge base is available, automatically retrieves relevant context before
 each answer (RAG).
+
+### Sub-commands at a glance
+
+| Command | Description |
+|---|---|
+| `chat [model]` | Open an interactive RAG chat session |
+| `chat batch <manifest.yaml>` | Run questions from a YAML file and export answers to JSON |
+
+---
 
 ### Starting a session
 
@@ -352,6 +436,103 @@ CHAT_API_KEY=sk-… rag chat
 ```
 
 The client waits up to 60 seconds for the model to finish loading before giving up.
+
+---
+
+### `chat batch`
+
+Run a list of questions from a YAML manifest through the RAG+LLM pipeline non-interactively.
+Each question is answered in sequence, printed to the terminal, and the full set of results is
+written to a timestamped JSON file in the current working directory.
+
+This is the recommended approach for batch Q&A workflows such as RFP responses, compliance
+questionnaires, and documentation audits.
+
+```
+rag chat batch <manifest.yaml>
+```
+
+#### YAML schema
+
+```yaml
+version: "1.0"
+model: <model_id>             # optional; inherits from config or auto-detected from server
+knowledge_bases:              # optional; defaults to the default knowledge base
+  - <name>
+questions:
+  - id: <identifier>          # optional; included in the output file for traceability
+    question: <text>
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `version` | Yes | Schema version. Use `"1.0"`. |
+| `model` | No | LLM model identifier. Falls back to the `chat.model` config value, then to server auto-detection. |
+| `knowledge_bases` | No | List of knowledge base names to search for context. Defaults to the `default` base. |
+| `questions[].id` | No | Identifier for the question, used in the output JSON for traceability. |
+| `questions[].question` | Yes | The question text sent to the LLM. |
+
+**Example manifest**
+
+```yaml
+version: "1.0"
+knowledge_bases:
+  - project-docs
+questions:
+  - id: "security-policy"
+    question: "What is the data retention policy?"
+
+  - id: "sla"
+    question: "What are the service level objectives?"
+
+  - id: "compliance"
+    question: "Which compliance certifications does the product hold?"
+```
+
+**Example — run a batch**
+
+```bash
+$ rag chat batch ~/rfp/questions.yaml
+
+Found 3 questions in batch manifest version 1.0
+[1/3] Question: What is the data retention policy?
+Answer: Data is retained for 90 days by default, configurable up to 7 years for compliance tiers.
+---
+[2/3] Question: What are the service level objectives?
+Answer: The product targets 99.9% uptime with a 4-hour RTO and 1-hour RPO for business-critical tiers.
+---
+[3/3] Question: Which compliance certifications does the product hold?
+Answer: The product holds SOC 2 Type II, ISO 27001, and FedRAMP Moderate certifications.
+---
+
+Results saved to batch-results-20250225-143022.json
+```
+
+**Output file format**
+
+Results are written to `batch-results-YYYYMMDD-HHMMSS.json` in the current working directory:
+
+```json
+{
+  "generated_at": "2025-02-25T14:30:22Z",
+  "model": "mistral.mistral-large-3-675b-instruct",
+  "results": [
+    {
+      "id": "security-policy",
+      "question": "What is the data retention policy?",
+      "answer": "Data is retained for 90 days by default, configurable up to 7 years for compliance tiers."
+    }
+  ]
+}
+```
+
+> **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run)
+> prints the error and moves on. All answers collected before the failure are still written to the
+> output file.
+
+> **Note on model selection:** If the inference server does not support model auto-detection
+> (e.g. AWS Bedrock), set the model explicitly in the manifest or configure a default with
+> `sudo rag set --package chat.model="<model-id>"` once after installation.
 
 ---
 

@@ -21,11 +21,6 @@ sudo snap run opensearch.setup                  \
     --tls-init-setup yes
 ```
 
-Validate your OpenSearch snap node roles:
-```bash
-curl -k -u admin:admin https://localhost:9200/_cat/nodes?v
-```
-
 Increase the JVM heap size to fit the sentence-transformer and cross-encoder models (at least 6 GB is recommended; adjust to your machine's available RAM):
 ```bash
 echo '-Xms6g' | sudo tee /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
@@ -34,7 +29,16 @@ echo '-Xmx8g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.opti
 sudo snap restart opensearch
 ```
 
-#### (Recommended) Install a [Inference snap](https://github.com/canonical/inference-snaps) of your selection.
+Validate your OpenSearch snap node roles:
+```bash
+curl -k -u admin:admin https://localhost:9200/_cat/nodes?v
+```
+
+#### (Recommended) Use [AWS Bedrock as the Inference Server](docs/bedrock_guide.md)
+
+> **Warning:** When using a third-party inference API, your prompts and retrieved context are sent to an external service. Do not ingest or ask about confidential information in that configuration.
+
+#### (Alternative) Install a [Inference snap](https://github.com/canonical/inference-snaps) of your selection.
 
 Ensure you are using the right engine available in your machine for better performance:
 ```bash
@@ -62,6 +66,26 @@ sudo snap install --dangerous ./rag_*.snap
 ### Package setup
 
 The package comes with sensible defaults set by the install hook. Override them only if your services run on non-default hosts or ports:
+
+#### If you are using Bedrock as the Inference Server
+```bash
+sudo rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
+sudo rag set --package chat.http.port="443"
+sudo rag set --package chat.http.tls="true"
+sudo rag set --package chat.http.path="openai/v1"
+sudo rag set --package knowledge.http.host="127.0.0.1"
+sudo rag set --package knowledge.http.port="9200"
+sudo rag set --package knowledge.http.tls="true"
+sudo rag set --package tika.http.path="tika"
+sudo rag set --package tika.http.port="9998"
+sudo rag set --package tika.http.host="127.0.0.1"
+
+export CHAT_API_KEY="bedrock-api-key-****"
+
+rag chat mistral.mistral-large-3-675b-instruct
+```
+
+#### If you are using an Inference Snap
 ```bash
 sudo rag set --package chat.http.host="127.0.0.1"
 sudo rag set --package chat.http.port="8324"
@@ -143,7 +167,10 @@ Using inference server at http://127.0.0.1:8324/v1
 Using the `default` knowledge base at https://127.0.0.1:9200
 	> Use `/use-knowledge` to see other available knowledge bases
 
-Type your prompt, then ENTER to submit. CTRL-C to quit.
+Type your prompt, then ENTER to submit. CTRL-C to quit
+export CHAT_API_KEY="bedrock-api-key-****"
+
+rag chat mistral.mistral-large-3-675b-instruct
 » /use-knowledge 
 ┃ Select active knowledge bases
 ┃   • default (27 docs, 671.1kb)
@@ -152,22 +179,5 @@ x toggle • ↑ up • ↓ down • / filter • enter submit • ctrl+a select
 
 » This a relevant question that can be answered from the example knowledge base ... ?
 ```
-
-### Using an external inference API
-
-In addition to the Inference snap, any OpenAI-compatible API can be used. For example, AWS Bedrock:
-
-```bash
-sudo rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
-sudo rag set --package chat.http.port="443"
-sudo rag set --package chat.http.tls="true"
-sudo rag set --package chat.http.path="openai/v1"
-
-export CHAT_API_KEY="bedrock-api-key-****"
-
-rag chat mistral.mistral-large-3-675b-instruct
-```
-
-> **Warning:** When using a third-party inference API, your prompts and retrieved context are sent to an external service. Do not ingest or ask about confidential information in that configuration.
 
 For a more detail usage, please see the [usage docs](docs/usage.md).

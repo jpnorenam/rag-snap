@@ -10,6 +10,7 @@ require (
 	github.com/charmbracelet/huh v0.8.0
 	github.com/chzyer/readline v1.5.1
 	github.com/fatih/color v1.18.0
+	github.com/markusmobius/go-trafilatura v1.12.2
 	github.com/openai/openai-go/v3 v3.11.0
 	github.com/opensearch-project/opensearch-go/v4 v4.6.0
 	github.com/spf13/cobra v1.10.2
@@ -50,7 +51,6 @@ require (
 	github.com/markusmobius/go-dateparser v1.2.3 // indirect
 	github.com/markusmobius/go-domdistiller v0.0.0-20240926050704-25b8d046ffb4 // indirect
 	github.com/markusmobius/go-htmldate v1.9.1 // indirect
-	github.com/markusmobius/go-trafilatura v1.12.2 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect

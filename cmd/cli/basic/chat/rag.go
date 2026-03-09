@@ -197,15 +197,19 @@ func formatConversationForRewrite(messages []openai.ChatCompletionMessageParamUn
 	return b.String()
 }
 
+// ragSystemPrompt is the system-level instruction used for RAG-augmented completions.
+// It is placed in the system message so the model treats it as a behavioral directive
+// rather than part of the user turn.
+const ragSystemPrompt = "You are a highly accurate and concise assistant. " +
+	"Answer the question directly using ONLY the provided context. " +
+	"Be extremely concise — 1 to 3 sentences max. " +
+	"Do not use filler words or conversational introductions. Get straight to the point. " +
+	"If you must cite, use brief inline references. " +
+	"If the context is insufficient or irrelevant, reply exactly with: " +
+	"\"Insufficient context to answer this question.\" Do not fabricate information."
+
 // buildRAGPrompt wraps the user's original prompt with the retrieved
 // context so the LLM can ground its answer.
 func buildRAGPrompt(ragContext, prompt string) string {
-	return fmt.Sprintf(`Answer the question using only the provided context. 
-If the context contains relevant information, cite specific parts in your response. 
-If the context is insufficient or irrelevant to answer the question, clearly state what information is missing and do not fabricate an answer.
-
-Context:
-%s
-
-Question: %s`, ragContext, prompt)
+	return fmt.Sprintf("Context:\n%s\n\nQuestion: %s", ragContext, prompt)
 }
