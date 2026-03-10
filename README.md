@@ -153,6 +153,21 @@ rag k ingest default <source-id-url> --url <url-to-document>
 
 List the added sources with `rag k list -s`.
 
+Back up a knowledge base to a compressed archive:
+```bash
+rag k export example --compress
+# → ./example-export.tar.gz
+```
+
+Restore it — on the same machine or another — without re-embedding:
+```bash
+rag k import --input ./example-export.tar.gz
+# restores under the original name stored in the archive
+
+rag k import example-copy --input ./example-export.tar.gz
+# restores under a different name
+```
+
 
 ### Chat with your knowledge bases
 

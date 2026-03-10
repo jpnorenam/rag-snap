@@ -3,6 +3,7 @@ package knowledge
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -276,6 +277,66 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return t.transport.RoundTrip(req)
+}
+
+// AuthenticatedURL returns the base URL with credentials embedded, and the given
+// index path appended. Used to pass credentials to external tools like elasticdump.
+func (c *OpenSearchClient) AuthenticatedURL(indexPath string) string {
+	parsed, err := url.Parse(c.url)
+	if err != nil {
+		return c.url + indexPath
+	}
+	parsed.User = url.UserPassword(c.username, c.password)
+	parsed.Path = indexPath
+	return parsed.String()
+}
+
+// IndexExists returns true if the given index exists in OpenSearch.
+func (c *OpenSearchClient) IndexExists(ctx context.Context, indexName string) (bool, error) {
+	resp, err := c.client.Client.Do(
+		ctx,
+		opensearchapi.IndicesExistsReq{
+			Indices: []string{indexName},
+		},
+		nil,
+	)
+	if err != nil {
+		return false, fmt.Errorf("checking if index exists: %w", err)
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode == http.StatusOK, nil
+}
+
+// CountDocuments returns the number of documents in the given index.
+// Returns 0 and no error if the index does not yet exist.
+func (c *OpenSearchClient) CountDocuments(ctx context.Context, indexName string) (int, error) {
+	path := fmt.Sprintf("/%s/_count", indexName)
+	req, err := c.newAuthenticatedRequest(http.MethodGet, path, nil)
+	if err != nil {
+		return 0, fmt.Errorf("creating count request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	if err != nil {
+		return 0, fmt.Errorf("counting documents: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return 0, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("count documents failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var countResp struct {
+		Count int `json:"count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&countResp); err != nil {
+		return 0, fmt.Errorf("decoding count response: %w", err)
+	}
+	return countResp.Count, nil
 }
 
 // newAuthenticatedRequest creates an HTTP request with basic authentication.
