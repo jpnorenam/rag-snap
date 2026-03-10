@@ -22,4 +22,4 @@ batch-*.yaml
 *.json
 batch-*.json
 ubuntu-pro-questions.yaml
-cli
+./cli
