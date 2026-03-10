@@ -24,7 +24,7 @@ sudo snap run opensearch.setup                  \
 Increase the JVM heap size to fit the sentence-transformer and cross-encoder models (at least 6 GB is recommended; adjust to your machine's available RAM):
 ```bash
 echo '-Xms6g' | sudo tee /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
-echo '-Xmx8g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
+echo '-Xmx6g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
 
 sudo snap restart opensearch
 ```

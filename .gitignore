@@ -4,19 +4,17 @@ PLAN.md
 *.snap
 /bin
 *__debug*
-# Snapcraft build directories
-parts/
-stage/
-prime/
-*.snap
-# Snapcraft & compile artifacts
-.craft/
-rag
-# Local test environment files
-dev.config
-bin-fake/
+# Test Files
+*.json
+dev.config 
+/cli
 snapctl-fake
-# Test files
+rag
+# Folders
+.craft/
+bin-fake/
+parts/
+prime/
 samples/
 batch-*.yaml
 *.json

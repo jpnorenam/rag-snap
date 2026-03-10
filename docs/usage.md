@@ -22,7 +22,7 @@ using any `knowledge` sub-command.
 | `knowledge list --sources` | List ingested source documents |
 | `knowledge create <name>` | Create a new knowledge base |
 | `knowledge ingest <name> <source-id>` | Ingest a document into a knowledge base |
-| `knowledge ingest-batch <config.yaml>` | Ingest multiple documents from a YAML config file |
+| `knowledge ingest --batch <config.yaml>` | Ingest multiple documents from a YAML config file |
 | `knowledge search <query>` | Semantic + lexical search across one or more bases |
 | `knowledge metadata <name> <source-id>` | Show metadata for an ingested source |
 | `knowledge forget <name> <source-id>` | Remove a source and all its chunks |
@@ -38,7 +38,7 @@ using any `knowledge` sub-command.
 1. knowledge init          # once per OpenSearch cluster
 2. knowledge create <name> # once per topic / project
 3. knowledge ingest …          # repeat for each document
-4. knowledge ingest-batch <yaml>    # or ingest many at once from a YAML file
+4. knowledge ingest --batch <yaml>  # or ingest many at once from a YAML file
 5. knowledge search …      # ad-hoc or used by chat
 6. knowledge forget …      # when a source is outdated
 7. knowledge delete …      # when a whole base is no longer needed
@@ -173,14 +173,18 @@ Ingested 37 chunks into index 'rag-kb-wiki-rag'
 
 ---
 
-### `knowledge ingest-batch`
+### `knowledge ingest --batch`
 
 Ingest multiple documents in a single command using a YAML configuration file. Each job is
 processed sequentially; a failure on one job is reported and skipped — the remaining jobs
 continue.
 
+Supported job types: local files, static web pages, GitHub repositories, and Gitea (Opendev)
+repositories. Repository jobs walk the entire tree and ingest every file that matches the
+configured extensions and optional path filter.
+
 ```
-rag knowledge ingest-batch <config.yaml>
+rag knowledge ingest --batch <config.yaml>
 ```
 
 #### YAML schema
@@ -188,56 +192,94 @@ rag knowledge ingest-batch <config.yaml>
 ```yaml
 version: "1.0"
 jobs:
-  - type: file | url        # "file" for local paths, "url" for static web pages
-    source: <path or URL>   # absolute or relative path, or full https:// URL
-    name: <source_id>       # unique identifier for this source (optional, defaults to filename)
-    target_kb: <name>       # knowledge base to ingest into (optional, defaults to "default")
+  - type: file | url | github-repo | gitea-repo
+    source: <path, URL, or repo identifier>
+    name: <source_id>         # optional; defaults to filename or path within the repo
+    target_kb: <name>         # optional; defaults to "default"
+    branch: <branch-name>     # github-repo / gitea-repo only — defaults to the repo's default branch
+    path: <subdir>            # github-repo / gitea-repo only — restrict to a subdirectory
+    extensions:               # github-repo / gitea-repo only — file extensions to include
+      - .md
+      - .txt
 ```
 
-| Field | Required | Description |
-|---|---|---|
-| `type` | Yes | `file` for a local file, `url` for a static web page |
-| `source` | Yes | Absolute/relative file path or `https://` URL |
-| `name` | No | Source identifier used in `metadata`, `forget`, and search results. Defaults to the filename. Must be unique across the cluster. |
-| `target_kb` | No | Knowledge base name. Defaults to `default`. The base must already exist (`knowledge create`). Knowledge base names are case-insensitive. |
+| Field | Applies to | Required | Description |
+|---|---|---|---|
+| `type` | all | Yes | Job type: `file`, `url`, `github-repo`, or `gitea-repo` |
+| `source` | all | Yes | For `file`: absolute or relative path. For `url`: `https://` URL. For `github-repo`: `"owner/repo"` or `"https://github.com/owner/repo"`. For `gitea-repo`: full URL `"https://{host}/{owner}/{repo}"`. |
+| `name` | all | No | Source identifier used in `metadata`, `forget`, and search results. Defaults to the filename (for `file`/`url`) or file path within the repo (for repository jobs). Must be unique across the cluster. |
+| `target_kb` | all | No | Knowledge base name. Defaults to `default`. The base must already exist (`knowledge create`). |
+| `branch` | repo types | No | Branch to read from. Defaults to the repository's default branch. |
+| `path` | repo types | No | Restrict ingestion to files under this subdirectory (e.g. `docs/`). Omit to process the entire repository. |
+| `extensions` | repo types | Yes* | List of file extensions to ingest (e.g. `.md`, `.rst`, `.txt`). At least one extension is required — files that do not match are skipped. |
 
-**Example config — mixed files and URLs**
+**Example config — all four job types**
 
 ```yaml
 version: "1.0"
 jobs:
+  # Local file
   - type: file
     source: "/home/user/docs/api-reference.pdf"
     name: "api-reference"
     target_kb: "project-docs"
 
-  - type: file
-    source: "/home/user/docs/architecture.pdf"
-    name: "architecture"
-    target_kb: "project-docs"
-
+  # Static web page
   - type: url
     source: "https://example.com/blog/release-notes"
     name: "release-notes"
     target_kb: "project-docs"
+
+  # GitHub repository — ingest only Markdown files under the docs/ subdirectory
+  # from a specific branch; requires GITHUB_TOKEN for private repos
+  - type: github-repo
+    source: "https://github.com/canonical/snapcraft"
+    branch: "main"
+    path: "docs/"
+    extensions:
+      - .md
+    target_kb: "project-docs"
+
+  # Gitea / Opendev repository — ingest reStructuredText and Markdown files
+  # from the entire default branch; requires GITEA_TOKEN for private instances
+  - type: gitea-repo
+    source: "https://opendev.org/openstack/nova"
+    path: "doc/source/"
+    extensions:
+      - .rst
+      - .md
+    target_kb: "openstack-docs"
 ```
 
 **Example — run a batch**
 
 ```bash
-$ rag knowledge ingest-batch ~/docs/batch.yaml
+$ rag knowledge ingest --batch ~/docs/batch.yaml
 
-Found 3 jobs in batch file version 1.0
-[1/3] Processing: /home/user/docs/api-reference.pdf
+Found 4 jobs in batch file version 1.0
+[1/4] Processing: /home/user/docs/api-reference.pdf
 ✅ Success: /home/user/docs/api-reference.pdf
-[2/3] Processing: /home/user/docs/architecture.pdf
-✅ Success: /home/user/docs/architecture.pdf
-[3/3] Processing: https://example.com/blog/release-notes
+[2/4] Processing: https://example.com/blog/release-notes
 ✅ Success: https://example.com/blog/release-notes
+[3/4] Processing: https://github.com/canonical/snapcraft
+Found 42 files in canonical/snapcraft
+  [1/42] docs/explanation/bases.md
+  [2/42] docs/explanation/architectures.md
+  …
+✅ Success: https://github.com/canonical/snapcraft
+[4/4] Processing: https://opendev.org/openstack/nova
+Found 118 files in openstack/nova
+  [1/118] doc/source/install/index.rst
+  …
+✅ Success: https://opendev.org/openstack/nova
 ```
 
 > **Note on errors:** A failed job prints the reason and moves on to the next job. Run
 > `knowledge list --sources` after the batch to verify which sources were successfully indexed.
+
+> **Note on authentication:** Set `GITHUB_TOKEN` before running a batch that includes private
+> GitHub repositories. For private Gitea instances set `GITEA_TOKEN` instead. Public repositories
+> do not require a token but setting one raises the API rate limit.
 
 > **Note on URLs:** The same restriction as `knowledge ingest --url` applies — pages that require
 > JavaScript to render will fail. Save the rendered HTML locally and use `type: file` instead.
@@ -499,7 +541,7 @@ rag knowledge ingest project-docs api-ref      --file ~/docs/api-reference.html
 rag knowledge ingest project-docs release-blog \
     --url https://example.com/blog/v2-release
 # alternatively:
-rag knowledge ingest-batch ~/docs/project-docs-batch.yaml
+rag knowledge ingest --batch ~/docs/project-docs-batch.yaml
 
 # 4. Verify what was ingested
 rag knowledge list project-docs --sources
@@ -536,7 +578,6 @@ each answer (RAG).
 | Command | Description |
 |---|---|
 | `chat [model]` | Open an interactive RAG chat session |
-| `chat batch <manifest.yaml>` | Run questions from a YAML file and export answers to JSON |
 
 ---
 
@@ -570,103 +611,6 @@ CHAT_API_KEY=sk-… rag chat
 ```
 
 The client waits up to 60 seconds for the model to finish loading before giving up.
-
----
-
-### `chat batch`
-
-Run a list of questions from a YAML manifest through the RAG+LLM pipeline non-interactively.
-Each question is answered in sequence, printed to the terminal, and the full set of results is
-written to a timestamped JSON file in the current working directory.
-
-This is the recommended approach for batch Q&A workflows such as RFP responses, compliance
-questionnaires, and documentation audits.
-
-```
-rag chat batch <manifest.yaml>
-```
-
-#### YAML schema
-
-```yaml
-version: "1.0"
-model: <model_id>             # optional; inherits from config or auto-detected from server
-knowledge_bases:              # optional; defaults to the default knowledge base
-  - <name>
-questions:
-  - id: <identifier>          # optional; included in the output file for traceability
-    question: <text>
-```
-
-| Field | Required | Description |
-|---|---|---|
-| `version` | Yes | Schema version. Use `"1.0"`. |
-| `model` | No | LLM model identifier. Falls back to the `chat.model` config value, then to server auto-detection. |
-| `knowledge_bases` | No | List of knowledge base names to search for context. Defaults to the `default` base. |
-| `questions[].id` | No | Identifier for the question, used in the output JSON for traceability. |
-| `questions[].question` | Yes | The question text sent to the LLM. |
-
-**Example manifest**
-
-```yaml
-version: "1.0"
-knowledge_bases:
-  - project-docs
-questions:
-  - id: "security-policy"
-    question: "What is the data retention policy?"
-
-  - id: "sla"
-    question: "What are the service level objectives?"
-
-  - id: "compliance"
-    question: "Which compliance certifications does the product hold?"
-```
-
-**Example — run a batch**
-
-```bash
-$ rag chat batch ~/rfp/questions.yaml
-
-Found 3 questions in batch manifest version 1.0
-[1/3] Question: What is the data retention policy?
-Answer: Data is retained for 90 days by default, configurable up to 7 years for compliance tiers.
----
-[2/3] Question: What are the service level objectives?
-Answer: The product targets 99.9% uptime with a 4-hour RTO and 1-hour RPO for business-critical tiers.
----
-[3/3] Question: Which compliance certifications does the product hold?
-Answer: The product holds SOC 2 Type II, ISO 27001, and FedRAMP Moderate certifications.
----
-
-Results saved to batch-results-20250225-143022.json
-```
-
-**Output file format**
-
-Results are written to `batch-results-YYYYMMDD-HHMMSS.json` in the current working directory:
-
-```json
-{
-  "generated_at": "2025-02-25T14:30:22Z",
-  "model": "mistral.mistral-large-3-675b-instruct",
-  "results": [
-    {
-      "id": "security-policy",
-      "question": "What is the data retention policy?",
-      "answer": "Data is retained for 90 days by default, configurable up to 7 years for compliance tiers."
-    }
-  ]
-}
-```
-
-> **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run)
-> prints the error and moves on. All answers collected before the failure are still written to the
-> output file.
-
-> **Note on model selection:** If the inference server does not support model auto-detection
-> (e.g. AWS Bedrock), set the model explicitly in the manifest or configure a default with
-> `sudo rag set --package chat.model="<model-id>"` once after installation.
 
 ---
 
@@ -844,5 +788,117 @@ Type your prompt, then ENTER to submit. CTRL-C to quit.
 » exit
 Closing chat
 ```
+
+---
+
+## Answer
+
+The `answer` command (alias `a`) runs questions through the RAG+LLM pipeline non-interactively
+and exports the results to a JSON file. Use it for batch Q&A workflows such as RFP responses,
+compliance questionnaires, and documentation audits.
+
+### Sub-commands at a glance
+
+| Command | Description |
+|---|---|
+| `answer batch <manifest.yaml>` | Run questions from a YAML file and export answers to JSON |
+
+---
+
+### `answer batch`
+
+Run a list of questions from a YAML manifest through the RAG+LLM pipeline non-interactively.
+Each question is answered in sequence, printed to the terminal, and the full set of results is
+written to a timestamped JSON file in the current working directory.
+
+```
+rag answer batch <manifest.yaml>
+```
+
+#### YAML schema
+
+```yaml
+version: "1.0"
+model: <model_id>             # optional; inherits from config or auto-detected from server
+knowledge_bases:              # optional; defaults to the default knowledge base
+  - <name>
+prompt: <system_prompt>       # optional; overrides the default RAG system prompt for the whole batch
+questions:
+  - id: <identifier>          # optional; included in the output file for traceability
+    question: <text>
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `version` | Yes | Schema version. Use `"1.0"`. |
+| `model` | No | LLM model identifier. Falls back to the `chat.model` config value, then to server auto-detection. |
+| `knowledge_bases` | No | List of knowledge base names to search for context. Defaults to the `default` base. |
+| `prompt` | No | Custom system prompt for the entire batch. Overrides the built-in RAG answer prompt. Useful for adding domain-specific context or tone instructions. |
+| `questions[].id` | No | Identifier for the question, used in the output JSON for traceability. |
+| `questions[].question` | Yes | The question text sent to the LLM. |
+
+**Example manifest**
+
+```yaml
+version: "1.0"
+knowledge_bases:
+  - project-docs
+prompt: |
+  You are a compliance expert. Answer each question concisely and cite the relevant policy section.
+questions:
+  - id: "security-policy"
+    question: "What is the data retention policy?"
+
+  - id: "sla"
+    question: "What are the service level objectives?"
+
+  - id: "compliance"
+    question: "Which compliance certifications does the product hold?"
+```
+
+**Example — run a batch**
+
+```bash
+$ rag answer batch ~/rfp/questions.yaml
+
+Found 3 questions in batch manifest version 1.0
+[1/3] Question: What is the data retention policy?
+Answer: Data is retained for 90 days by default, configurable up to 7 years for compliance tiers.
+---
+[2/3] Question: What are the service level objectives?
+Answer: The product targets 99.9% uptime with a 4-hour RTO and 1-hour RPO for business-critical tiers.
+---
+[3/3] Question: Which compliance certifications does the product hold?
+Answer: The product holds SOC 2 Type II, ISO 27001, and FedRAMP Moderate certifications.
+---
+
+Results saved to batch-results-20250225-143022.json
+```
+
+**Output file format**
+
+Results are written to `batch-results-YYYYMMDD-HHMMSS.json` in the current working directory:
+
+```json
+{
+  "generated_at": "2025-02-25T14:30:22Z",
+  "model": "mistral.mistral-large-3-675b-instruct",
+  "results": [
+    {
+      "id": "security-policy",
+      "question": "What is the data retention policy?",
+      "answer": "Data is retained for 90 days by default, configurable up to 7 years for compliance tiers."
+    }
+  ]
+}
+```
+
+> **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run)
+> prints the error and moves on. All answers collected before the failure are still written to the
+> output file.
+
+> **Note on model selection:** If the inference server does not support model auto-detection
+> (e.g. AWS Bedrock), set the model explicitly in the manifest or configure a default with
+> `sudo rag set --package chat.model="<model-id>"` once after installation.
 
 ---
