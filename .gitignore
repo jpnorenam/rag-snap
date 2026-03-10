@@ -1,5 +1,6 @@
 *.claude
 CLAUDE.md
+PLAN.md
 *.snap
 /bin
 *__debug*
@@ -15,6 +16,8 @@ bin-fake/
 parts/
 prime/
 samples/
-stage/
-test-kb/
-test-questions/
+batch-*.yaml
+*.json
+batch-*.json
+ubuntu-pro-questions.yaml
+./cli

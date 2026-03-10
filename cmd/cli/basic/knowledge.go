@@ -69,6 +69,9 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 		cmd.forgetCommand(),
 		cmd.metadataCommand(),
 		cmd.deleteCommand(),
+		cmd.batchIngestCommand(),
+		cmd.exportCommand(),
+		cmd.importCommand(),
 	)
 
 	return cobraCmd
@@ -593,3 +596,91 @@ func (cmd *knowledgeCommand) listSources(ctx context.Context, client *knowledge.
 	return nil
 }
 
+func (cmd *knowledgeCommand) batchIngestCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:   "ingest-batch [config.yaml]",
+		Short: "Ingest multiple documents from a YAML configuration file",
+		Long:  `Reads a YAML file defining a list of documents and ingests them into OpenSearch.`,
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			yamlFile := args[0]
+			ctx := context.Background()
+
+			apiUrls, err := serverApiUrls(cmd.Context)
+			if err != nil {
+				return fmt.Errorf("getting server API URLs: %w", err)
+			}
+
+			client, err := cmd.opensearchClient()
+			if err != nil {
+				return err
+			}
+
+			return knowledge.ProcessBatch(ctx, client, apiUrls[tika], yamlFile)
+		},
+	}
+}
+
+func (cmd *knowledgeCommand) exportCommand() *cobra.Command {
+	var outputDir string
+	var compress bool
+
+	cobraCmd := &cobra.Command{
+		Use:   "export <kb-name>",
+		Short: "Export a knowledge base to a directory",
+		Long:  "Export all documents, mappings, and source metadata for a knowledge base using elasticdump.\nThe output directory contains data.json, mapping.json, sources.json, and manifest.json.\nUse --compress to produce a .tar.gz archive instead.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			kbName := args[0]
+
+			client, err := cmd.opensearchClient()
+			if err != nil {
+				return err
+			}
+
+			return knowledge.ExportKnowledgeBase(context.Background(), client, kbName, knowledge.ExportOptions{
+				OutputDir: outputDir,
+				Compress:  compress,
+			})
+		},
+	}
+
+	cobraCmd.Flags().StringVarP(&outputDir, "output", "o", "", "Output directory (default: ./<kb-name>-export)")
+	cobraCmd.Flags().BoolVarP(&compress, "compress", "c", false, "Compress the export into a .tar.gz archive")
+
+	return cobraCmd
+}
+
+func (cmd *knowledgeCommand) importCommand() *cobra.Command {
+	var inputDir string
+	var force bool
+
+	cobraCmd := &cobra.Command{
+		Use:   "import [kb-name]",
+		Short: "Import a knowledge base from an export directory or archive",
+		Long:  "Restore a knowledge base from a directory or .tar.gz archive produced by 'knowledge export'.\nIf <kb-name> is omitted, the name stored in the export manifest is used.\nProvide <kb-name> to restore under a different name.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			var kbName string
+			if len(args) > 0 {
+				kbName = args[0]
+			}
+
+			client, err := cmd.opensearchClient()
+			if err != nil {
+				return err
+			}
+
+			return knowledge.ImportKnowledgeBase(context.Background(), client, kbName, knowledge.ImportOptions{
+				InputDir: inputDir,
+				Force:    force,
+			})
+		},
+	}
+
+	cobraCmd.Flags().StringVarP(&inputDir, "input", "i", "", "Input directory containing the export (required)")
+	cobraCmd.Flags().BoolVar(&force, "force", false, "Overwrite even if the target index is non-empty")
+	_ = cobraCmd.MarkFlagRequired("input")
+
+	return cobraCmd
+}

@@ -27,6 +27,8 @@ using any `knowledge` sub-command.
 | `knowledge metadata <name> <source-id>` | Show metadata for an ingested source |
 | `knowledge forget <name> <source-id>` | Remove a source and all its chunks |
 | `knowledge delete <name>` | Delete an entire knowledge base |
+| `knowledge export <name>` | Back up a knowledge base to a directory or `.tar.gz` archive |
+| `knowledge import [name]` | Restore a knowledge base from an export directory or archive |
 
 ---
 
@@ -40,6 +42,8 @@ using any `knowledge` sub-command.
 5. knowledge search …      # ad-hoc or used by chat
 6. knowledge forget …      # when a source is outdated
 7. knowledge delete …      # when a whole base is no longer needed
+8. knowledge export …      # back up a base before migration or deletion
+9. knowledge import …      # restore a base from a backup
 ```
 
 ---
@@ -373,6 +377,128 @@ rag knowledge ingest docs snap-docs --file ~/Downloads/snapcraft-docs-v2.pdf
 
 ---
 
+### `knowledge export`
+
+Back up a knowledge base — all document chunks (with their pre-computed embeddings), the index
+mapping, and source metadata — to a local directory or a compressed `.tar.gz` archive.
+The export uses [elasticdump](https://github.com/ElasticTools/elasticdump) bundled in the snap and
+preserves the embeddings so that an import requires no re-embedding.
+
+```
+rag knowledge export <knowledge_base_name> [--output <path>] [--compress]
+```
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--output` | `-o` | `./<name>-export` | Output directory (or archive base name when used with `--compress`) |
+| `--compress` | `-c` | `false` | Produce a `.tar.gz` archive and remove the intermediate directory |
+
+The output directory (or archive) contains four files:
+
+| File | Contents |
+|---|---|
+| `data.json` | All document chunks with embeddings (NDJSON, elasticdump format) |
+| `mapping.json` | Index mapping (NDJSON, elasticdump format) |
+| `sources.json` | Source metadata records (NDJSON, elasticdump format) |
+| `manifest.json` | Export summary: knowledge base name, index name, timestamp, source count, chunk count |
+
+A missing `manifest.json` indicates an incomplete export. `knowledge import` will reject it.
+
+**Example — export to a directory**
+
+```bash
+$ rag knowledge export project-docs
+Exporting document data to ./project-docs-export/data.json...
+Exporting mapping to ./project-docs-export/mapping.json...
+Exporting source metadata to ./project-docs-export/sources.json...
+
+Export complete.
+  Sources:  3
+  Chunks:   228
+  Location: ./project-docs-export
+```
+
+**Example — export to a compressed archive**
+
+```bash
+$ rag knowledge export project-docs --compress
+Exporting document data to ./project-docs-export/data.json...
+Exporting mapping to ./project-docs-export/mapping.json...
+Exporting source metadata to ./project-docs-export/sources.json...
+Compressing to ./project-docs-export.tar.gz...
+
+Export complete.
+  Sources:  3
+  Chunks:   228
+  Location: ./project-docs-export.tar.gz
+```
+
+**Example — custom output path**
+
+```bash
+rag knowledge export project-docs --output /mnt/backups/project-docs --compress
+# → /mnt/backups/project-docs.tar.gz
+```
+
+---
+
+### `knowledge import`
+
+Restore a knowledge base from an export directory or a `.tar.gz` archive produced by
+`knowledge export`. Pre-computed embeddings are imported as-is, so no re-embedding step is
+needed and no ML models need to be running during import.
+
+If a knowledge base name is omitted, the name stored in the export manifest is used automatically.
+Provide a name to restore under a different name (e.g. to clone or migrate a base).
+
+```
+rag knowledge import [knowledge_base_name] --input <path> [--force]
+```
+
+| Flag | Short | Required | Description |
+|---|---|---|---|
+| `--input` | `-i` | Yes | Path to the export directory or `.tar.gz` archive |
+| `--force` | | No | Overwrite even if the target index already contains documents |
+
+The input format is detected automatically:
+
+- **Directory** — used directly as the export root.
+- **`.tar.gz` file** — extracted into a temporary directory, imported, then cleaned up.
+
+**Example — restore using the original name (from manifest)**
+
+```bash
+$ rag knowledge import --input ./project-docs-export.tar.gz
+Extracting ./project-docs-export.tar.gz...
+Using knowledge base name from manifest: "project-docs"
+Importing mapping...
+Importing document data...
+Importing source metadata...
+
+Import complete.
+  Sources imported: 3
+  Chunks expected:  228 (from manifest)
+```
+
+**Example — restore under a different name**
+
+```bash
+rag knowledge import project-docs-staging --input ./project-docs-export.tar.gz
+```
+
+**Example — overwrite an existing index**
+
+```bash
+rag knowledge import project-docs --input ./project-docs-export --force
+```
+
+> **Note on infrastructure:** `knowledge import` automatically ensures the index template and
+> sources metadata index exist before importing. You do not need to run `knowledge init` first,
+> but the ML models and pipelines set up by `init` are required if you later ingest new documents
+> into the restored base.
+
+---
+
 ### `knowledge delete`
 
 Delete an entire knowledge base index and all associated source metadata. This operation is
@@ -427,7 +553,15 @@ rag knowledge search "authentication flow" --bases project-docs
 rag knowledge forget project-docs design-doc
 rag knowledge ingest project-docs design-doc --file ~/docs/design-v2.pdf
 
-# 7. Clean up when the project is archived
+# 7. Back up before migration or deletion
+rag knowledge export project-docs --compress
+# → ./project-docs-export.tar.gz
+
+# 8. Restore on another machine (or under a new name)
+rag knowledge import --input ./project-docs-export.tar.gz
+rag knowledge import project-docs-v2 --input ./project-docs-export.tar.gz
+
+# 9. Clean up when the project is archived
 rag knowledge delete project-docs
 ```
 
