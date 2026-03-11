@@ -21,17 +21,17 @@ sudo snap run opensearch.setup                  \
     --tls-init-setup yes
 ```
 
-Validate your OpenSearch snap node roles:
-```bash
-curl -k -u admin:admin https://localhost:9200/_cat/nodes?v
-```
-
 Increase the JVM heap size to fit the sentence-transformer and cross-encoder models (at least 6 GB is recommended; adjust to your machine's available RAM):
 ```bash
 echo '-Xms6g' | sudo tee /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
-echo '-Xmx8g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
+echo '-Xmx6g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
 
 sudo snap restart opensearch
+```
+
+Validate your OpenSearch snap node roles:
+```bash
+curl -k -u admin:admin https://localhost:9200/_cat/nodes?v
 ```
 
 #### (Recommended) Use [AWS Bedrock as the Inference Server](docs/bedrock_guide.md)
@@ -152,6 +152,21 @@ rag k ingest default <source-id-url> --url <url-to-document>
 ```
 
 List the added sources with `rag k list -s`.
+
+Back up a knowledge base to a compressed archive:
+```bash
+rag k export example --compress
+# → ./example-export.tar.gz
+```
+
+Restore it — on the same machine or another — without re-embedding:
+```bash
+rag k import --input ./example-export.tar.gz
+# restores under the original name stored in the archive
+
+rag k import example-copy --input ./example-export.tar.gz
+# restores under a different name
+```
 
 
 ### Chat with your knowledge bases

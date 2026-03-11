@@ -197,16 +197,21 @@ func formatConversationForRewrite(messages []openai.ChatCompletionMessageParamUn
 	return b.String()
 }
 
-// ragSystemPrompt is the system-level instruction used for RAG-augmented completions.
-// It is placed in the system message so the model treats it as a behavioral directive
-// rather than part of the user turn.
-const ragSystemPrompt = "You are a highly accurate and concise assistant. " +
+// ragAnswerSystemPrompt is the system-level instruction for batch answer (rag answer batch).
+// Maximally concise and factual — optimized for structured Q&A output.
+const ragAnswerSystemPrompt = "You are a highly accurate and concise assistant. " +
 	"Answer the question directly using ONLY the provided context. " +
 	"Be extremely concise — 1 to 3 sentences max. " +
 	"Do not use filler words or conversational introductions. Get straight to the point. " +
 	"If you must cite, use brief inline references. " +
 	"If the context is insufficient or irrelevant, reply exactly with: " +
 	"\"Insufficient context to answer this question.\" Do not fabricate information."
+
+// ragChatSystemPrompt is the system-level instruction for the interactive chat REPL (rag chat).
+// Conversational and grounded — allows elaboration while staying accurate.
+const ragChatSystemPrompt = "You are a knowledgeable and helpful assistant grounded in the provided context. " +
+	"Answer questions accurately using the context. You may elaborate where helpful. " +
+	"If the context does not contain enough information, say so clearly — do not fabricate facts."
 
 // buildRAGPrompt wraps the user's original prompt with the retrieved
 // context so the LLM can ground its answer.

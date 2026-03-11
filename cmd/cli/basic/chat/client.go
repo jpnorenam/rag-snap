@@ -113,7 +113,7 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 
 	initialSystemPrompt := "You are a helpful assistant."
 	if knowledgeClient != nil {
-		initialSystemPrompt = ragSystemPrompt
+		initialSystemPrompt = ragChatSystemPrompt
 	}
 
 	params := openai.ChatCompletionNewParams{

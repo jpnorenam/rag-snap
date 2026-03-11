@@ -23,6 +23,7 @@ type BatchManifest struct {
 	Version        string          `yaml:"version"`
 	Model          string          `yaml:"model,omitempty"`
 	KnowledgeBases []string        `yaml:"knowledge_bases,omitempty"`
+	Prompt         string          `yaml:"prompt,omitempty"`
 	Questions      []BatchQuestion `yaml:"questions"`
 }
 
@@ -96,6 +97,11 @@ func ProcessBatchChat(
 
 	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)
 
+	defaultSystemPrompt := ragAnswerSystemPrompt
+	if manifest.Prompt != "" {
+		defaultSystemPrompt = manifest.Prompt
+	}
+
 	ctx := context.Background()
 	results := make([]BatchResult, 0, len(manifest.Questions))
 
@@ -109,7 +115,7 @@ func ProcessBatchChat(
 		systemPrompt := "You are a helpful assistant."
 		llmPrompt := q.Question
 		if ragContext != "" {
-			systemPrompt = ragSystemPrompt
+			systemPrompt = defaultSystemPrompt
 			llmPrompt = buildRAGPrompt(ragContext, q.Question)
 		}
 

@@ -69,8 +69,9 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 		cmd.forgetCommand(),
 		cmd.metadataCommand(),
 		cmd.deleteCommand(),
-		// New command added
 		cmd.batchIngestCommand(),
+		cmd.exportCommand(),
+		cmd.importCommand(),
 	)
 
 	return cobraCmd
@@ -165,13 +166,36 @@ func (cmd *knowledgeCommand) createCommand() *cobra.Command {
 func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 	var fileFlag string
 	var urlFlag string
+	var batchFlag string
 
 	cobraCmd := &cobra.Command{
-		Use:   "ingest <knowledge_base_name> <source_id>",
+		Use:   "ingest [<knowledge_base_name> <source_id>]",
 		Short: "Ingest a document into the knowledge base",
-		Long:  "Ingest a document into the knowledge base index with the given source ID.\nProvide the document via --file (local path) or --url (remote URL).",
-		Args:  cobra.ExactArgs(2),
+		Long: "Ingest a document into the knowledge base index with the given source ID.\n" +
+			"Provide the document via --file (local path) or --url (remote URL).\n" +
+			"Use --batch <config.yaml> to ingest multiple documents from a YAML file.",
+		Args: cobra.RangeArgs(0, 2),
 		RunE: func(_ *cobra.Command, args []string) error {
+			// Batch mode: delegate to ProcessBatch, no positional args needed.
+			if batchFlag != "" {
+				if len(args) != 0 {
+					return fmt.Errorf("positional arguments are not allowed with --batch")
+				}
+				apiUrls, err := serverApiUrls(cmd.Context)
+				if err != nil {
+					return fmt.Errorf("getting server API URLs: %w", err)
+				}
+				client, err := cmd.opensearchClient()
+				if err != nil {
+					return err
+				}
+				return knowledge.ProcessBatch(context.Background(), client, apiUrls[tika], batchFlag)
+			}
+
+			// Single-document mode: require exactly 2 positional args.
+			if len(args) != 2 {
+				return fmt.Errorf("requires <knowledge_base_name> and <source_id>, or use --batch <config.yaml>")
+			}
 			knowledgeBaseName := args[0]
 			sourceID := args[1]
 
@@ -273,14 +297,12 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 			}
 
 			// Update metadata status to completed
-			// Todo validate bulkResult errors == 0?
 			if err := client.UpdateSourceStatus(ctx, sourceID, knowledge.StatusCompleted); err != nil {
 				return fmt.Errorf("updating source status: %w", err)
 			}
 
 			fmt.Printf("Ingested %d/%d chunks into index '%s'\n",
 				bulkResult.Indexed, bulkResult.Total, indexName)
-			// CC: print OpenSearch error reason so failures are self-diagnosable
 			if bulkResult.Errors > 0 {
 				fmt.Printf("  Errors: %d (%s)\n", bulkResult.Errors, bulkResult.FirstError)
 			}
@@ -291,6 +313,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 
 	cobraCmd.Flags().StringVarP(&fileFlag, "file", "f", "", "Local file path to ingest")
 	cobraCmd.Flags().StringVarP(&urlFlag, "url", "u", "", "URL to download and ingest")
+	cobraCmd.Flags().StringVarP(&batchFlag, "batch", "B", "", "YAML batch config file — ingest multiple documents at once")
 
 	return cobraCmd
 }
@@ -541,6 +564,7 @@ func (cmd *knowledgeCommand) listIndexes(ctx context.Context, client *knowledge.
 	return nil
 }
 
+
 // listSources lists all ingested source documents, optionally filtered by index name.
 func (cmd *knowledgeCommand) listSources(ctx context.Context, client *knowledge.OpenSearchClient, args []string) error {
 	var indexFilter string
@@ -595,4 +619,68 @@ func (cmd *knowledgeCommand) batchIngestCommand() *cobra.Command {
 			return knowledge.ProcessBatch(ctx, client, apiUrls[tika], yamlFile)
 		},
 	}
+}
+
+func (cmd *knowledgeCommand) exportCommand() *cobra.Command {
+	var outputDir string
+	var compress bool
+
+	cobraCmd := &cobra.Command{
+		Use:   "export <kb-name>",
+		Short: "Export a knowledge base to a directory",
+		Long:  "Export all documents, mappings, and source metadata for a knowledge base using elasticdump.\nThe output directory contains data.json, mapping.json, sources.json, and manifest.json.\nUse --compress to produce a .tar.gz archive instead.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			kbName := args[0]
+
+			client, err := cmd.opensearchClient()
+			if err != nil {
+				return err
+			}
+
+			return knowledge.ExportKnowledgeBase(context.Background(), client, kbName, knowledge.ExportOptions{
+				OutputDir: outputDir,
+				Compress:  compress,
+			})
+		},
+	}
+
+	cobraCmd.Flags().StringVarP(&outputDir, "output", "o", "", "Output directory (default: ./<kb-name>-export)")
+	cobraCmd.Flags().BoolVarP(&compress, "compress", "c", false, "Compress the export into a .tar.gz archive")
+
+	return cobraCmd
+}
+
+func (cmd *knowledgeCommand) importCommand() *cobra.Command {
+	var inputDir string
+	var force bool
+
+	cobraCmd := &cobra.Command{
+		Use:   "import [kb-name]",
+		Short: "Import a knowledge base from an export directory or archive",
+		Long:  "Restore a knowledge base from a directory or .tar.gz archive produced by 'knowledge export'.\nIf <kb-name> is omitted, the name stored in the export manifest is used.\nProvide <kb-name> to restore under a different name.",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			var kbName string
+			if len(args) > 0 {
+				kbName = args[0]
+			}
+
+			client, err := cmd.opensearchClient()
+			if err != nil {
+				return err
+			}
+
+			return knowledge.ImportKnowledgeBase(context.Background(), client, kbName, knowledge.ImportOptions{
+				InputDir: inputDir,
+				Force:    force,
+			})
+		},
+	}
+
+	cobraCmd.Flags().StringVarP(&inputDir, "input", "i", "", "Input directory containing the export (required)")
+	cobraCmd.Flags().BoolVar(&force, "force", false, "Overwrite even if the target index is non-empty")
+	_ = cobraCmd.MarkFlagRequired("input")
+
+	return cobraCmd
 }
