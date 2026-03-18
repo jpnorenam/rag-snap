@@ -16,8 +16,14 @@ bin-fake/
 parts/
 prime/
 samples/
+stage/
+# Export artifacts
+*-export/
+*-export.tar.gz
 batch-*.yaml
 *.json
 batch-*.json
 ubuntu-pro-questions.yaml
 ./cli
+test-kb/
+test-questions/

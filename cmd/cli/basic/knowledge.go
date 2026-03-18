@@ -69,7 +69,6 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 		cmd.forgetCommand(),
 		cmd.metadataCommand(),
 		cmd.deleteCommand(),
-		cmd.batchIngestCommand(),
 		cmd.exportCommand(),
 		cmd.importCommand(),
 	)
@@ -167,6 +166,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 	var fileFlag string
 	var urlFlag string
 	var batchFlag string
+	var forceFlag bool
 
 	cobraCmd := &cobra.Command{
 		Use:   "ingest [<knowledge_base_name> <source_id>]",
@@ -189,7 +189,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return knowledge.ProcessBatch(context.Background(), client, apiUrls[tika], batchFlag)
+				return knowledge.ProcessBatch(context.Background(), client, apiUrls[tika], batchFlag, forceFlag)
 			}
 
 			// Single-document mode: require exactly 2 positional args.
@@ -314,6 +314,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 	cobraCmd.Flags().StringVarP(&fileFlag, "file", "f", "", "Local file path to ingest")
 	cobraCmd.Flags().StringVarP(&urlFlag, "url", "u", "", "URL to download and ingest")
 	cobraCmd.Flags().StringVarP(&batchFlag, "batch", "B", "", "YAML batch config file — ingest multiple documents at once")
+	cobraCmd.Flags().BoolVar(&forceFlag, "force", false, "Re-ingest sources even if already present in the knowledge base")
 
 	return cobraCmd
 }
@@ -594,31 +595,6 @@ func (cmd *knowledgeCommand) listSources(ctx context.Context, client *knowledge.
 	}
 
 	return nil
-}
-
-func (cmd *knowledgeCommand) batchIngestCommand() *cobra.Command {
-	return &cobra.Command{
-		Use:   "ingest-batch [config.yaml]",
-		Short: "Ingest multiple documents from a YAML configuration file",
-		Long:  `Reads a YAML file defining a list of documents and ingests them into OpenSearch.`,
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			yamlFile := args[0]
-			ctx := context.Background()
-
-			apiUrls, err := serverApiUrls(cmd.Context)
-			if err != nil {
-				return fmt.Errorf("getting server API URLs: %w", err)
-			}
-
-			client, err := cmd.opensearchClient()
-			if err != nil {
-				return err
-			}
-
-			return knowledge.ProcessBatch(ctx, client, apiUrls[tika], yamlFile)
-		},
-	}
 }
 
 func (cmd *knowledgeCommand) exportCommand() *cobra.Command {
