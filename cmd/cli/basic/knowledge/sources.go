@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	opensearchapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
@@ -136,12 +137,16 @@ func (c *OpenSearchClient) IndexSourceMetadata(ctx context.Context, meta SourceM
 }
 
 func (c *OpenSearchClient) indexSourceMetadata(ctx context.Context, meta SourceMetadata) error {
+	if err := c.getOrCreateSourcesIndex(ctx); err != nil {
+		return fmt.Errorf("ensuring sources index: %w", err)
+	}
+
 	bodyBytes, err := json.Marshal(meta)
 	if err != nil {
 		return fmt.Errorf("error marshaling source metadata: %w", err)
 	}
 
-	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, meta.SourceID)
+	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, url.PathEscape(meta.SourceID))
 	req, err := c.newAuthenticatedRequest(http.MethodPut, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
@@ -179,7 +184,7 @@ func (c *OpenSearchClient) updateSourceStatus(ctx context.Context, sourceID, sta
 		return fmt.Errorf("error marshaling update body: %w", err)
 	}
 
-	path := fmt.Sprintf("/%s/_update/%s", sourcesIndexName, sourceID)
+	path := fmt.Sprintf("/%s/_update/%s", sourcesIndexName, url.PathEscape(sourceID))
 	req, err := c.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
@@ -205,7 +210,7 @@ func (c *OpenSearchClient) GetSourceMetadata(ctx context.Context, sourceID strin
 }
 
 func (c *OpenSearchClient) getSourceMetadata(ctx context.Context, sourceID string) (*SourceMetadata, error) {
-	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, sourceID)
+	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, url.PathEscape(sourceID))
 	req, err := c.newAuthenticatedRequest(http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
@@ -278,6 +283,9 @@ func (c *OpenSearchClient) listSourceMetadata(ctx context.Context, indexName str
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("list source metadata failed with status %d: %s", resp.StatusCode, string(body))
@@ -308,7 +316,7 @@ func (c *OpenSearchClient) DeleteSourceMetadata(ctx context.Context, sourceID st
 }
 
 func (c *OpenSearchClient) deleteSourceMetadata(ctx context.Context, sourceID string) error {
-	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, sourceID)
+	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, url.PathEscape(sourceID))
 	req, err := c.newAuthenticatedRequest(http.MethodDelete, path, nil)
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)

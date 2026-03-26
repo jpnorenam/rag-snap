@@ -130,6 +130,11 @@ func ExportKnowledgeBase(ctx context.Context, client *OpenSearchClient, kbName s
 		return fmt.Errorf("exporting mapping: %w", err)
 	}
 
+	// Ensure sources metadata index exists before elasticdump tries to read it.
+	if err := client.CreateSourcesIndex(ctx); err != nil {
+		return fmt.Errorf("ensuring sources metadata index: %w", err)
+	}
+
 	// Export source metadata filtered to this index.
 	sourcesPath := filepath.Join(outputDir, "sources.json")
 	fmt.Printf("Exporting source metadata to %s...\n", sourcesPath)

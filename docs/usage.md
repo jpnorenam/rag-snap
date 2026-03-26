@@ -145,8 +145,10 @@ rag knowledge ingest <knowledge_base_name> <source_id> (--file <path> | --url <u
 
 | Flag | Short | Required | Description |
 |---|---|---|---|
-| `--file` | `-f` | one of the two | Local file path (PDF, HTML, plain text, …) |
-| `--url` | `-u` | one of the two | URL of a static HTML page to fetch and extract |
+| `--file` | `-f` | one of three | Local file path (PDF, HTML, plain text, …) |
+| `--url` | `-u` | one of three | URL of a static HTML page to fetch and extract |
+| `--batch` | `-B` | one of three | YAML batch config file — ingest multiple documents at once |
+| `--force` | | No | Re-ingest the source even if it is already recorded as `completed` |
 
 `<source_id>` is a human-readable identifier you choose (e.g. `snap-docs`, `rag-wiki`). It is used
 to reference the source in `metadata`, `forget`, and search results. It must be unique within the
@@ -184,8 +186,18 @@ repositories. Repository jobs walk the entire tree and ingest every file that ma
 configured extensions and optional path filter.
 
 ```
-rag knowledge ingest --batch <config.yaml>
+rag knowledge ingest --batch <config.yaml> [--force]
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--force` | `false` | Re-ingest sources that are already present in the knowledge base. By default, any source whose `source_id` is already recorded with status `completed` is skipped silently. Pass `--force` to override this and re-ingest regardless. |
+
+> **Default deduplication behaviour:** Each source is identified by its `source_id` (the file path,
+> URL, or repository file path). On every run the system checks whether that ID is already marked
+> as `completed` in the metadata index. If it is, the source is skipped and a message is printed.
+> This makes repeated runs of the same batch file safe — only new or previously-failed sources are
+> ingested. Use `--force` when you want to refresh content that has changed since the last ingest.
 
 #### YAML schema
 
