@@ -1,0 +1,73 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    # Correctness
+    - errcheck       # unhandled errors
+    - govet          # suspicious constructs (shadow, printf, etc.)
+    - staticcheck    # advanced static analysis (SA*, S*, QF*)
+    - ineffassign    # assignments whose result is never used
+    - unconvert      # unnecessary type conversions
+    - bodyclose      # HTTP response bodies must be closed
+    - nilerr         # return nil instead of the error
+    - noctx          # HTTP requests without context.Context
+
+    # Style / maintainability
+    - revive         # opinionated drop-in for golint
+    - misspell       # common English misspellings in comments/strings
+    - whitespace     # unnecessary blank lines at start/end of blocks
+    - predeclared    # shadowing of built-in identifiers
+    - gocritic       # miscellaneous style and performance hints
+    - prealloc       # suggest slice pre-allocation
+    - usetesting     # use t.Setenv/t.TempDir etc. instead of os equivalents in tests
+
+linters-settings:
+  govet:
+    enable:
+      - shadow        # catch variable shadowing
+
+  revive:
+    rules:
+      - name: exported
+        arguments:
+          - disableStutteringCheck  # allow e.g. KnowledgeClient.KnowledgeBase
+      - name: var-naming
+      - name: indent-error-flow
+      - name: error-return
+      - name: error-strings      # error strings must not be capitalised
+      - name: if-return
+      - name: increment-decrement
+      - name: range
+
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+    disabled-checks:
+      - commentedOutCode   # commented-out code is sometimes intentional in early dev
+      - hugeParam          # not worth the noise for a CLI tool
+
+  misspell:
+    locale: US
+
+formatters:
+  enable:
+    - gofmt
+  settings:
+    gofmt:
+      simplify: true
+
+issues:
+  # Show all issues, not just the first 3 per linter
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+  exclude-rules:
+    # Relax errcheck for defer Close() – already idiomatic in this codebase
+    - linters: [errcheck]
+      text: "Error return value of `.*\\.Close\\(\\)` is not checked"
+
+    # Don't enforce context on tests
+    - path: "_test\\.go"
+      linters: [noctx]
