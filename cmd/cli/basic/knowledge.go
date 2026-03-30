@@ -634,7 +634,6 @@ func (cmd *knowledgeCommand) importCommand() *cobra.Command {
 		driveURL string
 		kbName   string
 		all      bool
-		noAuth   bool
 		force    bool
 	)
 
@@ -646,8 +645,7 @@ func (cmd *knowledgeCommand) importCommand() *cobra.Command {
 			"  --input <path>   directory or .tar.gz archive\n\n" +
 			"Google Drive import:\n" +
 			"  --url <gdrive-url>   Canonical-shared Drive folder or .tar.gz file link\n" +
-			"  --all                import all archives without interactive selection\n" +
-			"  --no-auth            skip OAuth; only works with a single publicly shared file URL\n\n" +
+			"  --all                import all archives without interactive selection\n\n" +
 			"On first use with --url, you will be prompted to authenticate with your\n" +
 			"Google account via a browser. The token is cached for subsequent runs.\n\n" +
 			"If [kb-name] is omitted, the name stored in the export manifest is used.\n" +
@@ -688,16 +686,9 @@ func (cmd *knowledgeCommand) importCommand() *cobra.Command {
 				return err
 			}
 
-			if noAuth && kind == knowledge.DriveKindFolder {
-				fmt.Println("Note: --no-auth folder listing uses HTML scraping and may break if Google changes their page structure.")
-			}
-
-			var accessToken string
-			if !noAuth {
-				accessToken, err = knowledge.LoadOrAuthenticateDrive(ctx)
-				if err != nil {
-					return fmt.Errorf("Drive authentication: %w", err)
-				}
+			accessToken, err := knowledge.LoadOrAuthenticateDrive(ctx)
+			if err != nil {
+				return fmt.Errorf("Drive authentication: %w", err)
 			}
 
 			var archives []knowledge.DriveArchive
@@ -705,11 +696,7 @@ func (cmd *knowledgeCommand) importCommand() *cobra.Command {
 			switch kind {
 			case knowledge.DriveKindFolder:
 				stop := common.StartProgressSpinner("Listing archives in Google Drive folder")
-				if noAuth {
-					archives, err = knowledge.ListPublicDriveArchives(ctx, resourceID)
-				} else {
-					archives, err = knowledge.ListDriveArchives(ctx, resourceID, accessToken)
-				}
+				archives, err = knowledge.ListDriveArchives(ctx, resourceID, accessToken)
 				stop()
 				if err != nil {
 					return fmt.Errorf("listing Drive archives: %w", err)
@@ -731,35 +718,28 @@ func (cmd *knowledgeCommand) importCommand() *cobra.Command {
 				}
 
 			case knowledge.DriveKindFile:
-				// Single file — no listing or selection needed.
-				archives = []knowledge.DriveArchive{{ID: resourceID, Name: driveURL}}
+				// Fetch the actual filename so KB naming works correctly.
+				stop := common.StartProgressSpinner("Fetching file metadata")
+				fileName, metaErr := knowledge.GetDriveFileName(ctx, resourceID, accessToken)
+				stop()
+				if metaErr != nil || fileName == "" {
+					fileName = resourceID + ".tar.gz"
+				}
+				archives = []knowledge.DriveArchive{{ID: resourceID, Name: fileName}}
 			}
 
 			for i, archive := range archives {
 				fmt.Printf("[%d/%d] Downloading %s...\n", i+1, len(archives), archive.Name)
-				var tmpPath string
-				var cleanup func()
-				// resolvedName holds the actual filename; for the OAuth path this is
-				// already in archive.Name, but for --no-auth it comes from Content-Disposition.
-				resolvedName := archive.Name
-				if noAuth {
-					var dlName string
-					tmpPath, dlName, cleanup, err = knowledge.DownloadPublicDriveArchive(ctx, archive)
-					if dlName != "" {
-						resolvedName = dlName
-					}
-				} else {
-					tmpPath, cleanup, err = knowledge.DownloadDriveArchive(ctx, archive, accessToken)
-				}
-				if err != nil {
-					fmt.Printf("  skip: %v\n", err)
+				tmpPath, cleanup, dlErr := knowledge.DownloadDriveArchive(ctx, archive, accessToken)
+				if dlErr != nil {
+					fmt.Printf("  skip: %v\n", dlErr)
 					continue
 				}
 
 				// Derive a KB name from the archive filename when none is provided.
 				target := kbName
 				if target == "" {
-					target = archiveStem(resolvedName)
+					target = archiveStem(archive.Name)
 				}
 
 				fmt.Printf("  Importing as knowledge base %q...\n", target)
@@ -779,7 +759,6 @@ func (cmd *knowledgeCommand) importCommand() *cobra.Command {
 	cobraCmd.Flags().StringVarP(&inputDir, "input", "i", "", "Local directory or .tar.gz archive to import")
 	cobraCmd.Flags().StringVarP(&driveURL, "url", "u", "", "Google Drive folder or file URL to import from")
 	cobraCmd.Flags().BoolVar(&all, "all", false, "Import all archives from a Drive folder without prompting")
-	cobraCmd.Flags().BoolVar(&noAuth, "no-auth", false, "Skip OAuth; use only with a single publicly shared file URL")
 	cobraCmd.Flags().BoolVar(&force, "force", false, "Overwrite even if the target index is non-empty")
 
 	return cobraCmd

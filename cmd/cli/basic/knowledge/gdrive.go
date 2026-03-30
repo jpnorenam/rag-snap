@@ -11,8 +11,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"golang.org/x/net/html"
 )
 
 const driveAPIBase = "https://www.googleapis.com/drive/v3/files"
@@ -162,151 +160,36 @@ func DownloadDriveArchive(ctx context.Context, archive DriveArchive, accessToken
 	return streamToTempFile(resp.Body, archive.Name)
 }
 
-// ListPublicDriveArchives lists .tar.gz files in a publicly shared Drive folder
-// without authentication by parsing the embedded folder view HTML that Google
-// renders for "anyone with the link" folders.
-//
-// This is a best-effort scraping approach for testing only. Production use
-// should call ListDriveArchives with an OAuth access token instead.
-func ListPublicDriveArchives(ctx context.Context, folderID string) ([]DriveArchive, error) {
-	viewURL := "https://drive.google.com/embeddedfolderview?id=" + folderID + "#list"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, viewURL, nil) //nolint:gosec
-	if err != nil {
-		return nil, fmt.Errorf("building folder view request: %w", err)
-	}
-	// A browser User-Agent is required; Google returns a redirect to the sign-in
-	// page for requests that look like bots.
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
-
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetching folder view: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("folder view returned HTTP %d — the folder may not be publicly shared", resp.StatusCode)
-	}
-
-	doc, err := html.Parse(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("parsing folder HTML: %w", err)
-	}
-
-	var archives []DriveArchive
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "div" {
-			// Google renders each file as <div id="entry-FILE_ID" ...>
-			// with a descendant element carrying title="filename.tar.gz".
-			var fileID string
-			for _, a := range n.Attr {
-				if a.Key == "id" && strings.HasPrefix(a.Val, "entry-") {
-					fileID = strings.TrimPrefix(a.Val, "entry-")
-					break
-				}
-			}
-			if fileID != "" {
-				if name := findTarGzTitle(n); name != "" {
-					archives = append(archives, DriveArchive{ID: fileID, Name: name, Size: -1})
-				}
-				return // don't descend into the entry's subtree again
-			}
-		}
-		for c := n.FirstChild; c != nil; c = c.NextSibling {
-			walk(c)
-		}
-	}
-	walk(doc)
-
-	return archives, nil
+// driveFileMetadata is the JSON response from Drive API files.get.
+type driveFileMetadata struct {
+	Name string `json:"name"`
 }
 
-// findTarGzTitle does a depth-first search of the HTML subtree rooted at n,
-// returning the value of the first title= attribute that ends in ".tar.gz".
-func findTarGzTitle(n *html.Node) string {
-	if n.Type == html.ElementNode {
-		for _, a := range n.Attr {
-			if a.Key == "title" && strings.HasSuffix(strings.ToLower(a.Val), ".tar.gz") {
-				return a.Val
-			}
-		}
-	}
-	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if name := findTarGzTitle(c); name != "" {
-			return name
-		}
-	}
-	return ""
-}
+// GetDriveFileName fetches the filename of a single Drive file by ID.
+// accessToken must be a valid OAuth2 access token with drive.readonly scope.
+func GetDriveFileName(ctx context.Context, fileID, accessToken string) (string, error) {
+	q := url.Values{}
+	q.Set("fields", "name")
+	apiURL := fmt.Sprintf("%s/%s?%s", driveAPIBase, fileID, q.Encode())
 
-// DownloadPublicDriveArchive downloads a publicly shared Drive file without
-// authentication. Use this only when the file is shared as "anyone with the
-// link can view". It uses the drive.usercontent.google.com domain with
-// confirm=t, which bypasses the large-file virus-scan warning page without
-// requiring HTML parsing.
-//
-// The second return value is the resolved filename extracted from the
-// Content-Disposition header. Callers should use it instead of archive.Name
-// when archive.Name is a URL (single-file import case).
-func DownloadPublicDriveArchive(ctx context.Context, archive DriveArchive) (path, filename string, cleanup func(), err error) {
-	// drive.usercontent.google.com is Google's current CDN for Drive downloads.
-	// confirm=t pre-acknowledges the virus-scan warning for large files.
-	dlURL := fmt.Sprintf(
-		"https://drive.usercontent.google.com/download?id=%s&export=download&confirm=t",
-		archive.ID,
-	)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, dlURL, nil) //nolint:gosec
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := driveGET(ctx, client, apiURL, accessToken)
 	if err != nil {
-		return "", "", func() {}, fmt.Errorf("building download request: %w", err)
-	}
-
-	httpClient := &http.Client{Timeout: 30 * time.Minute}
-	resp, err := httpClient.Do(req)
-	if err != nil {
-		return "", "", func() {}, fmt.Errorf("downloading %q: %w", archive.ID, err)
+		return "", fmt.Errorf("fetching file metadata: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return "", "", func() {}, fmt.Errorf("Drive returned HTTP %d for file %q: %s",
-			resp.StatusCode, archive.ID, strings.TrimSpace(string(body)))
+		return "", fmt.Errorf("Drive API returned HTTP %d: %s",
+			resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	// Guard against receiving an HTML error page (e.g. a login redirect).
-	if ct := resp.Header.Get("Content-Type"); strings.Contains(ct, "text/html") {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return "", "", func() {}, fmt.Errorf(
-			"Drive returned an HTML page instead of a file — the file may not be publicly shared\n%s",
-			strings.TrimSpace(string(body)),
-		)
+	var meta driveFileMetadata
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return "", fmt.Errorf("decoding file metadata: %w", err)
 	}
-
-	// Resolve the actual filename from Content-Disposition so callers can
-	// derive a sensible KB name rather than using the raw URL.
-	resolved := filenameFromContentDisposition(resp.Header.Get("Content-Disposition"))
-	if resolved == "" {
-		resolved = archive.ID + ".tar.gz"
-	}
-
-	path, cleanup, err = streamToTempFile(resp.Body, resolved)
-	return path, resolved, cleanup, err
-}
-
-// filenameFromContentDisposition extracts the filename value from a
-// Content-Disposition header such as `attachment; filename="foo.tar.gz"`.
-func filenameFromContentDisposition(cd string) string {
-	for _, part := range strings.Split(cd, ";") {
-		part = strings.TrimSpace(part)
-		if strings.HasPrefix(part, "filename=") {
-			name := strings.TrimPrefix(part, "filename=")
-			name = strings.Trim(name, `"'`)
-			return name
-		}
-	}
-	return ""
+	return meta.Name, nil
 }
 
 // streamToTempFile copies r into a new temporary .tar.gz file and returns the
