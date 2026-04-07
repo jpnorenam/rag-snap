@@ -58,9 +58,16 @@ curl http://localhost:8324/v1/chat/completions \
 ```
 
 ### Installation
-
+From the Snap store
 ```bash
-sudo snap install --dangerous ./rag_*.snap
+sudo snap install rag-cli --channel edge
+```
+
+
+Or build and install
+```bash
+snapcraft -v
+sudo snap install --dangerous ./rag-cli_*.snap
 ```
 
 ### Package setup
@@ -69,33 +76,33 @@ The package comes with sensible defaults set by the install hook. Override them 
 
 #### If you are using Bedrock as the Inference Server
 ```bash
-sudo rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
-sudo rag set --package chat.http.port="443"
-sudo rag set --package chat.http.tls="true"
-sudo rag set --package chat.http.path="openai/v1"
-sudo rag set --package knowledge.http.host="127.0.0.1"
-sudo rag set --package knowledge.http.port="9200"
-sudo rag set --package knowledge.http.tls="true"
-sudo rag set --package tika.http.path="tika"
-sudo rag set --package tika.http.port="9998"
-sudo rag set --package tika.http.host="127.0.0.1"
+sudo rag-cli.rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
+sudo rag-cli.rag set --package chat.http.port="443"
+sudo rag-cli.rag set --package chat.http.tls="true"
+sudo rag-cli.rag set --package chat.http.path="openai/v1"
+sudo rag-cli.rag set --package knowledge.http.host="127.0.0.1"
+sudo rag-cli.rag set --package knowledge.http.port="9200"
+sudo rag-cli.rag set --package knowledge.http.tls="true"
+sudo rag-cli.rag set --package tika.http.path="tika"
+sudo rag-cli.rag set --package tika.http.port="9998"
+sudo rag-cli.rag set --package tika.http.host="127.0.0.1"
 
 export CHAT_API_KEY="bedrock-api-key-****"
 
-rag chat mistral.mistral-large-3-675b-instruct
+rag-cli.rag chat mistral.mistral-large-3-675b-instruct
 ```
 
 #### If you are using an Inference Snap
 ```bash
-sudo rag set --package chat.http.host="127.0.0.1"
-sudo rag set --package chat.http.port="8324"
-sudo rag set --package chat.http.path="v1"
-sudo rag set --package knowledge.http.host="127.0.0.1"
-sudo rag set --package knowledge.http.port="9200"
-sudo rag set --package knowledge.http.tls="true"
-sudo rag set --package tika.http.path="tika"
-sudo rag set --package tika.http.port="9998"
-sudo rag set --package tika.http.host="127.0.0.1"
+sudo rag-cli.rag set --package chat.http.host="127.0.0.1"
+sudo rag-cli.rag set --package chat.http.port="8324"
+sudo rag-cli.rag set --package chat.http.path="v1"
+sudo rag-cli.rag set --package knowledge.http.host="127.0.0.1"
+sudo rag-cli.rag set --package knowledge.http.port="9200"
+sudo rag-cli.rag set --package knowledge.http.tls="true"
+sudo rag-cli.rag set --package tika.http.path="tika"
+sudo rag-cli.rag set --package tika.http.port="9998"
+sudo rag-cli.rag set --package tika.http.host="127.0.0.1"
 ```
 
 The optional secrets like `OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, and `CHAT_API_KEY` are provided via environment variables:
@@ -106,10 +113,10 @@ export OPENSEARCH_PASSWORD="admin"
 
 The snap manages the tika-server service. To start it run:
 ```bash
-sudo snap start rag.tika-server
+sudo snap start rag-cli.tika-server
 ```
 
-The status of the snap can be checked with `rag status`.
+The status of the snap can be checked with `rag-cli.rag status`.
 
 
 ## Basic Usage
@@ -117,13 +124,13 @@ The status of the snap can be checked with `rag status`.
 ### Initialize pipelines and models
 
 ```bash
-rag knowledge init
+rag-cli.rag knowledge init
 ```
 
 It will print the model IDs so you can add them to the package config:
 ```bash
-sudo rag set --package knowledge.model.embedding=<embedding-model-id>
-sudo rag set --package knowledge.model.rerank=<rerank-model-id>
+sudo rag-cli.rag set --package knowledge.model.embedding=<embedding-model-id>
+sudo rag-cli.rag set --package knowledge.model.rerank=<rerank-model-id>
 ```
 
 ### Manage your knowledge bases
@@ -132,39 +139,39 @@ sudo rag set --package knowledge.model.rerank=<rerank-model-id>
 Create your first knowledge base (the `default` name is used by chat when no other base is selected):
 
 ```bash
-rag k create default
+rag-cli.rag k create default
 ```
 
 Additional knowledge bases can be created to separate content into distinct contexts that you can activate during a chat session.
 
 Create an `example` knowledge base:
 ```bash
-rag k create example
+rag-cli.rag k create example
 ```
 
-List the knowledge bases with `rag k list`.
+List the knowledge bases with `rag-cli.rag klist`.
 
 Ingest files into the `example` and `default` bases:
 ```bash
-rag k ingest example <source-id-file> --file <path-to-local-file>
+rag-cli.rag k ingest example <source-id-file> --file <path-to-local-file>
 
-rag k ingest default <source-id-url> --url <url-to-document>
+rag-cli.rag k ingest default <source-id-url> --url <url-to-document>
 ```
 
-List the added sources with `rag k list -s`.
+List the added sources with `rag-cli.rag klist -s`.
 
 Back up a knowledge base to a compressed archive:
 ```bash
-rag k export example --compress
+rag-cli.rag k export example --compress
 # → ./example-export.tar.gz
 ```
 
 Restore it — on the same machine or another — without re-embedding:
 ```bash
-rag k import --input ./example-export.tar.gz
+rag-cli.rag k import --input ./example-export.tar.gz
 # restores under the original name stored in the archive
 
-rag k import example-copy --input ./example-export.tar.gz
+rag-cli.rag k import example-copy --input ./example-export.tar.gz
 # restores under a different name
 ```
 
@@ -173,7 +180,7 @@ rag k import example-copy --input ./example-export.tar.gz
 
 Start a new conversation:
 ```bash
-rag chat
+rag-cli.rag chat
 ```
 
 Activate the relevant knowledge bases for your conversation and ask questions:
@@ -185,7 +192,7 @@ Using the `default` knowledge base at https://127.0.0.1:9200
 Type your prompt, then ENTER to submit. CTRL-C to quit
 export CHAT_API_KEY="bedrock-api-key-****"
 
-rag chat mistral.mistral-large-3-675b-instruct
+rag-cli.rag chat mistral.mistral-large-3-675b-instruct
 » /use-knowledge 
 ┃ Select active knowledge bases
 ┃   • default (27 docs, 671.1kb)
