@@ -4,10 +4,11 @@ version: &snap-version "0.0.1"
 summary: RAG CLI application
 description: |
   This snap configures OpenSearch snap models, pipelines, and indexes
-  for a RAG implementation connected to the Inference snap.
+  for a RAG implementation connected to the Inference snap or third-party inference services.
 
 grade: devel
-confinement: strict
+confinement: devmode
+# confinement: strict
 
 platforms:
   amd64:
