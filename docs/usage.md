@@ -8,7 +8,7 @@ vector-embedded documents. You can maintain multiple independent bases and searc
 
 ### Prerequisites
 
-The OpenSearch snap must be running and reachable. Run `rag status` to verify connectivity before
+The OpenSearch snap must be running and reachable. Run `rag-cli.rag status` to verify connectivity before
 using any `knowledge` sub-command.
 
 ---
@@ -54,7 +54,7 @@ Registers the ML models and creates the ingest and search pipelines that every k
 relies on. Run this **once** after the snap is installed or after OpenSearch is reset.
 
 ```
-rag knowledge init [--sentence-transformer <model>] [--cross-encoder <model>]
+rag-cli.rag knowledge init [--sentence-transformer <model>] [--cross-encoder <model>]
 ```
 
 | Flag | Short | Default | Description |
@@ -65,7 +65,7 @@ rag knowledge init [--sentence-transformer <model>] [--cross-encoder <model>]
 **Example**
 
 ```bash
-rag knowledge init
+rag-cli.rag knowledge init
 ```
 
 ---
@@ -75,7 +75,7 @@ rag knowledge init
 List all knowledge bases, or list the source documents within a base.
 
 ```
-rag knowledge list [index_name] [--sources]
+rag-cli.rag knowledge list [index_name] [--sources]
 ```
 
 | Flag | Short | Default | Description |
@@ -85,7 +85,7 @@ rag knowledge list [index_name] [--sources]
 **Example — list all knowledge bases**
 
 ```bash
-$ rag knowledge list
+$ rag-cli.rag knowledge list
 
 KNOWLEDGE BASE                 HEALTH     STATUS     DOCS         SIZE
 docs                           green      open       142          4.3mb
@@ -95,7 +95,7 @@ wiki-rag                       green      open       318          9.1mb
 **Example — list sources within a specific base**
 
 ```bash
-$ rag knowledge list docs --sources
+$ rag-cli.rag knowledge list docs --sources
 
 SOURCE ID                                          KNOWLEDGE BASE                 STATUS       CHUNKS   INGESTED AT
 snap-docs                                          docs                           completed    142      2025-06-01T10:00:00Z
@@ -104,7 +104,7 @@ snap-docs                                          docs                         
 **Example — list sources across all bases**
 
 ```bash
-$ rag knowledge list --sources
+$ rag-cli.rag knowledge list --sources
 
 SOURCE ID                                          KNOWLEDGE BASE                 STATUS       CHUNKS   INGESTED AT
 snap-docs                                          docs                           completed    142      2025-06-01T10:00:00Z
@@ -118,7 +118,7 @@ wiki-rag                                           wiki-rag                     
 Create a new, empty knowledge base index.
 
 ```
-rag knowledge create <knowledge_base_name>
+rag-cli.rag knowledge create <knowledge_base_name>
 ```
 
 The name must be a short identifier (letters, numbers, hyphens). It is used as a suffix for the
@@ -127,7 +127,7 @@ underlying OpenSearch index name.
 **Example**
 
 ```bash
-$ rag knowledge create docs
+$ rag-cli.rag knowledge create docs
 Knowledge base 'docs' created successfully.
 ```
 
@@ -140,7 +140,7 @@ overlapping chunks, embedded, and stored in OpenSearch. Provide the document eit
 or a URL.
 
 ```
-rag knowledge ingest <knowledge_base_name> <source_id> (--file <path> | --url <url>)
+rag-cli.rag knowledge ingest <knowledge_base_name> <source_id> (--file <path> | --url <url>)
 ```
 
 | Flag | Short | Required | Description |
@@ -157,14 +157,14 @@ cluster.
 **Example — ingest a local PDF**
 
 ```bash
-$ rag knowledge ingest docs snap-docs --file ~/Downloads/snapcraft-docs.pdf
+$ rag-cli.rag knowledge ingest docs snap-docs --file ~/Downloads/snapcraft-docs.pdf
 Ingested 89 chunks into index 'rag-kb-docs'
 ```
 
 **Example — ingest a web page**
 
 ```bash
-$ rag knowledge ingest wiki-rag rag-wiki \
+$ rag-cli.rag knowledge ingest wiki-rag rag-wiki \
     --url https://en.wikipedia.org/wiki/Retrieval-augmented_generation
 Ingested 37 chunks into index 'rag-kb-wiki-rag'
 ```
@@ -186,7 +186,7 @@ repositories. Repository jobs walk the entire tree and ingest every file that ma
 configured extensions and optional path filter.
 
 ```
-rag knowledge ingest --batch <config.yaml> [--force]
+rag-cli.rag knowledge ingest --batch <config.yaml> [--force]
 ```
 
 | Flag | Default | Description |
@@ -266,7 +266,7 @@ jobs:
 **Example — run a batch**
 
 ```bash
-$ rag knowledge ingest --batch ~/docs/batch.yaml
+$ rag-cli.rag knowledge ingest --batch ~/docs/batch.yaml
 
 Found 4 jobs in batch file version 1.0
 [1/4] Processing: /home/user/docs/api-reference.pdf
@@ -303,7 +303,7 @@ Found 118 files in openstack/nova
 Run a hybrid semantic + lexical search across one or more knowledge bases.
 
 ```
-rag knowledge search <query> [--bases <name,...>] [--top <k>]
+rag-cli.rag knowledge search <query> [--bases <name,...>] [--top <k>]
 ```
 
 | Flag | Short | Default | Description |
@@ -314,7 +314,7 @@ rag knowledge search <query> [--bases <name,...>] [--top <k>]
 **Example — search the default base**
 
 ```bash
-$ rag knowledge search "how does vector search work"
+$ rag-cli.rag knowledge search "how does vector search work"
 
 --- Result 1 (score: 0.9821, index: rag-kb-default) ---
   Source: rag-wiki
@@ -327,7 +327,7 @@ Total: 10 results
 **Example — search across multiple bases**
 
 ```bash
-$ rag knowledge search "snap confinement" --bases docs,wiki-rag --top 5
+$ rag-cli.rag knowledge search "snap confinement" --bases docs,wiki-rag --top 5
 ```
 
 ---
@@ -337,13 +337,13 @@ $ rag knowledge search "snap confinement" --bases docs,wiki-rag --top 5
 Show the stored metadata record for a specific ingested source.
 
 ```
-rag knowledge metadata <knowledge_base_name> <source_id>
+rag-cli.rag knowledge metadata <knowledge_base_name> <source_id>
 ```
 
 **Example**
 
 ```bash
-$ rag knowledge metadata docs snap-docs
+$ rag-cli.rag knowledge metadata docs snap-docs
 
 Source ID:      snap-docs
 Knowledge base: docs
@@ -370,21 +370,21 @@ record is also deleted. Use this to replace outdated content: forget the old sou
 the updated file under the same `source_id`.
 
 ```
-rag knowledge forget <knowledge_base_name> <source_id>
+rag-cli.rag knowledge forget <knowledge_base_name> <source_id>
 ```
 
 **Example**
 
 ```bash
-$ rag knowledge forget docs snap-docs
+$ rag-cli.rag knowledge forget docs snap-docs
 Deleted 89 chunks and metadata for source 'snap-docs' from index 'rag-kb-docs'
 ```
 
 **Refresh a source with updated content**
 
 ```bash
-rag knowledge forget docs snap-docs
-rag knowledge ingest docs snap-docs --file ~/Downloads/snapcraft-docs-v2.pdf
+rag-cli.rag knowledge forget docs snap-docs
+rag-cli.rag knowledge ingest docs snap-docs --file ~/Downloads/snapcraft-docs-v2.pdf
 ```
 
 ---
@@ -397,7 +397,7 @@ The export uses [elasticdump](https://github.com/ElasticTools/elasticdump) bundl
 preserves the embeddings so that an import requires no re-embedding.
 
 ```
-rag knowledge export <knowledge_base_name> [--output <path>] [--compress]
+rag-cli.rag knowledge export <knowledge_base_name> [--output <path>] [--compress]
 ```
 
 | Flag | Short | Default | Description |
@@ -419,7 +419,7 @@ A missing `manifest.json` indicates an incomplete export. `knowledge import` wil
 **Example — export to a directory**
 
 ```bash
-$ rag knowledge export project-docs
+$ rag-cli.rag knowledge export project-docs
 Exporting document data to ./project-docs-export/data.json...
 Exporting mapping to ./project-docs-export/mapping.json...
 Exporting source metadata to ./project-docs-export/sources.json...
@@ -433,7 +433,7 @@ Export complete.
 **Example — export to a compressed archive**
 
 ```bash
-$ rag knowledge export project-docs --compress
+$ rag-cli.rag knowledge export project-docs --compress
 Exporting document data to ./project-docs-export/data.json...
 Exporting mapping to ./project-docs-export/mapping.json...
 Exporting source metadata to ./project-docs-export/sources.json...
@@ -448,7 +448,7 @@ Export complete.
 **Example — custom output path**
 
 ```bash
-rag knowledge export project-docs --output /mnt/backups/project-docs --compress
+rag-cli.rag knowledge export project-docs --output /mnt/backups/project-docs --compress
 # → /mnt/backups/project-docs.tar.gz
 ```
 
@@ -464,7 +464,7 @@ If a knowledge base name is omitted, the name stored in the export manifest is u
 Provide a name to restore under a different name (e.g. to clone or migrate a base).
 
 ```
-rag knowledge import [knowledge_base_name] --input <path> [--force]
+rag-cli.rag knowledge import [knowledge_base_name] --input <path> [--force]
 ```
 
 | Flag | Short | Required | Description |
@@ -480,7 +480,7 @@ The input format is detected automatically:
 **Example — restore using the original name (from manifest)**
 
 ```bash
-$ rag knowledge import --input ./project-docs-export.tar.gz
+$ rag-cli.rag knowledge import --input ./project-docs-export.tar.gz
 Extracting ./project-docs-export.tar.gz...
 Using knowledge base name from manifest: "project-docs"
 Importing mapping...
@@ -495,13 +495,13 @@ Import complete.
 **Example — restore under a different name**
 
 ```bash
-rag knowledge import project-docs-staging --input ./project-docs-export.tar.gz
+rag-cli.rag knowledge import project-docs-staging --input ./project-docs-export.tar.gz
 ```
 
 **Example — overwrite an existing index**
 
 ```bash
-rag knowledge import project-docs --input ./project-docs-export --force
+rag-cli.rag knowledge import project-docs --input ./project-docs-export --force
 ```
 
 > **Note on infrastructure:** `knowledge import` automatically ensures the index template and
@@ -517,13 +517,13 @@ Delete an entire knowledge base index and all associated source metadata. This o
 **irreversible**. You will be prompted to type the knowledge base name to confirm.
 
 ```
-rag knowledge delete <knowledge_base_name>
+rag-cli.rag knowledge delete <knowledge_base_name>
 ```
 
 **Example**
 
 ```bash
-$ rag knowledge delete docs
+$ rag-cli.rag knowledge delete docs
 
 The following 2 source(s) will be permanently deleted:
 
@@ -542,39 +542,39 @@ Deleted index 'rag-kb-docs' and 2 source metadata record(s).
 
 ```bash
 # 1. Initialise pipelines (once)
-rag knowledge init
+rag-cli.rag knowledge init
 
 # 2. Create a knowledge base for project documentation
-rag knowledge create project-docs
+rag-cli.rag knowledge create project-docs
 
 # 3. Ingest documents (one at a time, or all at once with a batch file)
-rag knowledge ingest project-docs design-doc   --file ~/docs/design.pdf
-rag knowledge ingest project-docs api-ref      --file ~/docs/api-reference.html
-rag knowledge ingest project-docs release-blog \
+rag-cli.rag knowledge ingest project-docs design-doc   --file ~/docs/design.pdf
+rag-cli.rag knowledge ingest project-docs api-ref      --file ~/docs/api-reference.html
+rag-cli.rag knowledge ingest project-docs release-blog \
     --url https://example.com/blog/v2-release
 # alternatively:
-rag knowledge ingest --batch ~/docs/project-docs-batch.yaml
+rag-cli.rag knowledge ingest --batch ~/docs/project-docs-batch.yaml
 
 # 4. Verify what was ingested
-rag knowledge list project-docs --sources
+rag-cli.rag knowledge list project-docs --sources
 
 # 5. Search
-rag knowledge search "authentication flow" --bases project-docs
+rag-cli.rag knowledge search "authentication flow" --bases project-docs
 
 # 6. Update a document that has changed
-rag knowledge forget project-docs design-doc
-rag knowledge ingest project-docs design-doc --file ~/docs/design-v2.pdf
+rag-cli.rag knowledge forget project-docs design-doc
+rag-cli.rag knowledge ingest project-docs design-doc --file ~/docs/design-v2.pdf
 
 # 7. Back up before migration or deletion
-rag knowledge export project-docs --compress
+rag-cli.rag knowledge export project-docs --compress
 # → ./project-docs-export.tar.gz
 
 # 8. Restore on another machine (or under a new name)
-rag knowledge import --input ./project-docs-export.tar.gz
-rag knowledge import project-docs-v2 --input ./project-docs-export.tar.gz
+rag-cli.rag knowledge import --input ./project-docs-export.tar.gz
+rag-cli.rag knowledge import project-docs-v2 --input ./project-docs-export.tar.gz
 
 # 9. Clean up when the project is archived
-rag knowledge delete project-docs
+rag-cli.rag knowledge delete project-docs
 ```
 
 ---
@@ -596,7 +596,7 @@ each answer (RAG).
 ### Starting a session
 
 ```
-rag chat [model_name]
+rag-cli.rag chat [model_name]
 ```
 
 | Argument | Required | Description |
@@ -606,20 +606,20 @@ rag chat [model_name]
 **Example — auto-detect model**
 
 ```bash
-rag chat
+rag-cli.rag chat
 ```
 
 **Example — choose a specific model**
 
 ```bash
-rag chat deepseek-r1:8b
+rag-cli.rag chat deepseek-r1:8b
 ```
 
 If the inference server requires authentication, set the `CHAT_API_KEY` environment variable before
 starting:
 
 ```bash
-CHAT_API_KEY=sk-… rag chat
+CHAT_API_KEY=sk-… rag-cli.rag chat
 ```
 
 The client waits up to 60 seconds for the model to finish loading before giving up.
@@ -716,10 +716,10 @@ relevant ones before each conversation.
 
 ```bash
 # ingest project docs into a dedicated base
-rag knowledge ingest project-x api-ref --file ~/docs/api.pdf
+rag-cli.rag knowledge ingest project-x api-ref --file ~/docs/api.pdf
 
 # start chat, then switch to it
-rag chat
+rag-cli.rag chat
 » /use-knowledge   # select project-x
 » How does the authentication flow work?
 ```
@@ -740,16 +740,16 @@ content is likely not ingested yet — add it with `knowledge ingest` and try ag
 a working session on a topic, check ingestion dates and refresh changed documents:
 
 ```bash
-rag knowledge list my-base --sources   # check dates
-rag knowledge forget my-base old-doc
-rag knowledge ingest my-base old-doc --file ~/docs/updated.pdf
+rag-cli.rag knowledge list my-base --sources   # check dates
+rag-cli.rag knowledge forget my-base old-doc
+rag-cli.rag knowledge ingest my-base old-doc --file ~/docs/updated.pdf
 ```
 
 **Debug with `--verbose`.** Pass `-v` before the subcommand to see which model is chosen, how many
 RAG chunks were retrieved, and the rewritten search keywords:
 
 ```bash
-rag -v chat
+rag-cli.rag -v chat
 ```
 
 Sample verbose output during a turn:
@@ -765,7 +765,7 @@ Retrieved 8 results from knowledge base
 ### Example session
 
 ```
-$ rag chat
+$ rag-cli.rag chat
 
 Using inference server at http://localhost:8324
 Using the `default` knowledge base at http://localhost:9200
@@ -824,7 +824,7 @@ Each question is answered in sequence, printed to the terminal, and the full set
 written to a timestamped JSON file in the current working directory.
 
 ```
-rag answer batch <manifest.yaml>
+rag-cli.rag answer batch <manifest.yaml>
 ```
 
 #### YAML schema
@@ -871,7 +871,7 @@ questions:
 **Example — run a batch**
 
 ```bash
-$ rag answer batch ~/rfp/questions.yaml
+$ rag-cli.rag answer batch ~/rfp/questions.yaml
 
 Found 3 questions in batch manifest version 1.0
 [1/3] Question: What is the data retention policy?
@@ -911,6 +911,6 @@ Results are written to `batch-results-YYYYMMDD-HHMMSS.json` in the current worki
 
 > **Note on model selection:** If the inference server does not support model auto-detection
 > (e.g. AWS Bedrock), set the model explicitly in the manifest or configure a default with
-> `sudo rag set --package chat.model="<model-id>"` once after installation.
+> `sudo rag-cli.rag set --package chat.model="<model-id>"` once after installation.
 
 ---

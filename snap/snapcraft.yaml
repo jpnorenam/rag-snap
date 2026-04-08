@@ -1,14 +1,15 @@
 name: rag-cli
 base: core24
-version: &snap-version "0.0.1"
+
+version: &snap-version "0.0.2"
 summary: RAG CLI application
 description: |
   This snap configures OpenSearch snap models, pipelines, and indexes
   for a RAG implementation connected to the Inference snap or third-party inference services.
 
 grade: devel
-confinement: devmode
-# confinement: strict
+# confinement: devmode
+confinement: strict
 
 platforms:
   amd64:
@@ -23,10 +24,10 @@ plugs:
   shmem-perf-analyzer:
     interface: shared-memory
     private: true
-  sys-fs-cgroup-service:
-    interface: system-files
-    read:
-      - /sys/fs/cgroup/system.slice/snap.rag-tika.daemon.service
+  # sys-fs-cgroup-service:
+  #   interface: system-files
+  #   read:
+  #     - /sys/fs/cgroup/system.slice/snap.rag-tika.daemon.service
 
 compression: lzo
 
@@ -150,8 +151,6 @@ apps:
       # To access server over network socket
       - network
       - home
-    environment:
-      RAG: $SNAP/bin/rag.sh
 
   tika-server:
     daemon: simple
@@ -168,8 +167,8 @@ apps:
       - process-control
       - shmem-perf-analyzer
       - system-observe
-      - sys-fs-cgroup-service
+      # - sys-fs-cgroup-service
       - intel-qat
     environment:
-      JAVA_OPTS: "-Xms512m -Xmx2g"
+      JAVA_OPTS: "-Xms512m -Xmx2g -XX:-UseContainerSupport"
       LD_LIBRARY_PATH: "${LD_LIBRARY_PATH}:${KNN_LIB_DIR}"
