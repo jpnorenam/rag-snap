@@ -28,7 +28,7 @@ using any `knowledge` sub-command.
 | `knowledge forget <name> <source-id>` | Remove a source and all its chunks |
 | `knowledge delete <name>` | Delete an entire knowledge base |
 | `knowledge export <name>` | Back up a knowledge base to a directory or `.tar.gz` archive |
-| `knowledge import [name]` | Restore a knowledge base from an export directory or archive |
+| `knowledge import [name]` | Restore a knowledge base from a local export or a Google Drive folder/file |
 
 ---
 
@@ -456,26 +456,40 @@ rag-cli.rag knowledge export project-docs --output /mnt/backups/project-docs --c
 
 ### `knowledge import`
 
-Restore a knowledge base from an export directory or a `.tar.gz` archive produced by
-`knowledge export`. Pre-computed embeddings are imported as-is, so no re-embedding step is
-needed and no ML models need to be running during import.
+Restore a knowledge base from an export produced by `knowledge export`. Pre-computed embeddings
+are imported as-is — no re-embedding step is needed and no ML models need to be running during
+import.
+
+Two source types are supported:
+
+- **Local** (`--input`) — a directory or `.tar.gz` archive on the local filesystem.
+- **Google Drive** (`--url`) — a shared Drive folder containing one or more `.tar.gz` archives,
+  or a direct link to a single `.tar.gz` file.
 
 If a knowledge base name is omitted, the name stored in the export manifest is used automatically.
 Provide a name to restore under a different name (e.g. to clone or migrate a base).
 
 ```
-rag-cli.rag knowledge import [knowledge_base_name] --input <path> [--force]
+rag-cli.rag knowledge import [knowledge_base_name] (--input <path> | --url <gdrive-url>) [flags]
 ```
 
 | Flag | Short | Required | Description |
 |---|---|---|---|
-| `--input` | `-i` | Yes | Path to the export directory or `.tar.gz` archive |
+| `--input` | `-i` | one of two | Path to the export directory or `.tar.gz` archive |
+| `--url` | `-u` | one of two | Google Drive folder or file URL to import from |
+| `--all` | | No | Import all archives from a Drive folder without interactive selection |
 | `--force` | | No | Overwrite even if the target index already contains documents |
 
-The input format is detected automatically:
+`--input` and `--url` are mutually exclusive.
+
+The local input format is detected automatically:
 
 - **Directory** — used directly as the export root.
 - **`.tar.gz` file** — extracted into a temporary directory, imported, then cleaned up.
+
+---
+
+#### Local import
 
 **Example — restore using the original name (from manifest)**
 
@@ -489,7 +503,7 @@ Importing source metadata...
 
 Import complete.
   Sources imported: 3
-  Chunks expected:  228 (from manifest)
+  Chunks imported:  228
 ```
 
 **Example — restore under a different name**
@@ -503,6 +517,82 @@ rag-cli.rag knowledge import project-docs-staging --input ./project-docs-export.
 ```bash
 rag-cli.rag knowledge import project-docs --input ./project-docs-export --force
 ```
+
+---
+
+#### Google Drive import
+
+Archives are fetched directly from a shared Google Drive folder or file. On the first run you are
+prompted to authenticate with your Google account through a browser. The token is cached
+automatically and silently refreshed on subsequent runs — you will only need to authenticate once.
+
+Supported Drive URL formats:
+
+| URL form | Behaviour |
+|---|---|
+| `https://drive.google.com/drive/folders/FOLDER_ID` | List all `.tar.gz` files in the folder |
+| `https://drive.google.com/drive/u/0/folders/FOLDER_ID` | Same, user-scoped variant |
+| `https://drive.google.com/file/d/FILE_ID/view` | Download that single file directly |
+| `https://drive.google.com/uc?id=FILE_ID` | Download that single file directly |
+| `https://drive.google.com/open?id=FILE_ID` | Download that single file directly |
+
+**Example — import from a Drive folder (interactive selection)**
+
+```bash
+$ rag knowledge import --url "https://drive.google.com/drive/folders/FOLDER_ID"
+
+Listing archives in Google Drive folder...
+
+  Select archives to import
+  > [x] project-docs-export.tar.gz (12.4 MB)
+    [ ] scratch-export.tar.gz (1.1 MB)
+    [x] wiki-rag-export.tar.gz (9.3 MB)
+
+[1/2] Downloading project-docs-export.tar.gz...
+  Importing as knowledge base "project-docs"...
+  Importing mapping...
+  Importing document data...
+  Importing source metadata...
+
+  Import complete.
+    Sources imported: 3
+    Chunks imported:  228
+
+[2/2] Downloading wiki-rag-export.tar.gz...
+  Importing as knowledge base "wiki-rag"...
+  ...
+```
+
+Use Space to toggle archives, Enter to confirm, Esc/Ctrl-C to cancel the selection.
+
+**Example — import all archives from a folder without prompting**
+
+```bash
+rag knowledge import --url "https://drive.google.com/drive/folders/FOLDER_ID" --all
+```
+
+**Example — import a single file from Drive**
+
+```bash
+rag knowledge import --url "https://drive.google.com/file/d/FILE_ID/view"
+```
+
+**Example — restore a Drive archive under a different name**
+
+```bash
+rag knowledge import project-docs-staging \
+    --url "https://drive.google.com/file/d/FILE_ID/view"
+```
+
+> **Note on authentication:** `knowledge import --url` requires a Google account that has at least
+> viewer access to the Drive resource. The OAuth token is cached at
+> `~/.config/rag-snap/gdrive-token.json` (or `$SNAP_USER_DATA/gdrive-token.json` when running as a
+> snap). Delete this file to force re-authentication.
+
+> **Note on KB naming:** When importing from a folder, the knowledge base name is derived from the
+> archive filename by stripping `.tar.gz` and a trailing `-export` suffix
+> (e.g. `project-docs-export.tar.gz` → `project-docs`). Pass `[knowledge_base_name]` to override
+> this for all archives in the batch, or use `--input` with a single archive for precise control.
 
 > **Note on infrastructure:** `knowledge import` automatically ensures the index template and
 > sources metadata index exist before importing. You do not need to run `knowledge init` first,
@@ -572,6 +662,8 @@ rag-cli.rag knowledge export project-docs --compress
 # 8. Restore on another machine (or under a new name)
 rag-cli.rag knowledge import --input ./project-docs-export.tar.gz
 rag-cli.rag knowledge import project-docs-v2 --input ./project-docs-export.tar.gz
+# or pull directly from a shared Drive folder
+rag-cli.rag knowledge import --url "https://drive.google.com/drive/folders/FOLDER_ID" --all
 
 # 9. Clean up when the project is archived
 rag-cli.rag knowledge delete project-docs

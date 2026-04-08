@@ -59,6 +59,15 @@ parts:
       - go/1.24/stable
     source: .
     source-type: local
+    override-build: |
+      # Embed Google Drive OAuth2 credentials at build time.
+      # Set DRIVE_CLIENT_ID and DRIVE_CLIENT_SECRET in the environment before
+      # running snapcraft (e.g. via a CI secret or a local .env file).
+      CGO_ENABLED=0 go build -trimpath \
+        -ldflags="-w -s \
+          -X github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge.driveClientID=${DRIVE_CLIENT_ID} \
+          -X github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge.driveClientSecret=${DRIVE_CLIENT_SECRET}" \
+        -o "${CRAFT_PART_INSTALL}/bin/cli" ./cmd/cli
 
   common-runtime-dependencies:
     plugin: nil
