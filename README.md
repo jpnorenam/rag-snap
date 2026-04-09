@@ -149,7 +149,7 @@ Create an `example` knowledge base:
 rag-cli.rag k create example
 ```
 
-List the knowledge bases with `rag-cli.rag klist`.
+List the knowledge bases with `rag-cli.rag k list`.
 
 Ingest files into the `example` and `default` bases:
 ```bash
@@ -158,7 +158,7 @@ rag-cli.rag k ingest example <source-id-file> --file <path-to-local-file>
 rag-cli.rag k ingest default <source-id-url> --url <url-to-document>
 ```
 
-List the added sources with `rag-cli.rag klist -s`.
+List the added sources with `rag-cli.rag k list -s`.
 
 Back up a knowledge base to a compressed archive:
 ```bash
