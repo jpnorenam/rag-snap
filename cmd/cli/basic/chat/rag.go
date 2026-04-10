@@ -14,9 +14,15 @@ import (
 const (
 	defaultRAGTopK     = 10
 	maxRewriteTurns    = 3
-	maxRewriteTokens   = 1024
+	maxRewriteTokens   = 256
 	maxAssistantLength = 400
 )
+
+// extractedKeywords holds the two-stage extraction result.
+type extractedKeywords struct {
+	Anchors   []string `json:"anchors"`
+	Expansion []string `json:"expansion"`
+}
 
 // retrieveContext searches the active knowledge base indexes for content
 // relevant to query. Returns an empty string when RAG is unavailable or
@@ -53,14 +59,29 @@ func retrieveContext(session *Session, query, lexicalQuery string, verbose bool)
 	return formatContext(hits)
 }
 
+// sourceLabel returns a provenance tag for a search hit based on its index name.
+// KB names containing "upstream" are tagged [UPSTREAM]; all others are [CANONICAL].
+// Convention: when ingesting open-source / third-party documentation, the KB name
+// must include "upstream" (e.g. "openstack-upstream", "kubernetes-upstream").
+// The LLM uses these tags to enforce source priority rules in its answer.
+func sourceLabel(indexName string) string {
+	if strings.Contains(strings.ToLower(indexName), "upstream") {
+		return "[UPSTREAM]"
+	}
+	return "[CANONICAL]"
+}
+
 // formatContext renders a slice of search hits into a single text block
-// suitable for injection into a RAG prompt.
+// suitable for injection into a RAG prompt. Each chunk is prefixed with a
+// provenance label ([CANONICAL] or [UPSTREAM]) so the LLM can apply source
+// priority rules when formulating its answer.
 func formatContext(hits []knowledge.SearchHit) string {
 	var b strings.Builder
 	for i, hit := range hits {
 		if i > 0 {
 			b.WriteString("\n---\n")
 		}
+		fmt.Fprintf(&b, "%s\n", sourceLabel(hit.Index))
 		b.WriteString(hit.Content)
 		fmt.Fprintf(&b, "\n(source: %s, score: %.4f)", hit.SourceID, hit.Score)
 	}
@@ -91,9 +112,11 @@ func rewriteSearchQuery(
 	resp, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage(
-				"Extract search keywords from the conversation context and the latest question. " +
-					"Include relevant product names, technical terms, and topics from the conversation. " +
-					"Output only space-separated keywords. No explanation, no punctuation.",
+				"You are a RAG query optimizer. Given a conversation and a follow-up question, output a JSON object with two fields:\n" +
+					"- \"anchors\": verbatim technical terms, product names, and proper nouns from the text\n" +
+					"- \"expansion\": closely related terms implied by context (abbreviations, synonyms, parent concepts)\n" +
+					"Rules: expansion must be inferable from the conversation domain, not generic.\n" +
+					"Output only valid JSON, no explanation.",
 			),
 			openai.UserMessage(conversationCtx + "Question: " + query),
 		},
@@ -112,15 +135,41 @@ func rewriteSearchQuery(
 		return query
 	}
 
-	keywords := stripThinkTags(resp.Choices[0].Message.Content)
-	keywords = strings.TrimSpace(keywords)
-	if keywords == "" {
+	raw := strings.TrimSpace(stripThinkTags(resp.Choices[0].Message.Content))
+	if raw == "" {
 		return query
 	}
-	if verbose {
-		fmt.Printf("Search keywords: %s\n", keywords)
+
+	// Strip optional markdown code fences some models emit around JSON.
+	raw = strings.TrimPrefix(raw, "```json")
+	raw = strings.TrimPrefix(raw, "```")
+	raw = strings.TrimSuffix(raw, "```")
+	raw = strings.TrimSpace(raw)
+
+	var kw extractedKeywords
+	if err := json.Unmarshal([]byte(raw), &kw); err != nil {
+		// Two-level fallback: if the raw string looks like plain words use it;
+		// otherwise fall back to the original query.
+		if verbose {
+			fmt.Printf("Keyword JSON parse failed (%v), using raw output\n", err)
+		}
+		if strings.ContainsAny(raw, "{}[]\"") {
+			return query
+		}
+		return raw
 	}
-	return keywords
+
+	// Anchors lead (verbatim terms, higher BM25 signal); expansion follows.
+	all := append(kw.Anchors, kw.Expansion...)
+	result := strings.Join(all, " ")
+	if result == "" {
+		return query
+	}
+
+	if verbose {
+		fmt.Printf("Search keywords — anchors: %v | expansion: %v\n", kw.Anchors, kw.Expansion)
+	}
+	return result
 }
 
 // stripThinkTags removes <think>...</think> reasoning blocks that
@@ -187,31 +236,43 @@ func formatConversationForRewrite(messages []openai.ChatCompletionMessageParamUn
 	}
 
 	var b strings.Builder
-	for _, t := range turns {
+	totalTurns := len(turns)
+	for i, t := range turns {
+		// Give the LLM explicit recency signal
+		age := totalTurns - i // 1 = most recent
+		label := fmt.Sprintf("[turn-%d, age=%d]", i+1, age)
 		content := t.Content
 		if t.Role == "assistant" && len(content) > maxAssistantLength {
 			content = content[:maxAssistantLength] + "..."
 		}
-		fmt.Fprintf(&b, "%s: %s\n", t.Role, content)
+		fmt.Fprintf(&b, "%s %s: %s\n", label, t.Role, content)
 	}
 	return b.String()
 }
 
 // ragAnswerSystemPrompt is the system-level instruction for batch answer (rag answer batch).
-// Maximally concise and factual — optimized for structured Q&A output.
-const ragAnswerSystemPrompt = "You are a highly accurate and concise assistant. " +
-	"Answer the question directly using ONLY the provided context. " +
-	"Be extremely concise — 1 to 3 sentences max. " +
-	"Do not use filler words or conversational introductions. Get straight to the point. " +
-	"If you must cite, use brief inline references. " +
-	"If the context is insufficient or irrelevant, reply exactly with: " +
-	"\"Insufficient context to answer this question.\" Do not fabricate information."
+// Optimized for terse, structured Q&A — every word must earn its place.
+const ragAnswerSystemPrompt = "You are a technical answer engine. Apply these rules strictly:\n" +
+	"1. GROUNDING: Use ONLY information explicitly stated in the provided context. Never infer, extrapolate, or use outside knowledge.\n" +
+	"2. SOURCE PRIORITY: Each context chunk is tagged [CANONICAL] or [UPSTREAM]. When they conflict or overlap, [CANONICAL] always takes precedence.\n" +
+	"3. PRODUCTS: Only name a product or component if a [CANONICAL] chunk explicitly documents or endorses it. " +
+	"[UPSTREAM] chunks may inform factual background but do not justify naming or endorsing a product. " +
+	"If the question itself names a product as an example, do NOT repeat or endorse it unless a [CANONICAL] chunk confirms it. " +
+	"Never mention proprietary third-party products.\n" +
+	"4. FORMAT: Answer in 1–3 sentences. Use bullet points only when listing multiple distinct items. No preamble, no filler, no 'Based on the context…'.\n" +
+	"5. NO ANSWER: If the context does not contain enough information, reply exactly: " +
+	"\"The provided context does not contain enough information to answer this question.\""
 
 // ragChatSystemPrompt is the system-level instruction for the interactive chat REPL (rag chat).
-// Conversational and grounded — allows elaboration while staying accurate.
-const ragChatSystemPrompt = "You are a knowledgeable and helpful assistant grounded in the provided context. " +
-	"Answer questions accurately using the context. You may elaborate where helpful. " +
-	"If the context does not contain enough information, say so clearly — do not fabricate facts."
+// Grounded and conversational — follows the same strict accuracy rules with natural phrasing.
+const ragChatSystemPrompt = "You are a Canonical technical assistant. Apply these rules strictly:\n" +
+	"1. GROUNDING: Use ONLY information explicitly stated in the provided context. Never infer, extrapolate, or use outside knowledge.\n" +
+	"2. SOURCE PRIORITY: Each context chunk is tagged [CANONICAL] or [UPSTREAM]. When they conflict or overlap, [CANONICAL] always takes precedence.\n" +
+	"3. PRODUCTS: Only name a product or component if a [CANONICAL] chunk explicitly documents or endorses it. " +
+	"[UPSTREAM] chunks may inform factual background but do not justify naming or endorsing a product. " +
+	"Never mention proprietary third-party products.\n" +
+	"4. FORMAT: Be concise and direct. Use bullet points when listing multiple items. You may ask a clarifying question if the query is ambiguous.\n" +
+	"5. NO ANSWER: If the context does not contain enough information, say so plainly and do not speculate."
 
 // buildRAGPrompt wraps the user's original prompt with the retrieved
 // context so the LLM can ground its answer.
