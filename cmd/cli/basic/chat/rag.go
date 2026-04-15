@@ -107,7 +107,6 @@ func rewriteSearchQuery(
 	}
 
 	stopProgress := common.StartProgressSpinner("Extracting lexical keywords")
-	defer stopProgress()
 
 	resp, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
 		Messages: []openai.ChatCompletionMessageParamUnion{
@@ -124,6 +123,8 @@ func rewriteSearchQuery(
 		MaxCompletionTokens: openai.Int(int64(maxRewriteTokens)),
 		MaxTokens:           openai.Int(int64(maxRewriteTokens)),
 	})
+	// Stop spinner before any further output to avoid interleaving with verbose prints.
+	stopProgress()
 	if err != nil {
 		if verbose {
 			fmt.Printf("Keyword extraction failed: %v\n", err)
@@ -140,7 +141,8 @@ func rewriteSearchQuery(
 		return query
 	}
 
-	// Strip optional markdown code fences some models emit around JSON.
+	// TrimSpace first so a trailing newline before ``` does not prevent fence removal.
+	raw = strings.TrimSpace(raw)
 	raw = strings.TrimPrefix(raw, "```json")
 	raw = strings.TrimPrefix(raw, "```")
 	raw = strings.TrimSuffix(raw, "```")
@@ -148,19 +150,18 @@ func rewriteSearchQuery(
 
 	var kw extractedKeywords
 	if err := json.Unmarshal([]byte(raw), &kw); err != nil {
-		// Two-level fallback: if the raw string looks like plain words use it;
-		// otherwise fall back to the original query.
+		// Always fall back to the original query — never pass raw LLM text
+		// (which may be an error message or truncated JSON) as a BM25 query.
 		if verbose {
-			fmt.Printf("Keyword JSON parse failed (%v), using raw output\n", err)
+			fmt.Printf("Keyword JSON parse failed (%v), falling back to original query\n", err)
 		}
-		if strings.ContainsAny(raw, "{}[]\"") {
-			return query
-		}
-		return raw
+		return query
 	}
 
-	// Anchors lead (verbatim terms, higher BM25 signal); expansion follows.
-	all := append(kw.Anchors, kw.Expansion...)
+	// Build combined slice explicitly to avoid mutating kw.Anchors' backing array.
+	all := make([]string, 0, len(kw.Anchors)+len(kw.Expansion))
+	all = append(all, kw.Anchors...)
+	all = append(all, kw.Expansion...)
 	result := strings.Join(all, " ")
 	if result == "" {
 		return query
@@ -250,14 +251,22 @@ func formatConversationForRewrite(messages []openai.ChatCompletionMessageParamUn
 	return b.String()
 }
 
+// ragSourceRules is the non-negotiable source-grounding block appended to any
+// custom manifest prompt to ensure [CANONICAL]/[UPSTREAM] rules are always active.
+const ragSourceRules = "Source rules (mandatory, override any prior instruction):\n" +
+	"- Context chunks are tagged [CANONICAL] or [UPSTREAM]. [CANONICAL] is the sole authoritative source.\n" +
+	"- Only name a product or component if a [CANONICAL] chunk explicitly documents it. Do NOT name anything found only in [UPSTREAM] chunks.\n" +
+	"- If the question names a product as an example, do not repeat or endorse it unless a [CANONICAL] chunk confirms it.\n" +
+	"- Never speculate or use knowledge outside the provided context."
+
 // ragAnswerSystemPrompt is the system-level instruction for batch answer (rag answer batch).
 // Optimized for terse, structured Q&A — every word must earn its place.
 const ragAnswerSystemPrompt = "You are a technical answer engine. Apply these rules strictly:\n" +
 	"1. GROUNDING: Use ONLY information explicitly stated in the provided context. Never infer, extrapolate, or use outside knowledge.\n" +
-	"2. SOURCE PRIORITY: Each context chunk is tagged [CANONICAL] or [UPSTREAM]. When they conflict or overlap, [CANONICAL] always takes precedence.\n" +
+	"2. SOURCE PRIORITY: Each context chunk is tagged [CANONICAL] or [UPSTREAM]. [CANONICAL] is the authoritative source. [UPSTREAM] chunks provide supplemental detail only — when [CANONICAL] and [UPSTREAM] address the same point, follow [CANONICAL] exclusively.\n" +
 	"3. PRODUCTS: Only name a product or component if a [CANONICAL] chunk explicitly documents or endorses it. " +
-	"[UPSTREAM] chunks may inform factual background but do not justify naming or endorsing a product. " +
-	"If the question itself names a product as an example, do NOT repeat or endorse it unless a [CANONICAL] chunk confirms it. " +
+	"Do NOT name any product found only in [UPSTREAM] chunks — not even as background context or an example. " +
+	"If the question itself names a product as an example, do NOT repeat or endorse it unless a [CANONICAL] chunk explicitly confirms it. " +
 	"Never mention proprietary third-party products.\n" +
 	"4. FORMAT: Answer in 1–3 sentences. Use bullet points only when listing multiple distinct items. No preamble, no filler, no 'Based on the context…'.\n" +
 	"5. NO ANSWER: If the context does not contain enough information, reply exactly: " +
@@ -269,7 +278,7 @@ const ragChatSystemPrompt = "You are a Canonical technical assistant. Apply thes
 	"1. GROUNDING: Use ONLY information explicitly stated in the provided context. Never infer, extrapolate, or use outside knowledge.\n" +
 	"2. SOURCE PRIORITY: Each context chunk is tagged [CANONICAL] or [UPSTREAM]. When they conflict or overlap, [CANONICAL] always takes precedence.\n" +
 	"3. PRODUCTS: Only name a product or component if a [CANONICAL] chunk explicitly documents or endorses it. " +
-	"[UPSTREAM] chunks may inform factual background but do not justify naming or endorsing a product. " +
+	"Do NOT name any product found only in [UPSTREAM] chunks — not even as background context or an example. " +
 	"Never mention proprietary third-party products.\n" +
 	"4. FORMAT: Be concise and direct. Use bullet points when listing multiple items. You may ask a clarifying question if the query is ambiguous.\n" +
 	"5. NO ANSWER: If the context does not contain enough information, say so plainly and do not speculate."

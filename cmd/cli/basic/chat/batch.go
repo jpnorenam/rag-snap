@@ -64,8 +64,9 @@ func mergeKeywords(generated string, manifestKWs []string) string {
 	}
 
 	// Manifest keywords lead; build seen set from them first.
-	seen := make(map[string]struct{}, len(manifestKWs)+len(strings.Fields(generated)))
-	merged := make([]string, 0, len(manifestKWs)+len(strings.Fields(generated)))
+	genFields := strings.Fields(generated)
+	seen := make(map[string]struct{}, len(manifestKWs)+len(genFields))
+	merged := make([]string, 0, len(manifestKWs)+len(genFields))
 	for _, kw := range manifestKWs {
 		lower := strings.ToLower(kw)
 		if _, exists := seen[lower]; !exists {
@@ -75,7 +76,7 @@ func mergeKeywords(generated string, manifestKWs []string) string {
 	}
 
 	// Append generated keywords not already covered by manifest keywords.
-	for _, kw := range strings.Fields(generated) {
+	for _, kw := range genFields {
 		lower := strings.ToLower(kw)
 		if _, exists := seen[lower]; !exists {
 			seen[lower] = struct{}{}
@@ -174,7 +175,9 @@ func ProcessBatchChat(
 
 	defaultSystemPrompt := ragAnswerSystemPrompt
 	if manifest.Prompt != "" {
-		defaultSystemPrompt = manifest.Prompt
+		// Append the non-negotiable source rules so custom prompts cannot
+		// accidentally bypass [CANONICAL]/[UPSTREAM] grounding behaviour.
+		defaultSystemPrompt = manifest.Prompt + "\n\n" + ragSourceRules
 	}
 
 	ctx := context.Background()
@@ -188,26 +191,33 @@ func ProcessBatchChat(
 		// Manifest keywords lead in the lexical query (higher BM25 priority).
 		lexicalQuery = mergeKeywords(lexicalQuery, q.Keywords)
 
-		// Also append manifest keywords to the semantic query so the vector
-		// search component is steered toward keyword-specific documents (e.g.
-		// "magnum" pulls Magnum chunks even though the question never says it).
+		// Use the full merged lexical query (manifest + generated keywords) to
+		// steer the vector search as well. This ensures that user-provided keywords
+		// like "magnum" influence embedding similarity, not just BM25 scoring.
 		semanticQuery := q.Question
-		if len(q.Keywords) > 0 {
-			semanticQuery = q.Question + " " + strings.Join(q.Keywords, " ")
+		if lexicalQuery != q.Question {
+			semanticQuery = q.Question + " " + lexicalQuery
 		}
 		ragContext := retrieveContext(session, semanticQuery, lexicalQuery, verbose)
 
-		systemPrompt := "You are a helpful assistant."
-		llmPrompt := q.Question
-		if ragContext != "" {
-			systemPrompt = defaultSystemPrompt
-			llmPrompt = buildRAGPrompt(ragContext, q.Question)
+		// When no context was retrieved there is nothing to ground the answer on.
+		// Skip the LLM call entirely and emit the fixed no-answer string to avoid
+		// the model hallucinating from parametric knowledge.
+		if ragContext == "" {
+			const noContext = "The provided context does not contain enough information to answer this question."
+			fmt.Printf("Answer: %s\n---\n", noContext)
+			results = append(results, BatchResult{
+				ID:       q.ID,
+				Question: q.Question,
+				Answer:   noContext,
+			})
+			continue
 		}
 
 		resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 			Messages: []openai.ChatCompletionMessageParamUnion{
-				openai.SystemMessage(systemPrompt),
-				openai.UserMessage(llmPrompt),
+				openai.SystemMessage(defaultSystemPrompt),
+				openai.UserMessage(buildRAGPrompt(ragContext, q.Question)),
 			},
 			Model: modelName,
 		})
