@@ -17,6 +17,7 @@ parts/
 prime/
 samples/
 stage/
+.vscode/
 # Export artifacts
 *-export/
 *-export.tar.gz

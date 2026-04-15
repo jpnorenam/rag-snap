@@ -298,11 +298,15 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	// Retrieve RAG context from knowledge base (no-op when unavailable).
 	ragContext := retrieveContext(session, prompt, lexicalQuery, verbose)
 
-	// Build the message sent to the LLM: augmented when context is found,
-	// plain otherwise.
+	// Build the message sent to the LLM: augmented when context is found.
+	// When a knowledge base is configured but retrieval returned nothing, inject
+	// an explicit empty-context note so the grounding rules in the system prompt
+	// apply and the model does not answer from parametric knowledge.
 	llmPrompt := prompt
 	if ragContext != "" {
 		llmPrompt = buildRAGPrompt(ragContext, prompt)
+	} else if session.KnowledgeClient != nil {
+		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", prompt)
 	}
 
 	// Build a temporary copy of the message history so the augmented prompt
