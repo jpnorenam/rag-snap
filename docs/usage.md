@@ -539,7 +539,7 @@ Supported Drive URL formats:
 **Example — import from a Drive folder (interactive selection)**
 
 ```bash
-$ rag knowledge import --url "https://drive.google.com/drive/folders/FOLDER_ID"
+$ rag-cli.rag knowledge import --url "https://drive.google.com/drive/folders/FOLDER_ID"
 
 Listing archives in Google Drive folder...
 
@@ -568,25 +568,25 @@ Use Space to toggle archives, Enter to confirm, Esc/Ctrl-C to cancel the selecti
 **Example — import all archives from a folder without prompting**
 
 ```bash
-rag knowledge import --url "https://drive.google.com/drive/folders/FOLDER_ID" --all
+rag-cli.rag knowledge import --url "https://drive.google.com/drive/folders/FOLDER_ID" --all
 ```
 
 **Example — import a single file from Drive**
 
 ```bash
-rag knowledge import --url "https://drive.google.com/file/d/FILE_ID/view"
+rag-cli.rag knowledge import --url "https://drive.google.com/file/d/FILE_ID/view"
 ```
 
 **Example — restore a Drive archive under a different name**
 
 ```bash
-rag knowledge import project-docs-staging \
+rag-cli.rag knowledge import project-docs-staging \
     --url "https://drive.google.com/file/d/FILE_ID/view"
 ```
 
 > **Note on authentication:** `knowledge import --url` requires a Google account that has at least
 > viewer access to the Drive resource. The OAuth token is cached at
-> `~/.config/rag-snap/gdrive-token.json` (or `$SNAP_USER_DATA/gdrive-token.json` when running as a
+> `~/.config/rag-cli/gdrive-token.json` (or `$SNAP_USER_DATA/gdrive-token.json` when running as a
 > snap). Delete this file to force re-authentication.
 
 > **Note on KB naming:** When importing from a folder, the knowledge base name is derived from the

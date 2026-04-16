@@ -67,7 +67,7 @@ func resolveClientCredentials() (clientID, clientSecret string, err error) {
 }
 
 // driveTokenCachePath returns the path of the cached token file.
-// Uses $SNAP_USER_DATA when running as a snap, otherwise ~/.config/rag-snap/.
+// Uses $SNAP_USER_DATA when running as a snap, otherwise ~/.config/rag-cli/.
 func driveTokenCachePath() (string, error) {
 	var dir string
 	if snapData := os.Getenv("SNAP_USER_DATA"); snapData != "" {
@@ -77,7 +77,7 @@ func driveTokenCachePath() (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("locating home directory: %w", err)
 		}
-		dir = filepath.Join(home, ".config", "rag-snap")
+		dir = filepath.Join(home, ".config", "rag-cli")
 	}
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", fmt.Errorf("creating token cache directory: %w", err)
