@@ -62,6 +62,7 @@ func main() {
 		basic.ChatCommand(ctx),
 		basic.AnswerCommand(ctx),
 		basic.KnowledgeCommand(ctx),
+		basic.ExtractRFPCommand(ctx),
 	)
 
 	rootCmd.AddGroup(config.Group("Configuration Commands:"))
