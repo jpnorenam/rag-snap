@@ -35,9 +35,12 @@ type Manifest struct {
 
 // SheetTable holds the name and parsed rows of one table extracted from Tika HTML.
 // For XLSX files the Name is derived from the sheet label in the surrounding HTML.
+// PageIndex is the 0-based index of the Tika "page" (Excel sheet / PDF page) that
+// contains this table; used to correctly map sheet names when one page has multiple tables.
 type SheetTable struct {
-	Name string     // sheet/tab name (falls back to "Table N" when undetectable)
-	Rows [][]string // rows × columns of cell text
+	Name      string     // sheet/tab name (falls back to "Table N" when undetectable)
+	Rows      [][]string // rows × columns of cell text
+	PageIndex int        // 0-based page/sheet index from Tika HTML
 }
 
 // DetectFormat returns the document format ("csv", "xlsx", "pdf", "docx", or "unknown")
@@ -144,15 +147,29 @@ func ParseTikaHTMLSheets(htmlContent string) []SheetTable {
 	}
 	var sheets []SheetTable
 	tableNum := 0
+	pageIdx := -1 // incremented to 0 on first <div class="page">
 
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "div" {
+			for _, attr := range n.Attr {
+				if attr.Key == "class" && attr.Val == "page" {
+					pageIdx++
+					break
+				}
+			}
+		}
 		if n.Type == html.ElementNode && n.Data == "table" {
 			tableNum++
 			if rows := tikaTableRows(n); len(rows) > 0 {
+				pi := pageIdx
+				if pi < 0 {
+					pi = 0
+				}
 				sheets = append(sheets, SheetTable{
-					Name: sheetNameBefore(n, tableNum),
-					Rows: rows,
+					Name:      sheetNameBefore(n, tableNum),
+					Rows:      rows,
+					PageIndex: pi,
 				})
 			}
 			return // don't recurse into nested tables
@@ -272,7 +289,8 @@ func XLSXSheetNames(path string) ([]string, error) {
 // ExtractFromTable reads the specified column (0-indexed) from a parsed table.
 // The first row is treated as a header and skipped. IDs and Source are left empty
 // so the caller can assign global sequential IDs across multiple sheets.
-func ExtractFromTable(table [][]string, columnIdx int) ([]Question, error) {
+// minLen skips cells shorter than that many characters; pass 0 to include all.
+func ExtractFromTable(table [][]string, columnIdx int, minLen int) ([]Question, error) {
 	if len(table) <= 1 {
 		return nil, fmt.Errorf("table has no data rows")
 	}
@@ -285,12 +303,31 @@ func ExtractFromTable(table [][]string, columnIdx int) ([]Question, error) {
 		if text == "" {
 			continue
 		}
+		if minLen > 0 && len(text) < minLen {
+			continue
+		}
 		questions = append(questions, Question{Question: text})
 	}
 	if len(questions) == 0 {
 		return nil, fmt.Errorf("no questions found in column %d", columnIdx+1)
 	}
 	return questions, nil
+}
+
+// tocEntryRe matches typical table-of-contents lines: starts with a section number
+// (including dotted subsections like "2.1" or "3.2.1"), has some text, and ends with
+// a 1–4 digit page number (e.g. "1 Project Drivers 4", "2.1 Background 5").
+var tocEntryRe = regexp.MustCompile(`^[\d.]+\s+.+\s+\d{1,4}$`)
+
+// FilterTOCEntries removes questions that look like table-of-contents entries.
+func FilterTOCEntries(questions []Question) []Question {
+	var out []Question
+	for _, q := range questions {
+		if !tocEntryRe.MatchString(q.Question) {
+			out = append(out, q)
+		}
+	}
+	return out
 }
 
 // SplitTextPages splits Tika plain-text output into pages.
@@ -305,6 +342,42 @@ func SplitTextPages(text string) []string {
 	}
 	if len(pages) == 0 {
 		return []string{text}
+	}
+	return pages
+}
+
+// SplitHTMLPages extracts per-page plain text from Tika's XHTML output.
+// Tika wraps each page in <div class="page"> in HTML mode, even for PDFs where
+// plain-text extraction produces no form-feed separators.
+// Falls back to a single entry containing the full document text when no page
+// divs are found.
+func SplitHTMLPages(htmlContent string) []string {
+	doc, err := html.Parse(strings.NewReader(htmlContent))
+	if err != nil {
+		return []string{htmlContent}
+	}
+
+	var pages []string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "div" {
+			for _, attr := range n.Attr {
+				if attr.Key == "class" && attr.Val == "page" {
+					if text := strings.TrimSpace(tikaNodeText(n)); text != "" {
+						pages = append(pages, text)
+					}
+					return // don't descend into nested page divs
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+
+	if len(pages) == 0 {
+		return []string{strings.TrimSpace(tikaNodeText(doc))}
 	}
 	return pages
 }

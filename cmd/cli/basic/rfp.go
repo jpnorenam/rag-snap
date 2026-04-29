@@ -89,16 +89,14 @@ func ExtractRFPCommand(ctx *common.Context) *cobra.Command {
 				return nil
 			}
 
-			// ── Confirm ──────────────────────────────────────────────────────
-			var proceed bool
-			if err := huh.NewForm(huh.NewGroup(
-				huh.NewConfirm().
-					Title(fmt.Sprintf("Proceed with %d extracted question(s)?", len(questions))).
-					Affirmative("Yes, save manifest").
-					Negative("No, cancel").
-					Value(&proceed),
-			)).Run(); err != nil || !proceed {
-				fmt.Println("Extraction cancelled.")
+			// ── Question review ───────────────────────────────────────────────
+			var reviewErr error
+			questions, reviewErr = rfpReviewQuestions(questions)
+			if reviewErr != nil {
+				return reviewErr
+			}
+			if len(questions) == 0 {
+				fmt.Println("No questions selected — extraction cancelled.")
 				return nil
 			}
 
@@ -281,7 +279,8 @@ func rfpExtractCSV(filePath string) ([]rfp.Question, error) {
 }
 
 // rfpExtractXLSX guides the user through sheet and column selection, supporting
-// multiple sheets. Each question is tagged with the sheet name as its source.
+// multiple sheets and multiple tables per sheet. Each question is tagged with
+// the sheet name as its source.
 func rfpExtractXLSX(filePath, tikaURL string) ([]rfp.Question, error) {
 	stop := common.StartProgressSpinner("Parsing XLSX via Tika")
 	tikaClient, err := processing.NewTikaClient(tikaURL)
@@ -301,48 +300,79 @@ func rfpExtractXLSX(filePath, tikaURL string) ([]rfp.Question, error) {
 		return nil, fmt.Errorf("no tables found in document — ensure the XLSX contains a structured table")
 	}
 
-	// Overwrite Tika-derived sheet names with the accurate names from the XLSX ZIP.
-	// Tika's HTML output can truncate or mangle long sheet names.
+	// Overwrite Tika-derived sheet names with accurate names from the XLSX ZIP.
+	// Use PageIndex when Tika emitted <div class="page"> boundaries (detected by any
+	// PageIndex > 0); otherwise fall back to table-index mapping for Tika versions
+	// that don't emit page divs (in which case all PageIndex values are 0 and using
+	// PageIndex would map every table to the first sheet name).
 	if names, err := rfp.XLSXSheetNames(filePath); err == nil {
+		usePage := false
+		for _, s := range sheets {
+			if s.PageIndex > 0 {
+				usePage = true
+				break
+			}
+		}
 		for i := range sheets {
-			if i < len(names) {
-				sheets[i].Name = names[i]
+			idx := i
+			if usePage {
+				idx = sheets[i].PageIndex
+			}
+			if idx < len(names) {
+				sheets[i].Name = names[idx]
 			}
 		}
 	}
 
-	// ── Sheet multi-select ────────────────────────────────────────────────────
+	return rfpExtractFromTables(sheets)
+}
+
+// rfpExtractFromTables handles the shared UI for table selection, column selection,
+// min-length filtering, and question extraction. Used by both XLSX and PDF table mode.
+func rfpExtractFromTables(sheets []rfp.SheetTable) ([]rfp.Question, error) {
+	// ── Table multi-select ────────────────────────────────────────────────────
 	var selectedIndices []int
 	if len(sheets) == 1 {
-		fmt.Printf("Single sheet found: %q\n", sheets[0].Name)
+		fmt.Printf("Single table found: %q\n", sheets[0].Name)
 		selectedIndices = []int{0}
 	} else {
+		// Count tables per page so we can add "— Table N" suffixes when needed.
+		pageTableCount := make(map[int]int)
+		for _, s := range sheets {
+			pageTableCount[s.PageIndex]++
+		}
+		pageTableSeq := make(map[int]int)
+
 		sheetOptions := make([]huh.Option[int], len(sheets))
 		for i, s := range sheets {
+			pageTableSeq[s.PageIndex]++
 			label := s.Name
+			if pageTableCount[s.PageIndex] > 1 {
+				label = fmt.Sprintf("%s — Table %d", s.Name, pageTableSeq[s.PageIndex])
+			}
 			if len(s.Rows) > 0 && len(s.Rows[0]) > 0 {
 				preview := s.Rows[0]
 				if len(preview) > 3 {
 					preview = preview[:3]
 				}
-				label = fmt.Sprintf("%s  (columns: %s)", s.Name, strings.Join(preview, " | "))
+				label = fmt.Sprintf("%s  (columns: %s)", label, strings.Join(preview, " | "))
 			}
 			sheetOptions[i] = huh.NewOption(label, i)
 		}
 		if err := huh.NewForm(huh.NewGroup(
 			huh.NewMultiSelect[int]().
-				Title("Which sheets contain RFP questions? (Space to toggle, Enter to confirm):").
+				Title("Which tables contain RFP questions? (Space to toggle, Enter to confirm):").
 				Options(sheetOptions...).
 				Value(&selectedIndices),
 		)).Run(); err != nil {
-			return nil, fmt.Errorf("sheet selection cancelled: %w", err)
+			return nil, fmt.Errorf("table selection cancelled: %w", err)
 		}
 		if len(selectedIndices) == 0 {
-			return nil, fmt.Errorf("no sheets selected")
+			return nil, fmt.Errorf("no tables selected")
 		}
 	}
 
-	// ── Column selection (based on first selected sheet's headers) ────────────
+	// ── Column selection (based on first selected table's headers) ────────────
 	firstSheet := sheets[selectedIndices[0]]
 	colIdx := 0
 	if len(firstSheet.Rows) > 0 && len(firstSheet.Rows[0]) > 1 {
@@ -369,12 +399,41 @@ func rfpExtractXLSX(filePath, tikaURL string) ([]rfp.Question, error) {
 		fmt.Printf("Single column detected: %q\n", firstSheet.Rows[0][0])
 	}
 
-	// ── Extract from all selected sheets, tagging each question with its source ─
+	// ── Manual column override ────────────────────────────────────────────────
+	// Lets the user force a specific column when headers are missing or mis-detected.
+	var colOverride string
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title(fmt.Sprintf("Force column number? (current: %d — leave blank to keep, or enter e.g. 3 for column C):", colIdx+1)).
+			Placeholder("").
+			Value(&colOverride),
+	)).Run(); err == nil {
+		if n, parseErr := strconv.Atoi(strings.TrimSpace(colOverride)); parseErr == nil && n >= 1 {
+			colIdx = n - 1
+		}
+	}
+
+	// ── Min-length filter ─────────────────────────────────────────────────────
+	var minLenStr string
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title("Minimum characters per cell to include as a question? (0 = no filter, default 20):").
+			Placeholder("20").
+			Value(&minLenStr),
+	)).Run(); err != nil {
+		return nil, fmt.Errorf("min length input: %w", err)
+	}
+	minLen := 20
+	if n, parseErr := strconv.Atoi(strings.TrimSpace(minLenStr)); parseErr == nil {
+		minLen = n
+	}
+
+	// ── Extract from all selected tables, tagging each question with its source ─
 	var allQuestions []rfp.Question
 	globalSeq := 0
 	for _, idx := range selectedIndices {
 		sheet := sheets[idx]
-		qs, extractErr := rfp.ExtractFromTable(sheet.Rows, colIdx)
+		qs, extractErr := rfp.ExtractFromTable(sheet.Rows, colIdx, minLen)
 		if extractErr != nil {
 			fmt.Printf("  (skip %q: %v)\n", sheet.Name, extractErr)
 			continue
@@ -389,46 +448,169 @@ func rfpExtractXLSX(filePath, tikaURL string) ([]rfp.Question, error) {
 	return allQuestions, nil
 }
 
-// rfpExtractText guides the user through page selection and extracts questions
-// from a PDF or DOCX file via Tika plain-text extraction.
+// rfpExtractText guides the user through structure-mode selection and extracts
+// questions from a PDF or DOCX file via Tika. Supports list/paragraph mode
+// (plain-text extraction with optional TOC filter) and table mode (HTML extraction
+// with column picker, reusing the XLSX table flow).
 func rfpExtractText(filePath, tikaURL string) ([]rfp.Question, error) {
-	stop := common.StartProgressSpinner("Extracting text via Tika")
 	tikaClient, err := processing.NewTikaClient(tikaURL)
 	if err != nil {
-		stop()
 		return nil, fmt.Errorf("creating Tika client: %w", err)
 	}
-	rawText, err := tikaClient.Extract(filePath)
+
+	// ── Structure mode ────────────────────────────────────────────────────────
+	var structureMode string
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("How are questions structured in this document?").
+			Options(
+				huh.NewOption("Numbered / bulleted list or question marks", "list"),
+				huh.NewOption("Table — extract from a column", "table"),
+			).
+			Value(&structureMode),
+	)).Run(); err != nil {
+		return nil, fmt.Errorf("structure mode selection cancelled: %w", err)
+	}
+
+	if structureMode == "table" {
+		return rfpExtractTextTable(filePath, tikaClient)
+	}
+
+	// ── List / paragraph mode ─────────────────────────────────────────────────
+	// Use HTML extraction so page boundaries come from <div class="page"> elements,
+	// which Tika emits reliably even for PDFs that produce no \f separators in
+	// plain-text mode.
+	stop := common.StartProgressSpinner("Extracting text via Tika")
+	htmlRaw, err := tikaClient.ExtractHTML(filePath)
 	stop()
 	if err != nil {
-		return nil, fmt.Errorf("Tika text extraction failed: %w\n"+
+		return nil, fmt.Errorf("Tika extraction failed: %w\n"+
 			"Ensure the Tika service is running ('rag status')", err)
 	}
 
-	pages := rfp.SplitTextPages(rawText)
+	pages := rfp.SplitHTMLPages(htmlRaw)
 	fmt.Printf("Document has %d page(s).\n\n", len(pages))
 
 	startPage := 1
-	if len(pages) > 1 {
-		var startPageStr string
-		if err := huh.NewForm(huh.NewGroup(
-			huh.NewInput().
-				Title(fmt.Sprintf("Which page do the RFP questions start on? (1–%d, default 1):", len(pages))).
-				Placeholder("1").
-				Value(&startPageStr),
-		)).Run(); err != nil {
-			return nil, fmt.Errorf("page input cancelled: %w", err)
-		}
-		if n, parseErr := strconv.Atoi(strings.TrimSpace(startPageStr)); parseErr == nil {
-			if n >= 1 && n <= len(pages) {
-				startPage = n
-			}
+	var startPageStr string
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewInput().
+			Title(fmt.Sprintf("Which page do the RFP questions start on? (1–%d, default 1):", len(pages))).
+			Placeholder("1").
+			Value(&startPageStr),
+	)).Run(); err != nil {
+		return nil, fmt.Errorf("page input cancelled: %w", err)
+	}
+	if n, parseErr := strconv.Atoi(strings.TrimSpace(startPageStr)); parseErr == nil {
+		if n >= 1 && n <= len(pages) {
+			startPage = n
 		}
 	}
 
 	relevant := strings.Join(pages[startPage-1:], "\n")
 	questions := rfp.ExtractQuestionsFromText(relevant)
+
+	// ── TOC filter ────────────────────────────────────────────────────────────
+	var filterTOC bool
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewConfirm().
+			Title("Apply table-of-contents filter? (removes entries like '1 Section Title 4')").
+			Affirmative("Yes, filter TOC entries").
+			Negative("No, keep all").
+			Value(&filterTOC),
+	)).Run(); err == nil && filterTOC {
+		questions = rfp.FilterTOCEntries(questions)
+	}
+
 	return questions, nil
+}
+
+// rfpExtractTextTable handles PDF/DOCX table mode: Tika HTML extraction followed
+// by the same table+column selection UI used for XLSX files.
+func rfpExtractTextTable(filePath string, tikaClient *processing.TikaClient) ([]rfp.Question, error) {
+	stop := common.StartProgressSpinner("Extracting HTML via Tika")
+	htmlContent, err := tikaClient.ExtractHTML(filePath)
+	stop()
+	if err != nil {
+		return nil, fmt.Errorf("Tika HTML extraction failed: %w\n"+
+			"Ensure the Tika service is running ('rag status')", err)
+	}
+
+	sheets := rfp.ParseTikaHTMLSheets(htmlContent)
+	if len(sheets) == 0 {
+		return nil, fmt.Errorf("no HTML tables found in document\n" +
+			"Tip: Tika may not recognise PDF tables as HTML <table> elements.\n" +
+			"Re-run and choose 'Numbered / bulleted list or question marks' instead.")
+	}
+
+	maxPage := sheets[len(sheets)-1].PageIndex + 1
+	fmt.Printf("Found %d table(s) across %d page(s).\n\n", len(sheets), maxPage)
+
+	startPage := 0 // 0-based PageIndex threshold
+	if maxPage > 1 {
+		var startPageStr string
+		if err := huh.NewForm(huh.NewGroup(
+			huh.NewInput().
+				Title(fmt.Sprintf("Show tables starting from page (1–%d, default 1):", maxPage)).
+				Placeholder("1").
+				Value(&startPageStr),
+		)).Run(); err != nil {
+			return nil, fmt.Errorf("page input cancelled: %w", err)
+		}
+		if n, parseErr := strconv.Atoi(strings.TrimSpace(startPageStr)); parseErr == nil && n >= 1 {
+			startPage = n - 1
+		}
+	}
+
+	var filtered []rfp.SheetTable
+	for _, s := range sheets {
+		if s.PageIndex >= startPage {
+			filtered = append(filtered, s)
+		}
+	}
+	if len(filtered) == 0 {
+		return nil, fmt.Errorf("no tables found on or after page %d", startPage+1)
+	}
+
+	return rfpExtractFromTables(filtered)
+}
+
+// rfpReviewQuestions presents all extracted questions in a scrollable multi-select
+// with every item pre-checked. The user unchecks entries to exclude them.
+// Returned questions are re-sequenced with consecutive IDs.
+func rfpReviewQuestions(questions []rfp.Question) ([]rfp.Question, error) {
+	allIndices := make([]int, len(questions))
+	opts := make([]huh.Option[int], len(questions))
+	for i, q := range questions {
+		allIndices[i] = i
+		label := fmt.Sprintf("[%s] %s", q.ID, q.Question)
+		if q.Source != "" {
+			label = fmt.Sprintf("[%s][%s] %s", q.ID, q.Source, q.Question)
+		}
+		if len(label) > 120 {
+			label = label[:117] + "..."
+		}
+		opts[i] = huh.NewOption(label, i)
+	}
+
+	selected := allIndices
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewMultiSelect[int]().
+			Title(fmt.Sprintf("Review %d question(s) — uncheck to remove (Space to toggle, Enter to confirm):", len(questions))).
+			Options(opts...).
+			Height(20).
+			Value(&selected),
+	)).Run(); err != nil {
+		return nil, fmt.Errorf("review cancelled: %w", err)
+	}
+
+	kept := make([]rfp.Question, 0, len(selected))
+	for seq, idx := range selected {
+		q := questions[idx]
+		q.ID = fmt.Sprintf("%d", seq+1)
+		kept = append(kept, q)
+	}
+	return kept, nil
 }
 
 // rfpPrintPreview prints up to 5 extracted questions to stdout.
