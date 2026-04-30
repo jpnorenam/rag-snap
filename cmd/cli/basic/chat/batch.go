@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
@@ -12,10 +13,85 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// KeywordList is a YAML-flexible keyword field that accepts either a
+// comma-separated string ("kw1, kw2") or a YAML sequence ([kw1, kw2]).
+type KeywordList []string
+
+func (kl *KeywordList) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		*kl = splitKeywords(value.Value)
+		return nil
+	case yaml.SequenceNode:
+		var items []string
+		if err := value.Decode(&items); err != nil {
+			return err
+		}
+		// Trim whitespace from each item.
+		out := make([]string, 0, len(items))
+		for _, item := range items {
+			if kw := strings.TrimSpace(item); kw != "" {
+				out = append(out, kw)
+			}
+		}
+		*kl = out
+		return nil
+	default:
+		return fmt.Errorf("keywords must be a string or list, got node kind %d", value.Kind)
+	}
+}
+
+// splitKeywords splits a comma-separated keyword string into trimmed, non-empty tokens.
+func splitKeywords(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if kw := strings.TrimSpace(p); kw != "" {
+			out = append(out, kw)
+		}
+	}
+	return out
+}
+
+// mergeKeywords places manifest keywords first (higher priority), then appends
+// generated keywords that are not already present, deduplicating case-insensitively.
+// generated is a space-separated keyword string from rewriteSearchQuery.
+// manifestKWs are the optional keywords from the batch manifest.
+// Returns a space-separated string ready for use as a lexical search query.
+func mergeKeywords(generated string, manifestKWs []string) string {
+	if len(manifestKWs) == 0 {
+		return generated
+	}
+
+	// Manifest keywords lead; build seen set from them first.
+	genFields := strings.Fields(generated)
+	seen := make(map[string]struct{}, len(manifestKWs)+len(genFields))
+	merged := make([]string, 0, len(manifestKWs)+len(genFields))
+	for _, kw := range manifestKWs {
+		lower := strings.ToLower(kw)
+		if _, exists := seen[lower]; !exists {
+			seen[lower] = struct{}{}
+			merged = append(merged, kw)
+		}
+	}
+
+	// Append generated keywords not already covered by manifest keywords.
+	for _, kw := range genFields {
+		lower := strings.ToLower(kw)
+		if _, exists := seen[lower]; !exists {
+			seen[lower] = struct{}{}
+			merged = append(merged, kw)
+		}
+	}
+
+	return strings.Join(merged, " ")
+}
+
 // BatchQuestion describes a single Q&A task within a batch manifest.
 type BatchQuestion struct {
-	ID       string `yaml:"id,omitempty"`
-	Question string `yaml:"question"`
+	ID       string      `yaml:"id,omitempty"`
+	Question string      `yaml:"question"`
+	Keywords KeywordList `yaml:"keywords,omitempty"`
 }
 
 // BatchManifest is the top-level structure of a batch chat YAML file.
@@ -99,7 +175,9 @@ func ProcessBatchChat(
 
 	defaultSystemPrompt := ragAnswerSystemPrompt
 	if manifest.Prompt != "" {
-		defaultSystemPrompt = manifest.Prompt
+		// Append the non-negotiable source rules so custom prompts cannot
+		// accidentally bypass [CANONICAL]/[UPSTREAM] grounding behaviour.
+		defaultSystemPrompt = manifest.Prompt + "\n\n" + ragSourceRules
 	}
 
 	ctx := context.Background()
@@ -110,19 +188,36 @@ func ProcessBatchChat(
 
 		// nil history: each question is extracted in isolation, with no prior conversation context.
 		lexicalQuery := rewriteSearchQuery(client, modelName, nil, q.Question, verbose)
-		ragContext := retrieveContext(session, q.Question, lexicalQuery, verbose)
+		// Manifest keywords lead in the lexical query (higher BM25 priority).
+		lexicalQuery = mergeKeywords(lexicalQuery, q.Keywords)
 
-		systemPrompt := "You are a helpful assistant."
-		llmPrompt := q.Question
-		if ragContext != "" {
-			systemPrompt = defaultSystemPrompt
-			llmPrompt = buildRAGPrompt(ragContext, q.Question)
+		// Use the full merged lexical query (manifest + generated keywords) to
+		// steer the vector search as well. This ensures that user-provided keywords
+		// like "magnum" influence embedding similarity, not just BM25 scoring.
+		semanticQuery := q.Question
+		if lexicalQuery != q.Question {
+			semanticQuery = q.Question + " " + lexicalQuery
+		}
+		ragContext := retrieveContext(session, semanticQuery, lexicalQuery, verbose)
+
+		// When no context was retrieved there is nothing to ground the answer on.
+		// Skip the LLM call entirely and emit the fixed no-answer string to avoid
+		// the model hallucinating from parametric knowledge.
+		if ragContext == "" {
+			const noContext = "The provided context does not contain enough information to answer this question."
+			fmt.Printf("Answer: %s\n---\n", noContext)
+			results = append(results, BatchResult{
+				ID:       q.ID,
+				Question: q.Question,
+				Answer:   noContext,
+			})
+			continue
 		}
 
 		resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 			Messages: []openai.ChatCompletionMessageParamUnion{
-				openai.SystemMessage(systemPrompt),
-				openai.UserMessage(llmPrompt),
+				openai.SystemMessage(defaultSystemPrompt),
+				openai.UserMessage(buildRAGPrompt(ragContext, q.Question)),
 			},
 			Model: modelName,
 		})
