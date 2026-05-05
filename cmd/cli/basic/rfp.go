@@ -3,8 +3,6 @@ package basic
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -13,133 +11,7 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/processing"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/rfp"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
-	"github.com/spf13/cobra"
 )
-
-// ExtractRFPCommand returns the 'extract-rfp' command that guides the user through
-// extracting RFP/RFI questions from a document and writing a batch YAML manifest.
-func ExtractRFPCommand(ctx *common.Context) *cobra.Command {
-	var outputPath string
-	var previewOnly bool
-
-	cobraCmd := &cobra.Command{
-		Use:   "extract-rfp <document-path>",
-		Short: "Extract RFP questions from a document and generate a batch manifest",
-		Long: "Parse a PDF, DOCX, XLSX, or CSV document to extract RFP/RFI questions\n" +
-			"and produce a YAML manifest compatible with 'answer batch'.\n\n" +
-			"The command guides you through format-specific parameters\n" +
-			"(start page, sheet, column) and lets you review extracted questions\n" +
-			"before saving the manifest.",
-		Args:    cobra.ExactArgs(1),
-		GroupID: groupID,
-		RunE: func(_ *cobra.Command, args []string) error {
-			docPath := args[0]
-
-			if _, err := os.Stat(docPath); err != nil {
-				return fmt.Errorf("cannot access file: %w", err)
-			}
-
-			format := rfp.DetectFormat(docPath, "")
-			fmt.Printf("Detected format: %s  (%s)\n\n", strings.ToUpper(format), filepath.Base(docPath))
-
-			if format == "unknown" {
-				return fmt.Errorf("unsupported file type — supported formats: CSV, XLSX, PDF, DOCX")
-			}
-
-			// Compute the default output path before any prompts so it can be
-			// used as the pre-filled value in the output path input.
-			defaultOutput := strings.TrimSuffix(filepath.Base(docPath), filepath.Ext(docPath)) + "-rfp.yaml"
-			if outputPath == "" {
-				outputPath = defaultOutput
-			}
-
-			var (
-				questions  []rfp.Question
-				extractErr error
-			)
-
-			switch format {
-			case "csv":
-				questions, extractErr = rfpExtractCSV(docPath)
-
-			case "xlsx":
-				var tikaURL string
-				if tikaURL, extractErr = rfpTikaURL(ctx); extractErr == nil {
-					questions, extractErr = rfpExtractXLSX(docPath, tikaURL)
-				}
-
-			case "pdf", "docx":
-				var tikaURL string
-				if tikaURL, extractErr = rfpTikaURL(ctx); extractErr == nil {
-					questions, extractErr = rfpExtractText(docPath, tikaURL)
-				}
-			}
-
-			if extractErr != nil {
-				return extractErr
-			}
-			if len(questions) == 0 {
-				return fmt.Errorf("no questions could be extracted from the document")
-			}
-
-			rfpPrintPreview(questions)
-
-			if previewOnly {
-				fmt.Println("(Preview only — remove --preview to generate the manifest.)")
-				return nil
-			}
-
-			// ── Question review ───────────────────────────────────────────────
-			var reviewErr error
-			questions, reviewErr = rfpReviewQuestions(questions)
-			if reviewErr != nil {
-				return reviewErr
-			}
-			if len(questions) == 0 {
-				fmt.Println("No questions selected — extraction cancelled.")
-				return nil
-			}
-
-			// ── Knowledge bases ───────────────────────────────────────────────
-			kbs, err := rfpSelectKnowledgeBases(ctx)
-			if err != nil {
-				return err
-			}
-
-			// ── Output path ───────────────────────────────────────────────────
-			if err := huh.NewForm(huh.NewGroup(
-				huh.NewInput().
-					Title("Output manifest path:").
-					Value(&outputPath),
-			)).Run(); err != nil {
-				return fmt.Errorf("output path input: %w", err)
-			}
-			if strings.TrimSpace(outputPath) == "" {
-				outputPath = defaultOutput
-			}
-
-			manifest := &rfp.Manifest{
-				Version:        "1.0",
-				KnowledgeBases: kbs,
-				Questions:      questions,
-			}
-			if err := rfp.WriteManifest(outputPath, manifest); err != nil {
-				return fmt.Errorf("writing manifest: %w", err)
-			}
-
-			fmt.Printf("\nManifest saved to %s  (%d questions)\n", outputPath, len(questions))
-			fmt.Printf("Run: rag-cli answer batch %s\n", outputPath)
-			return nil
-		},
-	}
-
-	cobraCmd.Flags().StringVarP(&outputPath, "output", "o", "", "Output YAML manifest path (default: <document-name>-rfp.yaml)")
-	cobraCmd.Flags().BoolVar(&previewOnly, "preview", false, "Preview extracted questions without saving the manifest")
-
-	addDebugFlags(cobraCmd, ctx)
-
-	return cobraCmd
-}
 
 // rfpTikaURL returns the Tika server URL by reading only the tika.http.* config keys.
 // Unlike serverApiUrls it does not require chat or opensearch config to be present.
