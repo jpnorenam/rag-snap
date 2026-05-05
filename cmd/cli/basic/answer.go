@@ -41,6 +41,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 	var buildDoc string
 	var outputPath string
 	var previewOnly bool
+	var noRefine bool
 
 	c := &cobra.Command{
 		Use:   "batch [manifest.yaml]",
@@ -53,7 +54,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			if buildDoc != "" {
-				return cmd.runBuild(buildDoc, outputPath, previewOnly)
+				return cmd.runBuild(buildDoc, outputPath, previewOnly, noRefine)
 			}
 			if len(args) == 0 {
 				return fmt.Errorf("requires a manifest file argument, or use --build <document> to generate one")
@@ -78,11 +79,12 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 	c.Flags().StringVar(&buildDoc, "build", "", "Document path (PDF, DOCX, XLSX, CSV) to extract RFP/RFI questions from and generate a batch manifest")
 	c.Flags().StringVarP(&outputPath, "output", "o", "", "Output YAML manifest path (default: <document-name>-rfp.yaml) — used with --build")
 	c.Flags().BoolVar(&previewOnly, "preview", false, "Preview extracted questions without saving the manifest — used with --build")
+	c.Flags().BoolVar(&noRefine, "no-refine", false, "Skip LLM semantic refinement of extracted questions — used with --build")
 
 	return c
 }
 
-func (cmd *answerCommand) runBuild(docPath, outputPath string, previewOnly bool) error {
+func (cmd *answerCommand) runBuild(docPath, outputPath string, previewOnly, noRefine bool) error {
 	if _, err := os.Stat(docPath); err != nil {
 		return fmt.Errorf("cannot access file: %w", err)
 	}
@@ -143,6 +145,14 @@ func (cmd *answerCommand) runBuild(docPath, outputPath string, previewOnly bool)
 	if len(questions) == 0 {
 		fmt.Println("No questions selected — extraction cancelled.")
 		return nil
+	}
+
+	if !noRefine {
+		questions = rfpMaybeRefineQuestions(cmd.Context, questions)
+		if len(questions) == 0 {
+			fmt.Println("No questions remaining after refinement — extraction cancelled.")
+			return nil
+		}
 	}
 
 	kbs, err := rfpSelectKnowledgeBases(cmd.Context)

@@ -95,7 +95,9 @@ func CSVHeaders(filePath string) ([]string, error) {
 
 // ExtractFromCSV reads the specified column (0-indexed) of a CSV file as questions.
 // The first row is treated as a header and skipped.
-func ExtractFromCSV(filePath string, columnIdx int) ([]Question, error) {
+// idColIdx is the 0-based column index to use as the question ID; pass -1 to
+// assign sequential IDs automatically.
+func ExtractFromCSV(filePath string, columnIdx, idColIdx int) ([]Question, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening file: %w", err)
@@ -124,9 +126,16 @@ func ExtractFromCSV(filePath string, columnIdx int) ([]Question, error) {
 		if text == "" {
 			continue
 		}
-		seq++
+		id := ""
+		if idColIdx >= 0 && idColIdx < len(row) {
+			id = strings.TrimSpace(row[idColIdx])
+		}
+		if id == "" {
+			seq++
+			id = fmt.Sprintf("%d", seq)
+		}
 		questions = append(questions, Question{
-			ID:       fmt.Sprintf("%d", seq),
+			ID:       id,
 			Question: text,
 		})
 	}
@@ -290,7 +299,10 @@ func XLSXSheetNames(path string) ([]string, error) {
 // The first row is treated as a header and skipped. IDs and Source are left empty
 // so the caller can assign global sequential IDs across multiple sheets.
 // minLen skips cells shorter than that many characters; pass 0 to include all.
-func ExtractFromTable(table [][]string, columnIdx int, minLen int) ([]Question, error) {
+// ExtractFromTable extracts questions from the given column of a table.
+// idColIdx is the 0-based column index to use as the question ID; pass -1 to
+// leave ID empty (the caller assigns sequential IDs).
+func ExtractFromTable(table [][]string, columnIdx, idColIdx, minLen int) ([]Question, error) {
 	if len(table) <= 1 {
 		return nil, fmt.Errorf("table has no data rows")
 	}
@@ -306,7 +318,11 @@ func ExtractFromTable(table [][]string, columnIdx int, minLen int) ([]Question, 
 		if minLen > 0 && len(text) < minLen {
 			continue
 		}
-		questions = append(questions, Question{Question: text})
+		id := ""
+		if idColIdx >= 0 && idColIdx < len(row) {
+			id = strings.TrimSpace(row[idColIdx])
+		}
+		questions = append(questions, Question{ID: id, Question: text})
 	}
 	if len(questions) == 0 {
 		return nil, fmt.Errorf("no questions found in column %d", columnIdx+1)
@@ -383,10 +399,11 @@ func SplitHTMLPages(htmlContent string) []string {
 }
 
 // numBulletRe matches lines that begin a numbered or bulleted list item.
-// Captured group 1 is the item content after the prefix.
-// Handles: "1. ", "2) ", "1.1. ", "1.1 ", "• ", "- ", "* ", "Q. ", "Q: "
+// Group 1 is the prefix (e.g. "3.4.1 ", "2) ", "• "); group 2 is the item text.
+// Numeric prefixes (starting with a digit) are used as the question ID.
+// Handles: "3.4.1 ", "1.1. ", "1. ", "2) ", "1 ", "• ", "- ", "* ", "Q. ", "Q: "
 var numBulletRe = regexp.MustCompile(
-	`^\s*(?:\d+\.\d+\.?\s+|\d+[\.)\s]\s*|[•\-\*]\s+|Q[\.:\)]\s*)(.+)`,
+	`^\s*(\d+(?:\.\d+)*\.?\s+|\d+[\.)\s]\s*|[•\-\*]\s+|Q[\.:\)]\s*)(.+)`,
 )
 
 // ExtractQuestionsFromText detects RFP questions in a block of plain text.
@@ -403,15 +420,21 @@ func extractByPatterns(text string) []Question {
 	var questions []Question
 	var cur strings.Builder
 	seq := 0
+	currentID := ""
 
 	flush := func() {
 		q := strings.TrimSpace(cur.String())
 		cur.Reset()
+		id := currentID
+		currentID = ""
 		if len(q) < 10 {
 			return
 		}
-		seq++
-		questions = append(questions, Question{ID: fmt.Sprintf("%d", seq), Question: q})
+		if id == "" {
+			seq++
+			id = fmt.Sprintf("%d", seq)
+		}
+		questions = append(questions, Question{ID: id, Question: q})
 	}
 
 	scanner := bufio.NewScanner(strings.NewReader(text))
@@ -424,7 +447,13 @@ func extractByPatterns(text string) []Question {
 		}
 		if m := numBulletRe.FindStringSubmatch(line); m != nil {
 			flush()
-			cur.WriteString(strings.TrimSpace(m[1]))
+			prefix := strings.TrimSpace(m[1])
+			cur.WriteString(strings.TrimSpace(m[2]))
+			// Use numeric prefixes (e.g. "3.4.1", "2)") as the question ID;
+			// bullets and Q-prefix items keep sequential auto-numbering.
+			if len(prefix) > 0 && prefix[0] >= '0' && prefix[0] <= '9' {
+				currentID = strings.TrimRight(prefix, ".)")
+			}
 		} else if cur.Len() > 0 {
 			cur.WriteByte(' ')
 			cur.WriteString(stripped)

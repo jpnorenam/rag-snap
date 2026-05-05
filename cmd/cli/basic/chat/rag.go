@@ -136,7 +136,7 @@ func rewriteSearchQuery(
 		return query
 	}
 
-	raw := strings.TrimSpace(stripThinkTags(resp.Choices[0].Message.Content))
+	raw := strings.TrimSpace(StripThinkTags(resp.Choices[0].Message.Content))
 	if raw == "" {
 		return query
 	}
@@ -173,9 +173,9 @@ func rewriteSearchQuery(
 	return result
 }
 
-// stripThinkTags removes <think>...</think> reasoning blocks that
+// StripThinkTags removes <think>...</think> reasoning blocks that
 // reasoning models (e.g. DeepSeek R1) emit before their actual response.
-func stripThinkTags(s string) string {
+func StripThinkTags(s string) string {
 	for {
 		start := strings.Index(s, "<think>")
 		if start == -1 {
@@ -218,7 +218,7 @@ func formatConversationForRewrite(messages []openai.ChatCompletionMessageParamUn
 		}
 		// Strip reasoning blocks from assistant responses.
 		if cm.Role == "assistant" {
-			cm.Content = stripThinkTags(cm.Content)
+			cm.Content = StripThinkTags(cm.Content)
 			cm.Content = strings.TrimSpace(cm.Content)
 		}
 		if cm.Content == "" {

@@ -117,13 +117,13 @@ func rfpExtractCSV(filePath string) ([]rfp.Question, error) {
 		return nil, fmt.Errorf("CSV file has no columns")
 	}
 
-	// Single-column CSV: skip the prompt.
+	// Single-column CSV: skip the column prompts.
 	if len(headers) == 1 {
 		fmt.Printf("Single column detected: %q\n", headers[0])
-		return rfp.ExtractFromCSV(filePath, 0)
+		return rfp.ExtractFromCSV(filePath, 0, -1)
 	}
 
-	options := make([]huh.Option[int], len(headers))
+	colOptions := make([]huh.Option[int], len(headers))
 	for i, h := range headers {
 		label := h
 		if label == "" {
@@ -131,21 +131,42 @@ func rfpExtractCSV(filePath string) ([]rfp.Question, error) {
 		} else {
 			label = fmt.Sprintf("Column %d: %s", i+1, h)
 		}
-		options[i] = huh.NewOption(label, i)
+		colOptions[i] = huh.NewOption(label, i)
 	}
 
 	var colIdx int
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewSelect[int]().
 			Title("Which column contains the RFP questions?").
-			Options(options...).
+			Options(colOptions...).
 			Value(&colIdx),
 	)).Run(); err != nil {
 		return nil, fmt.Errorf("column selection cancelled: %w", err)
 	}
 
+	idColIdx := -1
+	idOptions := make([]huh.Option[int], len(headers)+1)
+	idOptions[0] = huh.NewOption("None (auto-number)", -1)
+	for i, h := range headers {
+		label := h
+		if label == "" {
+			label = fmt.Sprintf("Column %d", i+1)
+		} else {
+			label = fmt.Sprintf("Column %d: %s", i+1, h)
+		}
+		idOptions[i+1] = huh.NewOption(label, i)
+	}
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[int]().
+			Title("Which column contains the question ID? (optional):").
+			Options(idOptions...).
+			Value(&idColIdx),
+	)).Run(); err != nil {
+		return nil, fmt.Errorf("ID column selection cancelled: %w", err)
+	}
+
 	stop := common.StartProgressSpinner("Extracting questions from CSV")
-	questions, err := rfp.ExtractFromCSV(filePath, colIdx)
+	questions, err := rfp.ExtractFromCSV(filePath, colIdx, idColIdx)
 	stop()
 	return questions, err
 }
@@ -285,6 +306,31 @@ func rfpExtractFromTables(sheets []rfp.SheetTable) ([]rfp.Question, error) {
 		}
 	}
 
+	// ── ID column selection (optional) ───────────────────────────────────────
+	idColIdx := -1
+	if len(firstSheet.Rows) > 0 && len(firstSheet.Rows[0]) > 1 {
+		headers := firstSheet.Rows[0]
+		idOptions := make([]huh.Option[int], len(headers)+1)
+		idOptions[0] = huh.NewOption("None (auto-number)", -1)
+		for i, h := range headers {
+			label := h
+			if label == "" {
+				label = fmt.Sprintf("Column %d", i+1)
+			} else {
+				label = fmt.Sprintf("Column %d: %s", i+1, h)
+			}
+			idOptions[i+1] = huh.NewOption(label, i)
+		}
+		if err := huh.NewForm(huh.NewGroup(
+			huh.NewSelect[int]().
+				Title("Which column contains the question ID? (optional):").
+				Options(idOptions...).
+				Value(&idColIdx),
+		)).Run(); err != nil {
+			return nil, fmt.Errorf("ID column selection cancelled: %w", err)
+		}
+	}
+
 	// ── Min-length filter ─────────────────────────────────────────────────────
 	var minLenStr string
 	if err := huh.NewForm(huh.NewGroup(
@@ -305,14 +351,16 @@ func rfpExtractFromTables(sheets []rfp.SheetTable) ([]rfp.Question, error) {
 	globalSeq := 0
 	for _, idx := range selectedIndices {
 		sheet := sheets[idx]
-		qs, extractErr := rfp.ExtractFromTable(sheet.Rows, colIdx, minLen)
+		qs, extractErr := rfp.ExtractFromTable(sheet.Rows, colIdx, idColIdx, minLen)
 		if extractErr != nil {
 			fmt.Printf("  (skip %q: %v)\n", sheet.Name, extractErr)
 			continue
 		}
 		for _, q := range qs {
-			globalSeq++
-			q.ID = fmt.Sprintf("%d", globalSeq)
+			if q.ID == "" {
+				globalSeq++
+				q.ID = fmt.Sprintf("%d", globalSeq)
+			}
 			q.Source = sheet.Name
 			allQuestions = append(allQuestions, q)
 		}
@@ -477,10 +525,8 @@ func rfpReviewQuestions(questions []rfp.Question) ([]rfp.Question, error) {
 	}
 
 	kept := make([]rfp.Question, 0, len(selected))
-	for seq, idx := range selected {
-		q := questions[idx]
-		q.ID = fmt.Sprintf("%d", seq+1)
-		kept = append(kept, q)
+	for _, idx := range selected {
+		kept = append(kept, questions[idx])
 	}
 	return kept, nil
 }

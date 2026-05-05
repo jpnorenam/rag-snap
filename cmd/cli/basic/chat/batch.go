@@ -228,7 +228,7 @@ func ProcessBatchChat(
 
 		var answer string
 		if len(resp.Choices) > 0 {
-			answer = stripThinkTags(resp.Choices[0].Message.Content)
+			answer = StripThinkTags(resp.Choices[0].Message.Content)
 		}
 
 		fmt.Printf("Answer: %s\n---\n", answer)
