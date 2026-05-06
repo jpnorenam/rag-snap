@@ -59,6 +59,10 @@ parts:
       - go/1.24/stable
     source: .
     source-type: local
+    override-build: |
+      CGO_ENABLED=0 go build -trimpath \
+        -ldflags="-w -s" \
+        -o "${CRAFT_PART_INSTALL}/bin/cli" ./cmd/cli
 
   common-runtime-dependencies:
     plugin: nil
@@ -151,6 +155,8 @@ apps:
       # To access server over network socket
       - network
       - home
+      - network-bind
+      - desktop
 
   tika-server:
     daemon: simple

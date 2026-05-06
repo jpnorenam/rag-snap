@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/huh"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/processing"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
@@ -628,16 +629,38 @@ func (cmd *knowledgeCommand) exportCommand() *cobra.Command {
 }
 
 func (cmd *knowledgeCommand) importCommand() *cobra.Command {
-	var inputDir string
-	var force bool
+	var (
+		inputDir string
+		driveURL string
+		kbName   string
+		all      bool
+		force    bool
+	)
 
 	cobraCmd := &cobra.Command{
 		Use:   "import [kb-name]",
-		Short: "Import a knowledge base from an export directory or archive",
-		Long:  "Restore a knowledge base from a directory or .tar.gz archive produced by 'knowledge export'.\nIf <kb-name> is omitted, the name stored in the export manifest is used.\nProvide <kb-name> to restore under a different name.",
-		Args:  cobra.MaximumNArgs(1),
+		Short: "Import a knowledge base from an export directory, archive, or Google Drive",
+		Long: "Restore a knowledge base from a directory or .tar.gz archive produced by 'knowledge export'.\n\n" +
+			"Local import:\n" +
+			"  --input <path>   directory or .tar.gz archive\n\n" +
+			"Google Drive import:\n" +
+			"  --url <gdrive-url>   Canonical-shared Drive folder or .tar.gz file link\n" +
+			"  --all                import all archives without interactive selection\n\n" +
+			"On first use with --url, you will be prompted to authenticate with your\n" +
+			"Google account via a browser. The token is cached for subsequent runs.\n\n" +
+			"If [kb-name] is omitted, the name stored in the export manifest is used.\n" +
+			"Provide [kb-name] to restore under a different name.",
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			var kbName string
+			// Exactly one source must be provided.
+			if inputDir == "" && driveURL == "" {
+				return fmt.Errorf("provide either --input <path> or --url <google-drive-url>")
+			}
+			if inputDir != "" && driveURL != "" {
+				return fmt.Errorf("--input and --url are mutually exclusive")
+			}
+
+			// Positional kb-name (optional override).
 			if len(args) > 0 {
 				kbName = args[0]
 			}
@@ -647,16 +670,150 @@ func (cmd *knowledgeCommand) importCommand() *cobra.Command {
 				return err
 			}
 
-			return knowledge.ImportKnowledgeBase(context.Background(), client, kbName, knowledge.ImportOptions{
-				InputDir: inputDir,
-				Force:    force,
-			})
+			ctx := context.Background()
+
+			// ── Local import ────────────────────────────────────────────────
+			if inputDir != "" {
+				return knowledge.ImportKnowledgeBase(ctx, client, kbName, knowledge.ImportOptions{
+					InputDir: inputDir,
+					Force:    force,
+				})
+			}
+
+			// ── Google Drive import ──────────────────────────────────────────
+			kind, resourceID, err := knowledge.ParseDriveURL(driveURL)
+			if err != nil {
+				return err
+			}
+
+			accessToken, err := knowledge.LoadOrAuthenticateDrive(ctx, cmd.Context.Config)
+			if err != nil {
+				return fmt.Errorf("Drive authentication: %w", err)
+			}
+
+			var archives []knowledge.DriveArchive
+
+			switch kind {
+			case knowledge.DriveKindFolder:
+				stop := common.StartProgressSpinner("Listing archives in Google Drive folder")
+				archives, err = knowledge.ListDriveArchives(ctx, resourceID, accessToken)
+				stop()
+				if err != nil {
+					return fmt.Errorf("listing Drive archives: %w", err)
+				}
+				if len(archives) == 0 {
+					fmt.Println("No .tar.gz archives found in the specified folder.")
+					return nil
+				}
+
+				if !all {
+					archives, err = selectDriveArchives(archives)
+					if err != nil {
+						return err
+					}
+					if len(archives) == 0 {
+						fmt.Println("No archives selected.")
+						return nil
+					}
+				}
+
+			case knowledge.DriveKindFile:
+				// Fetch the actual filename so KB naming works correctly.
+				stop := common.StartProgressSpinner("Fetching file metadata")
+				fileName, metaErr := knowledge.GetDriveFileName(ctx, resourceID, accessToken)
+				stop()
+				if metaErr != nil || fileName == "" {
+					fileName = resourceID + ".tar.gz"
+				}
+				archives = []knowledge.DriveArchive{{ID: resourceID, Name: fileName}}
+			}
+
+			for i, archive := range archives {
+				fmt.Printf("[%d/%d] Downloading %s...\n", i+1, len(archives), archive.Name)
+				tmpPath, cleanup, dlErr := knowledge.DownloadDriveArchive(ctx, archive, accessToken)
+				if dlErr != nil {
+					fmt.Printf("  skip: %v\n", dlErr)
+					continue
+				}
+
+				// Derive a KB name from the archive filename when none is provided.
+				target := kbName
+				if target == "" {
+					target = archiveStem(archive.Name)
+				}
+
+				fmt.Printf("  Importing as knowledge base %q...\n", target)
+				importErr := knowledge.ImportKnowledgeBase(ctx, client, target, knowledge.ImportOptions{
+					InputDir: tmpPath,
+					Force:    force,
+				})
+				cleanup()
+				if importErr != nil {
+					fmt.Printf("  error: %v\n", importErr)
+				}
+			}
+			return nil
 		},
 	}
 
-	cobraCmd.Flags().StringVarP(&inputDir, "input", "i", "", "Input directory containing the export (required)")
+	cobraCmd.Flags().StringVarP(&inputDir, "input", "i", "", "Local directory or .tar.gz archive to import")
+	cobraCmd.Flags().StringVarP(&driveURL, "url", "u", "", "Google Drive folder or file URL to import from")
+	cobraCmd.Flags().BoolVar(&all, "all", false, "Import all archives from a Drive folder without prompting")
 	cobraCmd.Flags().BoolVar(&force, "force", false, "Overwrite even if the target index is non-empty")
-	_ = cobraCmd.MarkFlagRequired("input")
 
 	return cobraCmd
+}
+
+// selectDriveArchives presents an interactive multi-select for a list of Drive archives.
+func selectDriveArchives(archives []knowledge.DriveArchive) ([]knowledge.DriveArchive, error) {
+	options := make([]huh.Option[int], len(archives))
+	for i, a := range archives {
+		label := a.Name
+		if a.Size >= 0 {
+			label = fmt.Sprintf("%s (%s)", a.Name, humanBytes(a.Size))
+		}
+		options[i] = huh.NewOption(label, i)
+	}
+
+	var chosen []int
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[int]().
+				Title("Select archives to import").
+				Options(options...).
+				Value(&chosen),
+		),
+	)
+	if err := form.Run(); err != nil {
+		return nil, fmt.Errorf("selection cancelled: %w", err)
+	}
+
+	selected := make([]knowledge.DriveArchive, len(chosen))
+	for i, idx := range chosen {
+		selected[i] = archives[idx]
+	}
+	return selected, nil
+}
+
+// archiveStem strips the archive extension and the trailing "-export" suffix
+// from a filename to derive a clean KB name (e.g. "mybase-export.tar.gz" → "mybase").
+func archiveStem(name string) string {
+	name = strings.TrimSuffix(name, ".tar.gz")
+	name = strings.TrimSuffix(name, ".tgz")
+	name = strings.TrimSuffix(name, "-export")
+	return name
+}
+
+// humanBytes formats a byte count as a human-readable string (e.g. "12.4 MB").
+func humanBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
 }
