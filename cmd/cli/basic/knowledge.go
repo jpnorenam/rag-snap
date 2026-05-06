@@ -686,7 +686,7 @@ func (cmd *knowledgeCommand) importCommand() *cobra.Command {
 				return err
 			}
 
-			accessToken, err := knowledge.LoadOrAuthenticateDrive(ctx)
+			accessToken, err := knowledge.LoadOrAuthenticateDrive(ctx, cmd.Context.Config)
 			if err != nil {
 				return fmt.Errorf("Drive authentication: %w", err)
 			}

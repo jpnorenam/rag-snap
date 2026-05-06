@@ -24,5 +24,11 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 # 
 export OPENSEARCH_USERNAME="admin"
 export OPENSEARCH_PASSWORD="admin"
-# 
+
+# Register Google Drive OAuth2 credential keys so users can configure them with:
+#   sudo rag set gdrive.client.id=<client-id>
+#   sudo rag set gdrive.client.secret=<client-secret>
+snapctl set config.package.gdrive.client.id=""
+snapctl set config.package.gdrive.client.secret=""
+#
 # sudo snap start $SNAP_INSTANCE_NAME.tika-server

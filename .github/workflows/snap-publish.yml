@@ -21,24 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # DRIVE_CLIENT_ID / DRIVE_CLIENT_SECRET are repository secrets set in
-      # Settings → Secrets and variables → Actions.
-      #
-      # They are Google OAuth2 "Desktop app" credentials compiled into the binary
-      # via -ldflags (see snap/snapcraft.yaml override-build and Makefile).
-      # End-users never configure these — they only need to authenticate once with
-      # their own Google account when they first run:
-      #   rag-cli.rag knowledge import --url <drive-url>
-      #
-      # NOTE: OpenSearch credentials (OPENSEARCH_USERNAME / OPENSEARCH_PASSWORD)
-      # are intentionally NOT embedded here.  They are per-user runtime values
-      # that each user sets in their own environment or via `rag-cli.rag set`.
       - name: Build snap
         uses: snapcore/action-build@v1
         id: build
-        env:
-          DRIVE_CLIENT_ID: ${{ secrets.DRIVE_CLIENT_ID }}
-          DRIVE_CLIENT_SECRET: ${{ secrets.DRIVE_CLIENT_SECRET }}
 
       - name: Upload snap artifact
         uses: actions/upload-artifact@v4

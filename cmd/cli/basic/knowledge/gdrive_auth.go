@@ -17,14 +17,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
-)
 
-// driveClientID and driveClientSecret are embedded at build time via -ldflags.
-// They can be overridden at runtime with GOOGLE_DRIVE_CLIENT_ID /
-// GOOGLE_DRIVE_CLIENT_SECRET, which is the recommended approach for development.
-var (
-	driveClientID     = ""
-	driveClientSecret = ""
+	"github.com/jpnorenam/rag-snap/pkg/storage"
 )
 
 const (
@@ -45,25 +39,42 @@ func (t *DriveToken) valid() bool {
 	return t != nil && t.AccessToken != "" && time.Now().Before(t.ExpiresAt.Add(-30*time.Second))
 }
 
-// resolveClientCredentials returns the OAuth2 client credentials, preferring
-// env vars over the compile-time defaults.
-func resolveClientCredentials() (clientID, clientSecret string, err error) {
+// resolveClientCredentials returns the OAuth2 client credentials.
+// Resolution order: env vars → snap config (gdrive.client.id / gdrive.client.secret).
+func resolveClientCredentials(cfg storage.Config) (clientID, clientSecret string, err error) {
 	clientID = os.Getenv("GOOGLE_DRIVE_CLIENT_ID")
-	if clientID == "" {
-		clientID = driveClientID
-	}
 	clientSecret = os.Getenv("GOOGLE_DRIVE_CLIENT_SECRET")
-	if clientSecret == "" {
-		clientSecret = driveClientSecret
+
+	if clientID == "" {
+		clientID, _ = configString(cfg, "gdrive.client.id")
 	}
+	if clientSecret == "" {
+		clientSecret, _ = configString(cfg, "gdrive.client.secret")
+	}
+
 	if clientID == "" || clientSecret == "" {
 		return "", "", fmt.Errorf(
 			"Google Drive OAuth2 credentials are not configured\n" +
-				"  For development: set GOOGLE_DRIVE_CLIENT_ID and GOOGLE_DRIVE_CLIENT_SECRET\n" +
-				"  For production:  embed them at build time via make DRIVE_CLIENT_ID=... DRIVE_CLIENT_SECRET=...",
+				"  Run: sudo rag set gdrive.client.id=<client-id>\n" +
+				"       sudo rag set gdrive.client.secret=<client-secret>\n" +
+				"  Or set GOOGLE_DRIVE_CLIENT_ID / GOOGLE_DRIVE_CLIENT_SECRET environment variables",
 		)
 	}
 	return clientID, clientSecret, nil
+}
+
+// configString reads a single string value from snap config. Returns ("", false) when absent.
+func configString(cfg storage.Config, key string) (string, bool) {
+	vals, err := cfg.Get(key)
+	if err != nil || len(vals) == 0 {
+		return "", false
+	}
+	v, ok := vals[key]
+	if !ok {
+		return "", false
+	}
+	s := fmt.Sprint(v)
+	return s, s != ""
 }
 
 // driveTokenCachePath returns the path of the cached token file.
@@ -345,8 +356,8 @@ func refreshDriveToken(ctx context.Context, tok *DriveToken, clientID, clientSec
 //  1. Return the cached token if it is still valid.
 //  2. Silently refresh using the stored refresh token.
 //  3. Run the full loopback Authorization Code + PKCE flow (opens a browser).
-func LoadOrAuthenticateDrive(ctx context.Context) (string, error) {
-	clientID, clientSecret, err := resolveClientCredentials()
+func LoadOrAuthenticateDrive(ctx context.Context, cfg storage.Config) (string, error) {
+	clientID, clientSecret, err := resolveClientCredentials(cfg)
 	if err != nil {
 		return "", err
 	}

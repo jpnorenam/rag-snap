@@ -8,15 +8,6 @@ CGO_ENABLED := 0
 GOFLAGS     :=
 TAGS        :=
 LDFLAGS     := -w -s
-# Embed Google Drive OAuth2 credentials at build time (required for Drive import).
-# Usage: make build DRIVE_CLIENT_ID=<id> DRIVE_CLIENT_SECRET=<secret>
-# For development, set GOOGLE_DRIVE_CLIENT_ID / GOOGLE_DRIVE_CLIENT_SECRET env vars instead.
-ifdef DRIVE_CLIENT_ID
-LDFLAGS += -X github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge.driveClientID=$(DRIVE_CLIENT_ID)
-endif
-ifdef DRIVE_CLIENT_SECRET
-LDFLAGS += -X github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge.driveClientSecret=$(DRIVE_CLIENT_SECRET)
-endif
 
 # ------------------------------------------------------------------------------
 #  Build
