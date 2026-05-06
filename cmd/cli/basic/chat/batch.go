@@ -144,6 +144,7 @@ func ProcessBatchChat(
 	knowledgeClient *knowledge.OpenSearchClient,
 	embeddingModelID string,
 	manifest *BatchManifest,
+	prompts PromptConfig,
 	verbose bool,
 ) error {
 	client := openai.NewClient(clientOptions(baseURL)...)
@@ -173,11 +174,11 @@ func ProcessBatchChat(
 
 	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)
 
-	defaultSystemPrompt := ragAnswerSystemPrompt
+	defaultSystemPrompt := prompts.AnswerSystemPrompt
 	if manifest.Prompt != "" {
 		// Append the non-negotiable source rules so custom prompts cannot
 		// accidentally bypass [CANONICAL]/[UPSTREAM] grounding behaviour.
-		defaultSystemPrompt = manifest.Prompt + "\n\n" + ragSourceRules
+		defaultSystemPrompt = manifest.Prompt + "\n\n" + prompts.SourceRules
 	}
 
 	ctx := context.Background()

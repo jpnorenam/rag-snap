@@ -57,5 +57,5 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 		llmModelName, _ = getConfigString(cmd.Context, confChatModel)
 	}
 
-	return chat.Client(apiUrls[openAi], knowledgeClient, embeddingModelID, llmModelName, cmd.Verbose)
+	return chat.Client(apiUrls[openAi], knowledgeClient, embeddingModelID, llmModelName, chat.LoadPrompts(), cmd.Verbose)
 }

@@ -47,7 +47,7 @@ func FindModelName(baseURL string) (string, error) {
 	return modelPage.Data[0].ID, nil
 }
 
-func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddingModelID string, llmModelName string, verbose bool) error {
+func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddingModelID string, llmModelName string, prompts PromptConfig, verbose bool) error {
 	fmt.Printf("Using inference server at %v\n", baseURL)
 
 	// Check if server is reachable
@@ -113,7 +113,7 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 
 	initialSystemPrompt := "You are a helpful assistant."
 	if knowledgeClient != nil {
-		initialSystemPrompt = ragChatSystemPrompt
+		initialSystemPrompt = prompts.ChatSystemPrompt
 	}
 
 	params := openai.ChatCompletionNewParams{

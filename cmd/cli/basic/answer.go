@@ -72,7 +72,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			}
 			knowledgeClient, _ := knowledge.NewClient(apiUrls[opensearch])
 			embeddingModelID, _ := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
-			return chat.ProcessBatchChat(apiUrls[openAi], knowledgeClient, embeddingModelID, manifest, cmd.Verbose)
+			return chat.ProcessBatchChat(apiUrls[openAi], knowledgeClient, embeddingModelID, manifest, chat.LoadPrompts(), cmd.Verbose)
 		},
 	}
 
