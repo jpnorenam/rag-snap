@@ -145,6 +145,7 @@ func ProcessBatchChat(
 	embeddingModelID string,
 	manifest *BatchManifest,
 	prompts PromptConfig,
+	temperature float64,
 	verbose bool,
 ) error {
 	client := openai.NewClient(clientOptions(baseURL)...)
@@ -220,7 +221,8 @@ func ProcessBatchChat(
 				openai.SystemMessage(defaultSystemPrompt),
 				openai.UserMessage(buildRAGPrompt(ragContext, q.Question)),
 			},
-			Model: modelName,
+			Model:       modelName,
+			Temperature: openai.Float(temperature),
 		})
 		if err != nil {
 			fmt.Printf("error on question %d: %v\n", i+1, err)

@@ -47,7 +47,7 @@ func FindModelName(baseURL string) (string, error) {
 	return modelPage.Data[0].ID, nil
 }
 
-func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddingModelID string, llmModelName string, prompts PromptConfig, verbose bool) error {
+func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddingModelID string, llmModelName string, prompts PromptConfig, temperature float64, verbose bool) error {
 	fmt.Printf("Using inference server at %v\n", baseURL)
 
 	// Check if server is reachable
@@ -120,7 +120,8 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.SystemMessage(initialSystemPrompt),
 		},
-		Model: llmModelName,
+		Model:       llmModelName,
+		Temperature: openai.Float(temperature),
 	}
 
 	session := &Session{
