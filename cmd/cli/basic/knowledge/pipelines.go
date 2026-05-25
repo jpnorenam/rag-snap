@@ -268,7 +268,7 @@ func buildSearchPipelineBody(rerankerModelID string) map[string]any {
 					"combination": map[string]any{
 						"technique": "arithmetic_mean",
 						"parameters": map[string]any{
-							"weights": []float64{0.3, 0.7},
+							"weights": []float64{0.4, 0.6},
 						},
 					},
 				},
