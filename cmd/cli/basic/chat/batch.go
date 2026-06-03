@@ -144,6 +144,8 @@ func ProcessBatchChat(
 	knowledgeClient *knowledge.OpenSearchClient,
 	embeddingModelID string,
 	manifest *BatchManifest,
+	prompts PromptConfig,
+	temperature float64,
 	verbose bool,
 ) error {
 	client := openai.NewClient(clientOptions(baseURL)...)
@@ -173,11 +175,11 @@ func ProcessBatchChat(
 
 	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)
 
-	defaultSystemPrompt := ragAnswerSystemPrompt
+	defaultSystemPrompt := prompts.AnswerSystemPrompt
 	if manifest.Prompt != "" {
 		// Append the non-negotiable source rules so custom prompts cannot
 		// accidentally bypass [CANONICAL]/[UPSTREAM] grounding behaviour.
-		defaultSystemPrompt = manifest.Prompt + "\n\n" + ragSourceRules
+		defaultSystemPrompt = manifest.Prompt + "\n\n" + prompts.SourceRules
 	}
 
 	ctx := context.Background()
@@ -219,7 +221,8 @@ func ProcessBatchChat(
 				openai.SystemMessage(defaultSystemPrompt),
 				openai.UserMessage(buildRAGPrompt(ragContext, q.Question)),
 			},
-			Model: modelName,
+			Model:       modelName,
+			Temperature: openai.Float(temperature),
 		})
 		if err != nil {
 			fmt.Printf("error on question %d: %v\n", i+1, err)

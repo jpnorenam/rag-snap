@@ -42,6 +42,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 	var outputPath string
 	var previewOnly bool
 	var noRefine bool
+	var temperature float64
 
 	c := &cobra.Command{
 		Use:   "batch [manifest.yaml]",
@@ -72,7 +73,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			}
 			knowledgeClient, _ := knowledge.NewClient(apiUrls[opensearch])
 			embeddingModelID, _ := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
-			return chat.ProcessBatchChat(apiUrls[openAi], knowledgeClient, embeddingModelID, manifest, cmd.Verbose)
+			return chat.ProcessBatchChat(apiUrls[openAi], knowledgeClient, embeddingModelID, manifest, chat.LoadPrompts(), temperature, cmd.Verbose)
 		},
 	}
 
@@ -80,6 +81,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 	c.Flags().StringVarP(&outputPath, "output", "o", "", "Output YAML manifest path (default: <document-name>-rfp.yaml) — used with --build")
 	c.Flags().BoolVar(&previewOnly, "preview", false, "Preview extracted questions without saving the manifest — used with --build")
 	c.Flags().BoolVar(&noRefine, "no-refine", false, "Skip LLM semantic refinement of extracted questions — used with --build")
+	c.Flags().Float64Var(&temperature, "temperature", 0.1, "Sampling temperature (0.0–1.0); lower = more deterministic")
 
 	return c
 }

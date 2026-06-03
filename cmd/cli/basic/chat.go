@@ -11,6 +11,7 @@ import (
 
 type chatCommand struct {
 	*common.Context
+	temperature float64
 }
 
 func ChatCommand(ctx *common.Context) *cobra.Command {
@@ -28,6 +29,7 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 		RunE:              cmd.run,
 	}
 
+	cobraCmd.Flags().Float64Var(&cmd.temperature, "temperature", 0.3, "Sampling temperature (0.0–1.0); lower = more deterministic")
 	addDebugFlags(cobraCmd, ctx)
 
 	return cobraCmd
@@ -57,5 +59,5 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 		llmModelName, _ = getConfigString(cmd.Context, confChatModel)
 	}
 
-	return chat.Client(apiUrls[openAi], knowledgeClient, embeddingModelID, llmModelName, cmd.Verbose)
+	return chat.Client(apiUrls[openAi], knowledgeClient, embeddingModelID, llmModelName, chat.LoadPrompts(), cmd.temperature, cmd.Verbose)
 }

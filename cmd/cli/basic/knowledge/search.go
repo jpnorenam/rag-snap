@@ -107,7 +107,11 @@ func (c *OpenSearchClient) hybridSearch(
 // The lexicalQuery is used for BM25 matching and may be enriched with
 // conversation history. The query is used for neural embedding and reranking.
 func buildSearchBody(query, lexicalQuery, embeddingModelID string, k int) map[string]any {
+	// Over-fetch candidates so the reranker has a larger pool to work with.
+	// The final result count is capped back to k via "size".
+	neuralK := k * 3
 	return map[string]any{
+		"size": k,
 		"_source": map[string]any{
 			"excludes": []string{"embedding"},
 		},
@@ -126,7 +130,7 @@ func buildSearchBody(query, lexicalQuery, embeddingModelID string, k int) map[st
 							"embedding": map[string]any{
 								"query_text": query,
 								"model_id":   embeddingModelID,
-								"k":          k,
+								"k":          neuralK,
 							},
 						},
 					},
