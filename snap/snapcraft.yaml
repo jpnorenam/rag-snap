@@ -1,7 +1,7 @@
 name: rag-cli
 base: core24
 
-version: &snap-version "0.0.2"
+version: &snap-version "0.0.3"
 summary: RAG CLI application
 description: |
   This snap configures OpenSearch snap models, pipelines, and indexes
@@ -85,6 +85,7 @@ parts:
       mkdir -p "${CRAFT_PART_INSTALL}/usr"
       curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
         | tar -xJ --strip-components=1 -C "${CRAFT_PART_INSTALL}/usr"
+      export PATH="${CRAFT_PART_INSTALL}/usr/bin:${PATH}"
       "${CRAFT_PART_INSTALL}/usr/bin/npm" install -g elasticdump@6.124.2 --prefix "${CRAFT_PART_INSTALL}/usr"
 
   tika:
