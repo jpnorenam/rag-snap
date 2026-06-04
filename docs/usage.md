@@ -688,12 +688,16 @@ each answer (RAG).
 ### Starting a session
 
 ```
-rag-cli.rag chat [model_name]
+rag-cli.rag chat [model_name] [--temperature <float>]
 ```
 
 | Argument | Required | Description |
 |---|---|---|
 | `model_name` | No | LLM model identifier. Auto-detected from the inference server when omitted. |
+
+| Flag | Default | Description |
+|---|---|---|
+| `--temperature` | `0.3` | Sampling temperature (0.0–1.0). Lower values produce more deterministic responses; higher values allow more creative variation. |
 
 **Example — auto-detect model**
 
@@ -917,8 +921,12 @@ Each question is answered in sequence, printed to the terminal, and the full set
 written to a timestamped JSON file in the current working directory.
 
 ```
-rag-cli.rag answer batch <manifest.yaml>
+rag-cli.rag answer batch <manifest.yaml> [--temperature <float>]
 ```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--temperature` | `0.1` | Sampling temperature (0.0–1.0). The low default keeps answers grounded and consistent across runs. Raise it for more varied phrasing. |
 
 #### YAML schema
 
@@ -1023,6 +1031,7 @@ rag-cli.rag answer batch --build <document-path> [--output <path>] [--preview]
 | `--build` | | _(required)_ | Document path to extract RFP/RFI questions from |
 | `--output` | `-o` | `<document-name>-rfp.yaml` | Output YAML manifest path |
 | `--preview` | | `false` | Print extracted questions without writing the manifest |
+| `--no-refine` | | `false` | Skip the LLM semantic refinement step and write the manifest with raw extracted questions |
 
 The command detects the file format from the extension and asks format-specific questions before
 extracting. After extraction you review every question in an interactive multi-select (all checked
@@ -1185,3 +1194,59 @@ rag-cli.rag answer batch --build ~/rfp/ericsson.pdf --preview
 ```
 
 ---
+
+## Prompt
+
+The `prompt` command (alias `p`) manages the system prompts used by the RAG pipeline. Customised prompts are saved to `~/.config/rag-cli/prompts.json` and override the built-in defaults at runtime — no rebuild or reinstall is needed.
+
+### Sub-commands at a glance
+
+| Command | Description |
+|---|---|
+| `prompt init` | Interactively select and edit a system prompt |
+
+---
+
+### `prompt init`
+
+Opens an interactive terminal editor pre-populated with the current value of the selected prompt (custom or built-in default). Submitting writes the updated prompt to `~/.config/rag-cli/prompts.json`.
+
+```
+rag-cli.rag prompt init
+```
+
+Three prompts are configurable:
+
+| Prompt key | Used by | Purpose |
+|---|---|---|
+| `answer_system_prompt` | `answer batch` | System instruction for batch Q&A mode. Controls tone, format, and grounding behaviour for RFP/RFI answers. |
+| `chat_system_prompt` | `chat` | System instruction for the interactive REPL. Controls how the assistant responds during a live session. |
+| `source_rules` | `answer batch` | Grounding constraints appended to any custom `prompt:` field in a batch manifest. Prevents custom prompts from bypassing `[CANONICAL]`/`[UPSTREAM]` source prioritisation rules. |
+
+**Example**
+
+```bash
+$ rag-cli.rag prompt init
+
+  Which prompt do you want to configure?
+  > answer_system_prompt — system instruction for batch Q&A mode (answer batch)
+    chat_system_prompt   — system instruction for the interactive chat REPL (chat)
+    source_rules         — grounding constraints appended to custom batch prompts (answer batch)
+
+  Edit: answer_system_prompt
+  ┌──────────────────────────────────────────────────────────────────────────────┐
+  │ You are a Canonical support engineer responding to a procurement executive…  │
+  │                                                                              │
+  │ (edit the text above, then press Alt+Enter or Ctrl+J to save)               │
+  └──────────────────────────────────────────────────────────────────────────────┘
+
+answer_system_prompt updated and saved to ~/.config/rag-cli/prompts.json
+```
+
+> **Note on source rules:** When a batch manifest includes a top-level `prompt:` field, the
+> `source_rules` prompt is automatically appended to it. This ensures that even fully custom
+> prompts respect the `[CANONICAL]`/`[UPSTREAM]` prioritisation logic. Edit `source_rules` only
+> if you need to adjust the grounding constraints themselves, not just the tone or format.
+
+> **Note on defaults:** Deleting `~/.config/rag-cli/prompts.json` restores all built-in defaults.
+> You can also reset a single prompt by editing it back to the original text via `prompt init`.

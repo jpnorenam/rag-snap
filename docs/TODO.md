@@ -27,7 +27,7 @@ Legend: `[ ]` = open · `[x]` = done · `[-]` = deferred/out-of-scope for now
 ## v0.1 — Quality & reliability
 
 ### Ingestion correctness
-* [ ] **Duplicate detection on ingest**: before bulk-indexing, look up the source checksum in the metadata index; if unchanged, skip re-ingest and print an informative message. If changed, offer `--force` to replace.
+* [X] **Duplicate detection on ingest**: before bulk-indexing, look up the source checksum in the metadata index; if unchanged, skip re-ingest and print an informative message. If changed, offer `--force` to replace.
 * [ ] **`knowledge reingest` command** (or `--update` flag on `ingest`): `forget` + re-ingest in one step, preserving the same source ID. Avoids the manual two-step.
 * [ ] **Ingest progress for large documents**: emit chunk count as indexing proceeds (OpenSearch bulk API already returns per-shard counts — surface them).
 * [ ] **Context timeout on all HTTP calls**: currently `context.Background()` is passed everywhere. Add a configurable deadline (default 120 s) so a hung server does not block the CLI indefinitely. Plumb through `cmd/cli/common/context.go`.
@@ -52,7 +52,7 @@ Legend: `[ ]` = open · `[x]` = done · `[-]` = deferred/out-of-scope for now
 * [ ] **Code block awareness**: treat fenced code blocks (` ``` `) as atomic units like tables — never split mid-block. Currently a long code example can be cut in the middle of a function, breaking the chunk's meaning.
 
 ### Chat / inference
-* [ ] **Configurable system prompt**: `config set chat.system-prompt "You are a Canonical support engineer…"`. The current hardcoded `"You are a helpful assistant."` is too generic for domain-specific deployments.
+* [X] **Configurable system prompt**: `config set chat.system-prompt "You are a Canonical support engineer…"`. The current hardcoded `"You are a helpful assistant."` is too generic for domain-specific deployments.
 * [ ] **`--temperature` and `--max-tokens` flags on `chat`**: expose the most impactful inference parameters without requiring config changes.
 * [ ] **Conversation length management**: the message history grows unbounded. After N turns (configurable, default 20), summarise older turns into a single system message to prevent context-window overflow and keep latency stable.
 * [ ] **Configurable hybrid search weights** (`config set chat.bm25-weight 0.3`, default matches current pipeline): the 0.3/0.7 BM25/neural split is hard-coded in `buildSearchPipelineBody`. Some corpora (technical docs with precise terminology) benefit from higher BM25 weight.
