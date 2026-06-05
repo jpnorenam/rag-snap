@@ -142,6 +142,7 @@ func LoadBatchManifest(path string) (*BatchManifest, error) {
 func ProcessBatchChat(
 	baseURL string,
 	knowledgeClient *knowledge.OpenSearchClient,
+	kapaClient *knowledge.KapaClient,
 	embeddingModelID string,
 	manifest *BatchManifest,
 	prompts PromptConfig,
@@ -169,8 +170,10 @@ func ProcessBatchChat(
 
 	session := &Session{
 		KnowledgeClient:  knowledgeClient,
+		KapaClient:       kapaClient,
 		EmbeddingModelID: embeddingModelID,
 		ActiveIndexes:    activeIndexes,
+		KapaEnabled:      kapaClient != nil,
 	}
 
 	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)

@@ -2,6 +2,7 @@ package basic
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
@@ -51,6 +52,19 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 
 	embeddingModelID, _ := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
 
+	kapaAPIKey, _ := getConfigString(cmd.Context, knowledge.ConfKapaAPIKey)
+	if v := os.Getenv("KAPA_API_KEY"); v != "" {
+		kapaAPIKey = v
+	}
+	kapaProjectID, _ := getConfigString(cmd.Context, knowledge.ConfKapaProjectID)
+	if v := os.Getenv("KAPA_PROJECT_ID"); v != "" {
+		kapaProjectID = v
+	}
+	var kapaClient *knowledge.KapaClient
+	if kapaAPIKey != "" && kapaProjectID != "" {
+		kapaClient = knowledge.NewKapaClient(kapaProjectID, kapaAPIKey)
+	}
+
 	var llmModelName string
 	if len(args) > 0 {
 		llmModelName = args[0]
@@ -59,5 +73,5 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 		llmModelName, _ = getConfigString(cmd.Context, confChatModel)
 	}
 
-	return chat.Client(apiUrls[openAi], knowledgeClient, embeddingModelID, llmModelName, chat.LoadPrompts(), cmd.temperature, cmd.Verbose)
+	return chat.Client(apiUrls[openAi], knowledgeClient, kapaClient, embeddingModelID, llmModelName, chat.LoadPrompts(), cmd.temperature, cmd.Verbose)
 }

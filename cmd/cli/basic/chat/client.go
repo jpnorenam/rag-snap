@@ -47,7 +47,7 @@ func FindModelName(baseURL string) (string, error) {
 	return modelPage.Data[0].ID, nil
 }
 
-func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddingModelID string, llmModelName string, prompts PromptConfig, temperature float64, verbose bool) error {
+func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaClient *knowledge.KapaClient, embeddingModelID string, llmModelName string, prompts PromptConfig, temperature float64, verbose bool) error {
 	fmt.Printf("Using inference server at %v\n", baseURL)
 
 	// Check if server is reachable
@@ -59,12 +59,16 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 
 	if knowledgeClient != nil {
 		fmt.Printf(
-			"Using the `%s` knowledge base at %v\n\t> Use `%s` to see other available knowledge bases\n\n",
+			"Using the `%s` knowledge base at %v\n\t> Use `%s` to see other available knowledge bases\n",
 			defaultKnowledgeBase,
 			knowledgeClient.URL(),
 			cmdUseKnowledge,
 		)
 	}
+	if kapaClient != nil {
+		fmt.Printf("\t> Kapa knowledge enabled — use `%s` to toggle\n", cmdToggleKapa)
+	}
+	fmt.Println()
 
 	if llmModelName == "" {
 		var err error
@@ -112,7 +116,7 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 	log.SetOutput(rl.Stderr())
 
 	initialSystemPrompt := "You are a helpful assistant."
-	if knowledgeClient != nil {
+	if knowledgeClient != nil || kapaClient != nil {
 		initialSystemPrompt = prompts.ChatSystemPrompt
 	}
 
@@ -126,8 +130,10 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 
 	session := &Session{
 		KnowledgeClient:  knowledgeClient,
+		KapaClient:       kapaClient,
 		EmbeddingModelID: embeddingModelID,
 		ActiveIndexes:    []string{knowledge.DefaultIndexName()},
+		KapaEnabled:      kapaClient != nil,
 	}
 
 	for {
@@ -306,7 +312,7 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	llmPrompt := prompt
 	if ragContext != "" {
 		llmPrompt = buildRAGPrompt(ragContext, prompt)
-	} else if session.KnowledgeClient != nil {
+	} else if session.KnowledgeClient != nil || (session.KapaClient != nil && session.KapaEnabled) {
 		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", prompt)
 	}
 

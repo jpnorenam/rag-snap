@@ -14,10 +14,11 @@ import (
 
 const (
 	cmdUseKnowledge = "/use-knowledge"
+	cmdToggleKapa   = "/toggle-kapa"
 )
 
 // slashCommands lists every registered slash command name.
-var slashCommands = []string{cmdUseKnowledge}
+var slashCommands = []string{cmdUseKnowledge, cmdToggleKapa}
 
 // slashHinter returns a readline listener that displays matching slash
 // commands below the input line as the user types, filtering the list
@@ -66,8 +67,10 @@ func clearSlashHints() {
 // handlers so they can read and modify session state.
 type Session struct {
 	KnowledgeClient  *knowledge.OpenSearchClient
+	KapaClient       *knowledge.KapaClient
 	EmbeddingModelID string
 	ActiveIndexes    []string
+	KapaEnabled      bool
 }
 
 // handleSlashCommand processes slash commands entered in the chat REPL.
@@ -81,8 +84,20 @@ func handleSlashCommand(input string, session *Session) bool {
 			fmt.Printf("Error: %v\n", err)
 		}
 		return true
+	case cmd == cmdToggleKapa:
+		if session.KapaClient == nil {
+			fmt.Println("Kapa is not configured. Set kapa.api.key and kapa.project.id.")
+		} else {
+			session.KapaEnabled = !session.KapaEnabled
+			if session.KapaEnabled {
+				fmt.Println("Kapa knowledge enabled.")
+			} else {
+				fmt.Println("Kapa knowledge disabled.")
+			}
+		}
+		return true
 	default:
-		fmt.Printf("Unknown command: %s\nAvailable commands: %s\n", cmd, cmdUseKnowledge)
+		fmt.Printf("Unknown command: %s\nAvailable commands: %s, %s\n", cmd, cmdUseKnowledge, cmdToggleKapa)
 		return false
 	}
 }
