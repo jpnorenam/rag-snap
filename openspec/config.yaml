@@ -1,0 +1,70 @@
+schema: spec-driven
+
+# Project context (optional)
+# This is shown to AI when creating artifacts.
+context: |
+  Project: rag-cli — a CLI-based RAG (Retrieval-Augmented Generation) tool,
+  packaged as a strictly-confined snap (snap name `rag-cli`, binary `rag-cli.rag`).
+  It lets users build local knowledge bases and chat with them.
+
+  Tech stack:
+    - Go 1.24 (module path: github.com/jpnorenam/rag-snap — note it differs from
+      the repo/snap name `rag-cli`).
+    - Cobra for the command tree; charmbracelet/huh + chzyer/readline for the
+      interactive chat REPL.
+    - Packaged with snapcraft (core24, strict confinement). CI publishes the snap
+      to the `edge` channel on push to main, and `stable` on a GitHub release.
+
+  Architecture: the CLI is a thin orchestrator over three external services.
+    - OpenSearch (the `knowledge` store) via opensearch-go/v4 — embeddings,
+      ingest/search pipelines, indexes, ML models.
+    - An OpenAI-compatible inference server (the `chat` backend) via openai-go/v3 —
+      either a local Inference snap or a third party such as AWS Bedrock.
+    - Apache Tika (the `tika` service) — text extraction, bundled and run as the
+      `tika-server` snap daemon.
+
+  Code layout:
+    - cmd/cli/main.go         — entry point, builds the Cobra tree; threads a single
+                                common.Context{Verbose, Debug, Config} into every command.
+    - cmd/cli/basic/          — user-facing commands: status, chat, answer, knowledge (alias k), prompt.
+        basic/chat/           — chat REPL, RAG retrieval/rerank loop, prompt templates, slash commands.
+        basic/knowledge/      — OpenSearchClient wrapper + KB ops (pipelines, indexes, models,
+                                ingest/bulk, search, export/import via elasticdump, Google Drive import).
+        basic/processing/     — ingestion pipeline (download, Tika extract, HTML conv, chunking, GitHub/Gitea).
+        basic/rfp/ + answer.go — structured batch Q&A from a YAML manifest, exporting JSON.
+    - cmd/cli/config/         — get/set commands over the storage layer.
+    - cmd/cli/common/         — shared Context, spinner, prompts, error/suggestion helpers.
+    - pkg/storage/            — config abstraction (interface + snapctl backend, flattening + precedence).
+    - snap/                   — snapcraft.yaml and lifecycle hooks.
+
+  Critical runtime constraints (account for these in any design):
+    - All config is stored/read through `snapctl` (pkg/storage/snapctl_storage.go is the only
+      wired backend). Config-touching code only works when running inside the snap; `make run` /
+      `go run` outside a snap context fail on any snapctl get/set.
+    - Config has two precedence layers (lowest→highest): `package` (maintainer/install hook) then
+      `user` (overrides). A `user` set rejects unknown keys — the key must already exist as a
+      package key. Keys are dot-namespaced and flattened, e.g. chat.http.host, knowledge.http.tls,
+      knowledge.model.embedding, tika.http.port, gdrive.client.id.
+    - Secrets are passed via environment variables, never config: OPENSEARCH_USERNAME,
+      OPENSEARCH_PASSWORD, CHAT_API_KEY.
+
+  Conventions:
+    - Commands are added to the root in a fixed order with cobra.EnableCommandSorting = false;
+      preserve grouping/order when adding commands.
+    - Test coverage is sparse (only pkg/snap_store and pkg/utils have tests) and CI has no
+      test/lint gate — run `make all` (tidy fmt vet lint test build) locally before pushing.
+    - Validate changes by building and installing the snap, since most paths depend on snapctl
+      and the bundled Tika/OpenSearch services.
+
+# Per-artifact rules (optional)
+rules:
+  proposal:
+    - State which of the three external services (OpenSearch, inference server, Tika) the change touches.
+    - Call out any new config keys and whether they are `package` or `user` scoped.
+  design:
+    - Account for the snapctl-only config backend and the package/user precedence model.
+    - Note any new secrets and confirm they are passed via environment variables, not config.
+    - Flag any new snap interfaces/plugs, bundled binaries, or hook changes needed in snapcraft.yaml.
+  tasks:
+    - Include a task to run `make all` and to validate inside an installed snap when config paths change.
+    - Preserve the fixed command order in cmd/cli/main.go when adding commands.
