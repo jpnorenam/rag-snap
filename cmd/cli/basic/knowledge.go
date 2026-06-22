@@ -566,7 +566,6 @@ func (cmd *knowledgeCommand) listIndexes(ctx context.Context, client *knowledge.
 	return nil
 }
 
-
 // listSources lists all ingested source documents, optionally filtered by index name.
 func (cmd *knowledgeCommand) listSources(ctx context.Context, client *knowledge.OpenSearchClient, args []string) error {
 	var indexFilter string

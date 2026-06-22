@@ -67,10 +67,10 @@ parts:
   common-runtime-dependencies:
     plugin: nil
     stage-packages:
-      - wget # model init
-      - jq # install hook
+      - wget
+      - jq
     stage-snaps:
-      - yq # install hook
+      - yq
 
   elasticdump:
     plugin: nil
@@ -85,7 +85,9 @@ parts:
       mkdir -p "${CRAFT_PART_INSTALL}/usr"
       curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
         | tar -xJ --strip-components=1 -C "${CRAFT_PART_INSTALL}/usr"
-      "${CRAFT_PART_INSTALL}/usr/bin/npm" install -g elasticdump@6.124.2 --prefix "${CRAFT_PART_INSTALL}/usr"
+      # npm's shebang is `#!/usr/bin/env node`, so `node` must be on PATH.
+      export PATH="${CRAFT_PART_INSTALL}/usr/bin:${PATH}"
+      npm install -g elasticdump@6.124.2 --prefix "${CRAFT_PART_INSTALL}/usr"
 
   tika:
     plugin: nil

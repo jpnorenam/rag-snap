@@ -14,10 +14,11 @@ import (
 
 const (
 	cmdUseKnowledge = "/use-knowledge"
+	cmdSearch       = "/search"
 )
 
 // slashCommands lists every registered slash command name.
-var slashCommands = []string{cmdUseKnowledge}
+var slashCommands = []string{cmdUseKnowledge, cmdSearch}
 
 // slashHinter returns a readline listener that displays matching slash
 // commands below the input line as the user types, filtering the list
@@ -73,16 +74,19 @@ type Session struct {
 // handleSlashCommand processes slash commands entered in the chat REPL.
 // Returns true if the command was recognized.
 func handleSlashCommand(input string, session *Session) bool {
-	cmd := strings.TrimSpace(input)
+	verb, args, _ := strings.Cut(strings.TrimSpace(input), " ")
 
-	switch {
-	case cmd == cmdUseKnowledge:
+	switch verb {
+	case cmdUseKnowledge:
 		if err := selectActiveContext(session); err != nil {
 			fmt.Printf("Error: %v\n", err)
 		}
 		return true
+	case cmdSearch:
+		handleSearch(args, session)
+		return true
 	default:
-		fmt.Printf("Unknown command: %s\nAvailable commands: %s\n", cmd, cmdUseKnowledge)
+		fmt.Printf("Unknown command: %s\nAvailable commands: %s\n", verb, strings.Join(slashCommands, ", "))
 		return false
 	}
 }
