@@ -61,6 +61,9 @@ rules:
   proposal:
     - State which of the three external services (OpenSearch, inference server, Tika) the change touches.
     - Call out any new config keys and whether they are `package` or `user` scoped.
+    - If the change adds or modifies a user-facing surface (a CLI command or flag, an in-chat slash
+      command, REPL behavior, or other UI affordance), say so explicitly and name the documentation
+      that must change.
   design:
     - Account for the snapctl-only config backend and the package/user precedence model.
     - Note any new secrets and confirm they are passed via environment variables, not config.
@@ -68,3 +71,6 @@ rules:
   tasks:
     - Include a task to run `make all` and to validate inside an installed snap when config paths change.
     - Preserve the fixed command order in cmd/cli/main.go when adding commands.
+    - When the change adds or modifies a user-facing surface (a CLI command or flag, an in-chat slash
+      command, REPL behavior, or other UI affordance), include a task to update the usage docs to match —
+      `docs/usage.md`, command `--help`/usage text, and `apps/completion.bash` where applicable.

@@ -89,13 +89,14 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 	// Build autocomplete for slash commands.
 	var completions []readline.PrefixCompleterInterface
 	for _, cmd := range slashCommands {
-		completions = append(completions, readline.PcItem(cmd))
+		completions = append(completions, readline.PcItem(cmd.name))
 	}
 
 	rlConfig := &readline.Config{
 		Prompt:                 color.RedString("» "),
 		AutoComplete:           readline.NewPrefixCompleter(completions...),
 		Listener:               slashHinter(),
+		Painter:                syntaxPainter{},
 		DisableAutoSaveHistory: true,
 		InterruptPrompt:        "^C",
 

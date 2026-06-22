@@ -1,5 +1,8 @@
-## ADDED Requirements
+# chat-search Specification
 
+## Purpose
+TBD - created by archiving change add-chat-search-command. Update Purpose after archive.
+## Requirements
 ### Requirement: In-chat retrieval-only search command
 
 The chat REPL SHALL provide a `/search <query>` slash command that retrieves matching chunks from the active knowledge bases and displays them, without performing any LLM generation, summarization, or prompt augmentation.
@@ -82,7 +85,17 @@ The command SHALL validate that retrieval is possible before searching and SHALL
 
 The `/search` command SHALL be registered for the chat REPL's slash-command autocomplete and live hinting alongside the existing slash commands.
 
+When a slash command that takes arguments has been fully typed, the REPL SHALL display the command's argument syntax as a dimmed inline hint, so options such as `-k N` are discoverable without prior knowledge.
+
 #### Scenario: Autocomplete lists the command
 
 - **WHEN** a user types `/` in the chat REPL and triggers autocomplete or hinting
 - **THEN** `/search` appears among the available slash commands
+
+#### Scenario: Inline syntax hint reveals arguments
+
+- **WHEN** a user has typed `/search` (the command name, before entering arguments)
+- **THEN** the REPL shows a dimmed inline hint of its argument syntax (including the `-k N` option)
+- **AND** the hint disappears once the user begins typing the query
+- **AND** the hint is display-only and never becomes part of the submitted input
+

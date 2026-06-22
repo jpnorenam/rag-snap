@@ -737,6 +737,7 @@ Type your prompt, then ENTER to submit. CTRL-C to quit.
 |---|---|
 | Type a prompt, press Enter | Send to the LLM (with RAG context if available) |
 | `Tab` | Autocomplete slash commands |
+| Finish typing a slash command name | A dimmed inline hint shows its argument syntax (e.g. `/search [-k N] <query>`) |
 | `Ctrl-C` (empty line) | Exit the session |
 | `Ctrl-C` (mid-prompt) | Cancel current input, stay in session |
 | Type `exit`, press Enter | Exit the session |
@@ -765,6 +766,37 @@ the session. Changes take effect on the very next prompt.
 ```
 
 Use Space to toggle, Enter to confirm, Esc/Ctrl-C to keep the current selection unchanged.
+
+#### `/search`
+
+Retrieves matching chunks from the active knowledge bases and prints them, without generating an
+answer — retrieval only, no augmentation. It runs the same hybrid pipeline (BM25 + neural + rerank)
+that chat uses, over exactly the knowledge bases toggled with `/use-knowledge`, passing your terms
+verbatim (no query rewriting, no inference-server call). Useful for inspecting what RAG would feed
+the model for a given query.
+
+```
+» /search [-k N] <query>
+```
+
+- `<query>` — the keywords or question to retrieve for.
+- `-k N` — maximum number of results (default: 15). Also accepts `-k=N`.
+
+Each result shows its relevance score, knowledge base name, `[CANONICAL]`/`[UPSTREAM]` provenance
+tag, source ID, creation date, and the full (untruncated) chunk content. Results are ordered by score
+descending.
+
+```
+» /search -k 5 ceph osd recovery
+
+[1] score 0.8421  ·  ops-docs  [CANONICAL]
+    source: ceph/recovery.md   created: 2026-03-11
+    ────────────────────────────────────────────────────────
+    <full chunk content>
+```
+
+If no knowledge bases are active, `/search` tells you to select some with `/use-knowledge` first; an
+empty query or an invalid `-k` prints a short usage line.
 
 ---
 
