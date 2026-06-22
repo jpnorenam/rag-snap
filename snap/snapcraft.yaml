@@ -1,7 +1,7 @@
 name: rag-cli
 base: core24
 
-version: &snap-version "0.0.2"
+version: &snap-version "0.0.4"
 summary: RAG CLI application
 description: |
   This snap configures OpenSearch snap models, pipelines, and indexes
