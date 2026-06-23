@@ -69,7 +69,7 @@ sudo snap install --dangerous ./rag-cli_*.snap
 
 ## The OpenSpec workflow
 
-For anything beyond a trivial fix, we use [OpenSpec](https://github.com/openspec)
+For anything beyond a trivial fix, we use [OpenSpec](https://github.com/Fission-AI/OpenSpec/)
 to capture *what* and *why* before writing code. This keeps changes reviewable
 and gives AI agents the context they need. Project-wide context and per-artifact
 rules live in [`openspec/config.yaml`](openspec/config.yaml) — read it before
