@@ -112,7 +112,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		return // Accept already wrote the error to the client.
 	}
-	defer conn.CloseNow()
+	defer func() { _ = conn.CloseNow() }()
 
 	var types []string
 	if raw := r.URL.Query().Get("type"); raw != "" {

@@ -15,17 +15,20 @@ The system SHALL provide a `ragd` daemon that listens for HTTP requests on a loc
 domain socket. The daemon SHALL be packaged as an opt-in snap service that is disabled on
 install and managed via snap service controls.
 
-The daemon SHALL create the socket with ownership `root:<api.socket.group>` and file mode
-`api.socket.mode` (default `0660`), so that access is gated by host group membership.
+The daemon SHALL create the socket and set its file mode to `api.socket.mode` (default
+`0666`). The daemon SHALL NOT attempt to change the socket's group owner: under strict
+confinement the seccomp profile denies chowning to an arbitrary group, which would crash the
+daemon. Access SHALL therefore be gated by the peer-credential check (see "Local
+authentication"), not by the socket's file ownership.
 
 The daemon SHALL NOT open any TCP or HTTPS listener as part of this capability; remote
 access is out of scope.
 
-#### Scenario: Socket is created with configured ownership and mode
+#### Scenario: Socket is created with the configured mode
 
-- **WHEN** the `ragd` daemon starts with `api.socket.group=rag` and `api.socket.mode=0660`
-- **THEN** it creates the unix socket and sets its group owner to `rag` and its mode to `0660`
-- **AND** it begins serving HTTP requests on that socket
+- **WHEN** the `ragd` daemon starts with `api.socket.mode=0666`
+- **THEN** it creates the unix socket and sets its mode to `0666`
+- **AND** it begins serving HTTP requests on that socket without attempting to chown it
 
 #### Scenario: Daemon is opt-in
 

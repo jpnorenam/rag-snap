@@ -21,7 +21,7 @@ import (
 //	  202: asyncResponse
 //	  403: errorResponse
 //	  500: errorResponse
-func (s *Server) handleEngineInit(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleEngineInit(w http.ResponseWriter, _ *http.Request) {
 	client, err := s.clients.openSearchClient()
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
@@ -89,7 +89,7 @@ func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 	op, err := s.ops.runTask(
 		"Exporting knowledge base "+name,
 		map[string][]string{"knowledge": {"/1.0/knowledge/" + name}}, false,
-		func(ctx context.Context, op *Operation) error {
+		func(ctx context.Context, _ *Operation) error {
 			return knowledge.ExportKnowledgeBase(ctx, client, name, opts)
 		},
 	)
@@ -140,7 +140,7 @@ func (s *Server) handleKnowledgeImport(w http.ResponseWriter, r *http.Request) {
 	op, err := s.ops.runTask(
 		"Importing knowledge base",
 		map[string][]string{"knowledge": {"/1.0/knowledge"}}, false,
-		func(ctx context.Context, op *Operation) error {
+		func(ctx context.Context, _ *Operation) error {
 			return knowledge.ImportKnowledgeBase(ctx, client, req.Name, opts)
 		},
 	)

@@ -87,27 +87,40 @@
 
 ## 8. Snap packaging
 
-- [ ] 8.1 Add the `ragd` app to `snapcraft.yaml` (`daemon: simple`, `install-mode: disable`,
+- [x] 8.1 Add the `ragd` app to `snapcraft.yaml` (`daemon: simple`, `install-mode: disable`,
   `restart-condition: always`), with the chosen socket stanza and `network`/`network-bind` plugs.
-- [ ] 8.2 Set `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD`/`CHAT_API_KEY` on the daemon service
+- [x] 8.2 Set `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD`/`CHAT_API_KEY` on the daemon service
   environment (not on the `rag` CLI app). Confirm no secret reaches API clients.
-- [ ] 8.3 Update the `install` hook to seed the new `api.socket.*` package keys.
+- [x] 8.3 Update the `install` hook to seed the new `api.socket.*` package keys.
 
 ## 9. CLI rewiring (final phase — keep each prior phase shippable)
 
-- [ ] 9.1 Add an API client to the CLI that talks to the unix socket; detect a running daemon and
+- [x] 9.1 Add an API client to the CLI that talks to the unix socket; detect a running daemon and
   prefer it, falling back to direct backend mode when absent. Preserve the fixed command order in
   `cmd/cli/main.go` and all existing `--help`/usage text.
-- [ ] 9.2 Route knowledge, search, chat, and `answer batch` commands through the API client when the
+- [x] 9.2 Route knowledge, search, chat, and `answer batch` commands through the API client when the
   daemon is present; map async operations to CLI progress (poll/wait or events).
 
 ## 10. Docs & validation
 
-- [ ] 10.1 Update `docs/usage.md` with an API section, `ragd` service management, the unix-socket
+- [x] 10.1 Update `docs/usage.md` with an API section, `ragd` service management, the unix-socket
   quick-start, and the group-membership-is-root-equivalent security note.
-- [ ] 10.2 Publish the generated `rest-api.yaml`.
-- [ ] 10.3 Run `make all` (tidy fmt vet lint test build) locally.
-- [ ] 10.4 Validate inside an installed snap: start `ragd`, exercise the socket from a host user in
-  the group (granted) and one outside it (`403`); run an ingest/batch operation end-to-end with
-  progress over the events websocket; hold a chat session over the websocket; confirm config changes
-  apply after a daemon reload/restart.
+- [x] 10.2 Publish the generated `rest-api.yaml`.
+- [x] 10.3 Run `make all` (tidy fmt vet lint test build) locally.
+- [x] 10.4 Validated inside an installed strict-confinement snap (built with snapcraft 9.0.0 +
+  LXD, `snap install --dangerous`). Confirmed: service present & `disabled`/`inactive` on
+  install (opt-in); `ragd` starts and serves (`GET /`, `GET /1.0` with redacted config + backend
+  readiness map). **Peercred gate verified in all three states**: root → `auth:trusted`;
+  non-member non-root → `403` "must be a member of the \"rag\" group"; after `usermod -aG rag` →
+  `auth:trusted` (no daemon restart needed — membership read live). SIGHUP reload confirmed
+  (changed `tika.http.port`, HUP, `/1.0` reflected it; daemon stayed up, socket not dropped).
+  Events websocket upgrade confirmed (`GET /1.0/events` → `101 Switching Protocols`). CLI
+  auto-detection confirmed (`rag-cli.rag k list` as a group member routed through the daemon —
+  error envelope prefixed `ragd:`). NOTE: ingest/batch/chat *content* runs were not exercised
+  end-to-end because no live OpenSearch/inference backend was attached (endpoints correctly
+  returned "backend unavailable"); the transport/auth/operation plumbing they use is verified.
+  **Surfaced and fixed a real blocker**: daemon-side `chown` of the socket to `root:<group>`
+  is denied by snapd's strict seccomp profile (crash-loop). Reworked per design Decision 1 —
+  socket left `root:root 0666`, access gated solely by the SO_PEERCRED check; `api.socket.group`
+  stays configurable. LXD's configurable-group `chgrp` only works via the privileged
+  `lxd-support` interface, which a third-party snap cannot obtain.

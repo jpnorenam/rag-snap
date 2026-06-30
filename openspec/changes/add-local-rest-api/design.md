@@ -60,8 +60,9 @@ rag-cli.ragd`. On start it:
    begins readiness polling (reusing the existing `checkServer`/`handshake` logic) without
    blocking the listener — endpoints that need a backend report `503`-style errors until ready.
 3. Creates the unix socket at a fixed path under `$SNAP_COMMON` (e.g.
-   `$SNAP_COMMON/ragd/unix.socket`), `chown`s it to `root:<api.socket.group>` and `chmod`s
-   to `api.socket.mode` (default `0660`), then serves HTTP on it.
+   `$SNAP_COMMON/ragd/unix.socket`) and `chmod`s it to `api.socket.mode` (default `0666`),
+   then serves HTTP on it. It does **not** `chown` the socket to `api.socket.group` — see the
+   seccomp finding below.
 4. Re-reads config and rebuilds clients on `SIGHUP` (the "reload signal"). `rag set` writing
    `snapctl` does **not** auto-notify the daemon; a `snap restart` or explicit reload applies
    changes. (A future `POST /1.0/config` could push reloads, but config-over-API is out of scope.)
@@ -75,24 +76,42 @@ provided its own ownership/mode permit it. Findings:
   **`socket-group` was proposed but never implemented in snapd**
   ([PR #3916](https://github.com/snapcore/snapd/pull/3916),
   [forum](https://forum.snapcraft.io/t/socket-activation-support/2050)). So socket activation
-  alone cannot give us `root:<group>` ownership; it can only set the mode (default `0666`).
-- A world-writable `0666` socket (the "just make `$SNAP_COMMON` world-accessible" route,
-  [forum](https://forum.snapcraft.io/t/sharing-a-unix-domain-socket-between-a-daemon-and-an-app/12332))
-  removes the DAC group gate our design depends on. **Rejected** — it would force *all*
-  access control into the peercred layer with no file-permission backstop.
+  alone cannot give us `root:<group>` ownership; it can only set the mode.
 - `listen-stream` paths are restricted to `$SNAP_DATA/...`, `$SNAP_COMMON/...`, or abstract
   `@snap.<snap>.<name>` names; `/run/...` is rejected at install time.
 
-**Decision:** the daemon **creates the socket itself** (does not use the `sockets:` activation
-stanza for ownership) at `$SNAP_COMMON/ragd/unix.socket`, then `chown`s it to
-`root:<api.socket.group>` and `chmod`s it to `api.socket.mode` (default `0660`). Group
-ownership is set by the daemon at runtime because snapd cannot set it declaratively. This keeps
-the DAC group gate (file mode + group) as the first line of defence, with peercred as the
-second. The `<group>` must exist on the host; the snap declares it via `system-usernames`
-(`snap_daemon`/`_daemon_`) only if we later choose to drop privileges — for now the daemon runs
-as root (like LXD and `tika-server`) and just sets group ownership on the socket. Whether the
-chosen group is a pre-existing host group the admin populates, or one the snap must create, is a
-packaging detail for task 8.x; the API and auth design do not depend on it.
+**Daemon-side `chown` is ALSO blocked — found in task-10.4 validation, not in spike 0.1.**
+The original decision (below) was for the daemon to `chown` the socket to `root:<group>`
+itself, since snapd can't do it declaratively. On a real strict install this **crashes the
+daemon**: snapd's seccomp profile only permits `chown`/`fchownat` to `root:root`,
+`-1:root`, `root:-1`, or the declared `system-usernames` group (`snap_daemon`) — never to an
+arbitrary host group like `rag`. The `os.Chown(path, -1, ragGid)` is killed with `EPERM`
+(audit `type=1326`, `SECCOMP_RET_ERRNO`, syscall `fchownat`), and the daemon crash-loops.
+
+LXD (`canonical/lxd-pkg-snap`) does the same daemon-side `chgrp <daemon.group>` we attempted,
+but only because it runs effectively **unconfined**: its scripts re-exec via
+`aa-exec -p unconfined`, and the daemon plugs the **super-privileged `lxd-support`** interface,
+which grants a permissive seccomp filter. That interface is allow-listed by snapd to a handful
+of Canonical snaps and is **not available to a third-party snap** like `rag-cli` (not
+auto-connected on store installs, not grantable for `--dangerous` sideloads). So LXD's approach
+is not portable here.
+
+**Decision (revised):** the daemon **creates the socket itself** at
+`$SNAP_COMMON/ragd/unix.socket` and `chmod`s it to `api.socket.mode` (default **`0666`**,
+world-connectable at the DAC layer). It does **not** `chown` the socket. Access is gated
+**solely by the `SO_PEERCRED` check** (Decision 2): a connecting peer is admitted iff it is
+`root` or a member of `api.socket.group`, resolved from the host passwd/group databases —
+independently of the socket's own ownership. `api.socket.group` thus stays a real,
+configurable access control even though it is no longer reflected in the socket's file group.
+
+Trade-off accepted: there is **no file-permission (DAC) backstop** — the `0666` socket is
+reachable by any local process, and the peercred check is the only gate. This is acceptable
+because (a) peercred is forgery-proof (the kernel stamps `SO_PEERCRED`, the client cannot
+spoof its uid), (b) the only operation an unauthenticated peer can perform is `connect()`
+followed by an immediate `403`, and (c) the alternative (chown to `snap_daemon`) trades the
+configurable group for a fixed, opaque, large-gid system group with no real security gain.
+A future `system-usernames`-based hardening could add a DAC backstop without changing the
+API or the peercred contract.
 
 ### 2. Local authentication — `SO_PEERCRED` + group membership, nothing else
 

@@ -67,6 +67,14 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			if manifest.Model == "" {
 				manifest.Model, _ = getConfigString(cmd.Context, confChatModel)
 			}
+
+			// Prefer the daemon: it runs the batch as an async operation and
+			// returns the structured results, which we write to the same
+			// timestamped JSON file the direct path produces.
+			if dc := daemonClient(cmd.Context); dc != nil {
+				return cmd.runBatchRemote(dc, manifest, temperature)
+			}
+
 			apiUrls, err := serverApiUrls(cmd.Context)
 			if err != nil {
 				return fmt.Errorf("getting server API URLs: %w", err)

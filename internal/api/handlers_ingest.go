@@ -141,7 +141,7 @@ func (s *Server) collectUploadedItems(r *http.Request) ([]ingestItem, error) {
 	}
 	if _, err := io.Copy(tmp, file); err != nil {
 		tmp.Close()
-		os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name())
 		return nil, fmt.Errorf("staging upload: %w", err)
 	}
 	tmp.Close()
@@ -154,7 +154,7 @@ func (s *Server) collectUploadedItems(r *http.Request) ([]ingestItem, error) {
 	return []ingestItem{{
 		SourceID: sourceID,
 		filePath: path,
-		cleanup:  func() { os.Remove(path) },
+		cleanup:  func() { _ = os.Remove(path) },
 	}}, nil
 }
 

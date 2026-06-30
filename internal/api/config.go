@@ -44,7 +44,10 @@ const (
 // Defaults applied when a key is unset.
 const (
 	defaultSocketGroup = "rag"
-	defaultSocketMode  = 0o660
+	// defaultSocketMode is 0666 (world-connectable) because the socket cannot be
+	// chowned to api.socket.group under strict confinement; the SO_PEERCRED check
+	// is the access gate, not the file mode. See socket.go / design Decision 1.
+	defaultSocketMode = 0o666
 )
 
 // ResolveBackendURLs builds the service URL map from config. It is the daemon's

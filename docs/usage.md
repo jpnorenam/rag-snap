@@ -1282,3 +1282,17 @@ answer_system_prompt updated and saved to ~/.config/rag-cli/prompts.json
 
 > **Note on defaults:** Deleting `~/.config/rag-cli/prompts.json` restores all built-in defaults.
 > You can also reset a single prompt by editing it back to the original text via `prompt init`.
+
+---
+
+## REST API (`ragd`)
+
+`rag-cli` ships an optional daemon, `ragd`, that exposes the knowledge, search, chat, and
+batch-answering capabilities over a versioned REST API on a local unix socket — so any local
+program (including the `rag` CLI itself) can drive the RAG stack without rebuilding clients
+or handling credentials.
+
+See **[REST API guide](rest-api.md)** for service management, socket configuration and the
+security model, the response envelope, async operations and events, and the full endpoint
+reference. The authoritative contract is the generated
+[`rest-api.yaml`](../rest-api.yaml) OpenAPI specification.

@@ -1,30 +1,36 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
-	"os/user"
 	"path/filepath"
-	"strconv"
 )
 
 // SocketConfig describes where to create the API unix socket and how to permission it.
 type SocketConfig struct {
 	// Path is the absolute socket path, e.g. $SNAP_COMMON/ragd/unix.socket.
 	Path string
-	// Group is the host group granted access (api.socket.group). Members of this
-	// group, plus root, may connect. Empty means leave the group owner as-is.
+	// Group is the host group whose members are granted access (api.socket.group).
+	// Membership is enforced by the SO_PEERCRED check in authenticate, NOT by the
+	// socket's file ownership: under strict confinement the daemon cannot chown the
+	// socket to an arbitrary group (snapd's seccomp profile denies it). The socket
+	// is therefore left root-owned and world-connectable at the DAC layer, with the
+	// peercred check as the sole access gate. See design Decision 1.
 	Group string
-	// Mode is the socket file permission bits (api.socket.mode), e.g. 0660.
+	// Mode is the socket file permission bits (api.socket.mode). Defaults to 0666
+	// so any local user can reach the socket; the peercred check then admits only
+	// root and members of Group.
 	Mode os.FileMode
 }
 
-// listenUnix creates the API unix socket per the resolved spike-0.1 approach:
-// the daemon creates the socket itself (snapd's `sockets:` stanza cannot set the
-// owning group), then chowns it to root:<group> and chmods it to the configured
-// mode. The group + file mode are the first access gate; the SO_PEERCRED check
-// (phase 2) is the second.
+// listenUnix creates the API unix socket. The daemon creates the socket itself
+// (snapd's `sockets:` activation stanza cannot set the owning group) and chmods
+// it to the configured mode. It does NOT chown the socket to api.socket.group:
+// the strict-confinement seccomp profile denies chowning to an arbitrary group,
+// so access is gated entirely by the SO_PEERCRED check in authenticate rather
+// than by file ownership. See design Decision 1.
 func listenUnix(cfg SocketConfig) (net.Listener, error) {
 	if err := os.MkdirAll(filepath.Dir(cfg.Path), 0o755); err != nil {
 		return nil, fmt.Errorf("creating socket directory: %w", err)
@@ -36,7 +42,8 @@ func listenUnix(cfg SocketConfig) (net.Listener, error) {
 		return nil, err
 	}
 
-	ln, err := net.Listen("unix", cfg.Path)
+	var lc net.ListenConfig
+	ln, err := lc.Listen(context.Background(), "unix", cfg.Path)
 	if err != nil {
 		return nil, fmt.Errorf("listening on %s: %w", cfg.Path, err)
 	}
@@ -69,35 +76,17 @@ func removeStaleSocket(path string) error {
 	return nil
 }
 
-// applySocketPermissions sets the group owner and mode on the socket file.
+// applySocketPermissions sets the mode on the socket file. It deliberately does
+// NOT chown the socket to api.socket.group: under strict confinement snapd's
+// seccomp profile denies chowning to an arbitrary group, which would crash the
+// daemon. Access is instead gated by the SO_PEERCRED check in authenticate, so
+// the socket is left root-owned and the mode (default 0666) only governs whether
+// a local process can reach it at the DAC layer.
 func applySocketPermissions(cfg SocketConfig) error {
-	if cfg.Group != "" {
-		gid, err := lookupGID(cfg.Group)
-		if err != nil {
-			return err
-		}
-		// chown to root:<group> (uid -1 leaves the user owner unchanged).
-		if err := os.Chown(cfg.Path, -1, gid); err != nil {
-			return fmt.Errorf("setting socket group to %q: %w", cfg.Group, err)
-		}
-	}
 	if cfg.Mode != 0 {
 		if err := os.Chmod(cfg.Path, cfg.Mode); err != nil {
 			return fmt.Errorf("setting socket mode to %o: %w", cfg.Mode, err)
 		}
 	}
 	return nil
-}
-
-// lookupGID resolves a group name to its numeric GID.
-func lookupGID(group string) (int, error) {
-	g, err := user.LookupGroup(group)
-	if err != nil {
-		return 0, fmt.Errorf("looking up group %q: %w", group, err)
-	}
-	gid, err := strconv.Atoi(g.Gid)
-	if err != nil {
-		return 0, fmt.Errorf("parsing gid %q for group %q: %w", g.Gid, group, err)
-	}
-	return gid, nil
 }

@@ -120,9 +120,12 @@ func TestChatSessionStreamsTurns(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	wsURL := "ws://unix" + meta.Websocket.URL + "?secret=" + meta.Websocket.Secret
-	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: wsDialer(sock)})
+	conn, dresp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: wsDialer(sock)})
 	if err != nil {
 		t.Fatalf("dial chat websocket: %v", err)
+	}
+	if dresp != nil && dresp.Body != nil {
+		_ = dresp.Body.Close()
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
@@ -193,7 +196,10 @@ func TestChatConnectRejectsBadSecret(t *testing.T) {
 	if err == nil {
 		t.Fatalf("dial with bad secret succeeded, want rejection")
 	}
-	if hresp != nil && hresp.StatusCode != http.StatusForbidden {
-		t.Errorf("status = %d, want 403", hresp.StatusCode)
+	if hresp != nil {
+		if hresp.StatusCode != http.StatusForbidden {
+			t.Errorf("status = %d, want 403", hresp.StatusCode)
+		}
+		_ = hresp.Body.Close()
 	}
 }

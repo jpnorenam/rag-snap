@@ -22,6 +22,16 @@ linters:
     - prealloc       # suggest slice pre-allocation
     - usetesting     # use t.Setenv/t.TempDir etc. instead of os equivalents in tests
 
+  exclusions:
+    rules:
+      # Relax errcheck for defer Close() – already idiomatic in this codebase
+      - linters: [errcheck]
+        text: "Error return value of `.*\\.Close\\b.*` is not checked"
+
+      # Don't enforce context-aware HTTP/net helpers in tests
+      - path: "_test\\.go"
+        linters: [noctx]
+
 linters-settings:
   govet:
     enable:
@@ -62,12 +72,3 @@ issues:
   # Show all issues, not just the first 3 per linter
   max-issues-per-linter: 0
   max-same-issues: 0
-
-  exclude-rules:
-    # Relax errcheck for defer Close() – already idiomatic in this codebase
-    - linters: [errcheck]
-      text: "Error return value of `.*\\.Close\\(\\)` is not checked"
-
-    # Don't enforce context on tests
-    - path: "_test\\.go"
-      linters: [noctx]

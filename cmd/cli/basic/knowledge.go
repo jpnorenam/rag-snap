@@ -1,10 +1,8 @@
 package basic
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -94,6 +92,24 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 				fmt.Printf("  Cross-encoder model: %s\n", crossEncoder)
 			}
 
+			if dc := daemonClient(cmd.Context); dc != nil {
+				opURL, err := dc.EngineInit(context.Background())
+				if err != nil {
+					return err
+				}
+				op, err := waitWithProgress(dc, opURL, "Initializing knowledge engine", "", "")
+				if err != nil {
+					return err
+				}
+				if embedding := op.MetadataString("embedding_model_id"); embedding != "" {
+					fmt.Printf("Embedding model ID: %s\n", embedding)
+				}
+				if rerank := op.MetadataString("rerank_model_id"); rerank != "" {
+					fmt.Printf("Rerank model ID: %s\n", rerank)
+				}
+				return nil
+			}
+
 			client, err := cmd.opensearchClient()
 			if err != nil {
 				return err
@@ -118,12 +134,19 @@ func (cmd *knowledgeCommand) listCommand() *cobra.Command {
 		Long:  "List all OpenSearch indexes matching the knowledge base pattern.\nUse --sources to list ingested source documents instead.",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
+			ctx := context.Background()
+
+			if dc := daemonClient(cmd.Context); dc != nil {
+				if showSources {
+					return cmd.listSourcesAPI(ctx, dc, args)
+				}
+				return cmd.listIndexesAPI(ctx, dc)
+			}
+
 			client, err := cmd.opensearchClient()
 			if err != nil {
 				return err
 			}
-
-			ctx := context.Background()
 
 			if showSources {
 				return cmd.listSources(ctx, client, args)
@@ -145,6 +168,14 @@ func (cmd *knowledgeCommand) createCommand() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			knowledgeBaseName := args[0]
+
+			if dc := daemonClient(cmd.Context); dc != nil {
+				if _, err := dc.CreateKnowledge(context.Background(), knowledgeBaseName); err != nil {
+					return err
+				}
+				fmt.Printf("Knowledge base '%s' created successfully.\n", knowledgeBaseName)
+				return nil
+			}
 
 			indexName := knowledge.FullIndexName(knowledgeBaseName)
 
@@ -206,6 +237,27 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 			}
 			if fileFlag != "" && urlFlag != "" {
 				return fmt.Errorf("--file and --url are mutually exclusive")
+			}
+
+			// Daemon mode: hand the source to ragd, which crawls/extracts and
+			// indexes server-side as an async operation. The file upload is
+			// streamed over the socket; URL crawling happens on the daemon.
+			if dc := daemonClient(cmd.Context); dc != nil {
+				var opURL string
+				var err error
+				if urlFlag != "" {
+					opURL, err = dc.IngestURL(context.Background(), knowledgeBaseName, sourceID, urlFlag)
+				} else {
+					opURL, err = dc.IngestFile(context.Background(), knowledgeBaseName, sourceID, fileFlag)
+				}
+				if err != nil {
+					return err
+				}
+				if _, err := waitWithProgress(dc, opURL, "Ingesting source", "sources_done", "sources_total"); err != nil {
+					return err
+				}
+				fmt.Printf("Ingested source '%s' into knowledge base '%s'\n", sourceID, knowledgeBaseName)
+				return nil
 			}
 
 			// Resolve the file path
@@ -334,6 +386,34 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			query := args[0]
 
+			if dc := daemonClient(cmd.Context); dc != nil {
+				searchBases := bases
+				if len(searchBases) == 0 {
+					defaultBase, _ := knowledge.KnowledgeBaseNameFromIndex(knowledge.DefaultIndexName())
+					searchBases = []string{defaultBase}
+				}
+				hits, err := dc.Search(context.Background(), query, searchBases, k)
+				if err != nil {
+					return err
+				}
+				if len(hits) == 0 {
+					fmt.Println("No results found.")
+					return nil
+				}
+				for i, hit := range hits {
+					fmt.Printf("\n--- Result %d (score: %.4f, base: %s) ---\n", i+1, hit.Score, hit.Base)
+					fmt.Printf("  Source: %s\n", hit.SourceID)
+					fmt.Printf("  Date:   %s\n", hit.CreatedAt)
+					content := hit.Content
+					if len(content) > 200 {
+						content = content[:200] + "..."
+					}
+					fmt.Printf("  %s\n", content)
+				}
+				fmt.Printf("\nTotal: %d results\n", len(hits))
+				return nil
+			}
+
 			client, err := cmd.opensearchClient()
 			if err != nil {
 				return err
@@ -397,6 +477,14 @@ func (cmd *knowledgeCommand) forgetCommand() *cobra.Command {
 			knowledgeBaseName := args[0]
 			sourceID := args[1]
 
+			if dc := daemonClient(cmd.Context); dc != nil {
+				if err := dc.DeleteSource(context.Background(), knowledgeBaseName, sourceID); err != nil {
+					return err
+				}
+				fmt.Printf("Forgot source '%s' from knowledge base '%s'\n", sourceID, knowledgeBaseName)
+				return nil
+			}
+
 			indexName := knowledge.FullIndexName(knowledgeBaseName)
 
 			client, err := cmd.opensearchClient()
@@ -437,7 +525,17 @@ func (cmd *knowledgeCommand) metadataCommand() *cobra.Command {
 		Long:  "Display the stored metadata for a source document ingested into the knowledge base.",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
+			knowledgeBaseName := args[0]
 			sourceID := args[1]
+
+			if dc := daemonClient(cmd.Context); dc != nil {
+				src, err := dc.GetSource(context.Background(), knowledgeBaseName, sourceID)
+				if err != nil {
+					return err
+				}
+				printSourceMetadata(knowledgeBaseName, src)
+				return nil
+			}
 
 			client, err := cmd.opensearchClient()
 			if err != nil {
@@ -449,7 +547,7 @@ func (cmd *knowledgeCommand) metadataCommand() *cobra.Command {
 				return fmt.Errorf("source not found: %w", err)
 			}
 
-			knowledgeBaseName, _ := knowledge.KnowledgeBaseNameFromIndex(meta.IndexName)
+			knowledgeBaseName, _ = knowledge.KnowledgeBaseNameFromIndex(meta.IndexName)
 
 			fmt.Printf("Source ID:      %s\n", meta.SourceID)
 			fmt.Printf("Knowledge base: %s\n", knowledgeBaseName)
@@ -487,6 +585,28 @@ func (cmd *knowledgeCommand) deleteCommand() *cobra.Command {
 			knowledgeBaseName := args[0]
 			indexName := knowledge.FullIndexName(knowledgeBaseName)
 
+			// Daemon mode: list sources and delete server-side. The confirmation
+			// prompt stays client-side (the API has no interactive confirm).
+			if dc := daemonClient(cmd.Context); dc != nil {
+				ctx := context.Background()
+				sources, err := dc.ListSources(ctx, knowledgeBaseName)
+				if err != nil {
+					return err
+				}
+				printDeletePreview(knowledgeBaseName, indexName, len(sources))
+				for _, s := range sources {
+					fmt.Printf("  %-50s %-12s %-8d %-20s\n", s.SourceID, s.Status, s.ChunkCount, s.IngestedAt)
+				}
+				if err := confirmDeletion(knowledgeBaseName, indexName); err != nil {
+					return err
+				}
+				if err := dc.DeleteKnowledge(ctx, knowledgeBaseName); err != nil {
+					return err
+				}
+				fmt.Printf("Deleted knowledge base '%s'.\n", knowledgeBaseName)
+				return nil
+			}
+
 			client, err := cmd.opensearchClient()
 			if err != nil {
 				return err
@@ -512,18 +632,8 @@ func (cmd *knowledgeCommand) deleteCommand() *cobra.Command {
 			}
 
 			// Confirmation prompt.
-			fmt.Printf("This will permanently delete the index '%s' and all its data.\n", indexName)
-			fmt.Printf("Type the knowledge base name to confirm: ")
-
-			reader := bufio.NewReader(os.Stdin)
-			input, err := reader.ReadString('\n')
-			if err != nil {
-				return fmt.Errorf("reading confirmation: %w", err)
-			}
-			input = strings.TrimSpace(input)
-
-			if input != knowledgeBaseName {
-				return fmt.Errorf("confirmation does not match — deletion aborted")
+			if err := confirmDeletion(knowledgeBaseName, indexName); err != nil {
+				return err
 			}
 
 			// Delete all source metadata records for this index.
@@ -609,6 +719,18 @@ func (cmd *knowledgeCommand) exportCommand() *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			kbName := args[0]
 
+			if dc := daemonClient(cmd.Context); dc != nil {
+				opURL, err := dc.Export(context.Background(), kbName, outputDir, compress)
+				if err != nil {
+					return err
+				}
+				if _, err := waitWithProgress(dc, opURL, "Exporting knowledge base "+kbName, "", ""); err != nil {
+					return err
+				}
+				fmt.Printf("Exported knowledge base '%s'.\n", kbName)
+				return nil
+			}
+
 			client, err := cmd.opensearchClient()
 			if err != nil {
 				return err
@@ -664,14 +786,30 @@ func (cmd *knowledgeCommand) importCommand() *cobra.Command {
 				kbName = args[0]
 			}
 
+			ctx := context.Background()
+
+			// ── Local import ────────────────────────────────────────────────
+			// Route local imports through the daemon when present; the Google
+			// Drive flow below stays CLI-only (interactive auth, per design).
+			if inputDir != "" {
+				if dc := daemonClient(cmd.Context); dc != nil {
+					opURL, err := dc.Import(ctx, kbName, inputDir, force)
+					if err != nil {
+						return err
+					}
+					if _, err := waitWithProgress(dc, opURL, "Importing knowledge base", "", ""); err != nil {
+						return err
+					}
+					fmt.Println("Import complete.")
+					return nil
+				}
+			}
+
 			client, err := cmd.opensearchClient()
 			if err != nil {
 				return err
 			}
 
-			ctx := context.Background()
-
-			// ── Local import ────────────────────────────────────────────────
 			if inputDir != "" {
 				return knowledge.ImportKnowledgeBase(ctx, client, kbName, knowledge.ImportOptions{
 					InputDir: inputDir,

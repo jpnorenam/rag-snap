@@ -18,7 +18,7 @@ func TestOperationTaskLifecycle(t *testing.T) {
 	reg := newOperations(context.Background(), newEventsHub())
 
 	release := make(chan struct{})
-	op, err := reg.runTask("test op", nil, true, func(ctx context.Context, op *Operation) error {
+	op, err := reg.runTask("test op", nil, true, func(_ context.Context, op *Operation) error {
 		op.UpdateMetadata(map[string]any{"step": 1})
 		<-release
 		return nil
@@ -47,7 +47,7 @@ func TestOperationCancel(t *testing.T) {
 	reg := newOperations(context.Background(), newEventsHub())
 
 	started := make(chan struct{})
-	op, err := reg.runTask("cancellable", nil, true, func(ctx context.Context, op *Operation) error {
+	op, err := reg.runTask("cancellable", nil, true, func(ctx context.Context, _ *Operation) error {
 		close(started)
 		<-ctx.Done()
 		return ctx.Err()
@@ -71,7 +71,7 @@ func TestOperationCancel(t *testing.T) {
 func TestOperationCancelNonCancellable(t *testing.T) {
 	reg := newOperations(context.Background(), newEventsHub())
 	release := make(chan struct{})
-	op, _ := reg.runTask("uncancellable", nil, false, func(ctx context.Context, op *Operation) error {
+	op, _ := reg.runTask("uncancellable", nil, false, func(_ context.Context, _ *Operation) error {
 		<-release
 		return nil
 	})
@@ -91,18 +91,21 @@ func TestEventsWebsocketStreamsOperations(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	conn, _, err := websocket.Dial(ctx, "http://unix/1.0/events?type=operation", &websocket.DialOptions{HTTPClient: client})
+	conn, dresp, err := websocket.Dial(ctx, "http://unix/1.0/events?type=operation", &websocket.DialOptions{HTTPClient: client})
 	if err != nil {
 		t.Fatalf("dial events: %v", err)
 	}
-	defer conn.CloseNow()
+	if dresp != nil && dresp.Body != nil {
+		_ = dresp.Body.Close()
+	}
+	defer func() { _ = conn.CloseNow() }()
 
 	// Launch an operation directly on the server's registry (a feature endpoint
 	// would do this in a later phase) and assert the event arrives over the
 	// subscribed websocket.
 	release := make(chan struct{})
 	defer close(release)
-	if _, err := srv.ops.runTask("evt", nil, false, func(ctx context.Context, op *Operation) error {
+	if _, err := srv.ops.runTask("evt", nil, false, func(_ context.Context, _ *Operation) error {
 		<-release
 		return nil
 	}); err != nil {
