@@ -33,51 +33,51 @@
 
 ## 2. Auth, envelope, versioning (rest-api-server)
 
-- [ ] 2.1 Implement `SO_PEERCRED`-based authentication: grant access iff peer is `root` or a member
+- [x] 2.1 Implement `SO_PEERCRED`-based authentication: grant access iff peer is `root` or a member
   of `api.socket.group`; otherwise `403` with a "join the <group> group" message.
-- [ ] 2.2 Implement response-envelope helpers `respondSync`/`respondAsync`/`respondError` with the
+- [x] 2.2 Implement response-envelope helpers `respondSync`/`respondAsync`/`respondError` with the
   doubled numeric+text status codes and the `Location` header on async.
-- [ ] 2.3 Implement `GET /` (versions, `auth` trusted/untrusted, `api_extensions`) and the `/1.0`
+- [x] 2.3 Implement `GET /` (versions, `auth` trusted/untrusted, `api_extensions`) and the `/1.0`
   root (server info + read-only redacted config summary). Establish the `api_extensions` list.
-- [ ] 2.4 Add ETag support (`If-Match` → `412`) for any replaceable resource exposed later.
+- [x] 2.4 Add ETag support (`If-Match` → `412`) for any replaceable resource exposed later.
 
 ## 3. Operations & events (rest-api-operations)
 
-- [ ] 3.1 Implement the in-memory operations registry and the operation object (id, class,
+- [x] 3.1 Implement the in-memory operations registry and the operation object (id, class,
   description, timestamps, status/status_code, resources, metadata, may_cancel, err).
-- [ ] 3.2 Implement `GET /1.0/operations`, `GET /1.0/operations/<uuid>`,
+- [x] 3.2 Implement `GET /1.0/operations`, `GET /1.0/operations/<uuid>`,
   `GET /1.0/operations/<uuid>/wait?timeout=N`, and `DELETE /1.0/operations/<uuid>` (cooperative
   cancel via `context.Context`).
-- [ ] 3.3 Implement the events hub and `GET /1.0/events` websocket with type filtering; publish
+- [x] 3.3 Implement the events hub and `GET /1.0/events` websocket with type filtering; publish
   operation lifecycle/progress and logging events.
 
 ## 4. Knowledge endpoints (rest-api-knowledge)
 
-- [ ] 4.1 Sync: `GET/POST /1.0/knowledge`, `GET/DELETE /1.0/knowledge/<name>` (no interactive
+- [x] 4.1 Sync: `GET/POST /1.0/knowledge`, `GET/DELETE /1.0/knowledge/<name>` (no interactive
   confirm at API layer). Reuse `OpenSearchClient` create/list/delete.
-- [ ] 4.2 Sync: `GET /1.0/knowledge/<name>/sources`, `GET .../sources/<id>`, `DELETE .../sources/<id>`.
-- [ ] 4.3 Async: `POST /1.0/knowledge/<name>/sources` ingest (file upload, URL crawl, batch) as an
+- [x] 4.2 Sync: `GET /1.0/knowledge/<name>/sources`, `GET .../sources/<id>`, `DELETE .../sources/<id>`.
+- [x] 4.3 Async: `POST /1.0/knowledge/<name>/sources` ingest (file upload, URL crawl, batch) as an
   operation with progress + cancel; reuse `processing.*` and `BulkIndex`/status updates.
-- [ ] 4.4 Sync: `POST /1.0/search` hybrid search; reuse `OpenSearchClient.Search`; embedding-model-
+- [x] 4.4 Sync: `POST /1.0/search` hybrid search; reuse `OpenSearchClient.Search`; embedding-model-
   unavailable → error.
-- [ ] 4.5 Async: knowledge-engine init operation (model deploy/pipelines/indexes); report model IDs.
-- [ ] 4.6 Async: export and import operations; reuse the existing elasticdump-based export/import.
+- [x] 4.5 Async: knowledge-engine init operation (model deploy/pipelines/indexes); report model IDs.
+- [x] 4.6 Async: export and import operations; reuse the existing elasticdump-based export/import.
   Google Drive auth stays CLI-only.
 
 ## 5. Chat over websocket (rest-api-chat)
 
-- [ ] 5.1 Implement `POST /1.0/chat` returning a websocket-class operation; implement the chat
+- [x] 5.1 Implement `POST /1.0/chat` returning a websocket-class operation; implement the chat
   websocket endpoint and control protocol (prompt, set-active-kbs, token/think/done frames).
-- [ ] 5.2 Move the `Session` state server-side (active indexes, history, resolved model); reuse the
+- [x] 5.2 Move the `Session` state server-side (active indexes, history, resolved model); reuse the
   existing RAG turn logic (`rewriteSearchQuery` → `retrieveContext` → `buildRAGPrompt` → stream).
-- [ ] 5.3 Stream tokens and `<think>` blocks as frames; enforce idle timeout and clean teardown on
+- [x] 5.3 Stream tokens and `<think>` blocks as frames; enforce idle timeout and clean teardown on
   disconnect.
 
 ## 6. Batch answering (rest-api-answer)
 
-- [ ] 6.1 Async: `POST /1.0/answer/batch` accepting a prepared manifest; run via
+- [x] 6.1 Async: `POST /1.0/answer/batch` accepting a prepared manifest; run via
   `chat.ProcessBatchChat` as an operation with progress + cancel.
-- [ ] 6.2 Make the structured results retrievable on completion (per-question answer, model,
+- [x] 6.2 Make the structured results retrievable on completion (per-question answer, model,
   timestamp); confirm the interactive `--build` flow is intentionally not exposed.
 
 ## 7. OpenAPI spec generation (rest-api-server)

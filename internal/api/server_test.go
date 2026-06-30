@@ -7,9 +7,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/user"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/jpnorenam/rag-snap/cmd/cli/common"
+	"github.com/jpnorenam/rag-snap/pkg/storage"
 )
 
 // dialSocket returns an HTTP client that dials the given unix socket path.
@@ -21,15 +26,47 @@ func dialSocket(sock string) *http.Client {
 	}}
 }
 
-// startTestServer binds a Server on a temp-dir socket and returns the socket
-// path. It leaves the group owner as-is (Group: "") so the test does not need a
-// real host group, and tears the server down via t.Cleanup.
-func startTestServer(t *testing.T, urls map[string]string) string {
+// currentUserGroup returns the name of the test runner's primary group, so the
+// peercred auth check grants the test connection access (the runner is a member
+// of its own primary group). Skips the test if it cannot be resolved.
+func currentUserGroup(t *testing.T) string {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "ragd", "unix.socket")
+	u, err := user.Current()
+	if err != nil {
+		t.Skipf("cannot resolve current user: %v", err)
+	}
+	g, err := user.LookupGroupId(u.Gid)
+	if err != nil {
+		t.Skipf("cannot resolve primary group %s: %v", u.Gid, err)
+	}
+	return g.Name
+}
+
+// startTestServer binds a Server on a temp-dir socket whose access group is the
+// test runner's own primary group, so the runner authenticates as trusted. It
+// leaves the socket file's group owner as-is (handled by Mode only) and tears
+// the server down via t.Cleanup. It returns both the socket path and the live
+// Server so tests can reach its operations registry.
+func startTestServer(t *testing.T, urls map[string]string) (string, *Server) {
+	t.Helper()
+	dir := t.TempDir()
+	sock := filepath.Join(dir, "ragd", "unix.socket")
+
+	// Back the server with an empty, read-only file config so handlers that read
+	// config keys (e.g. the chat model) operate without panicking on a nil
+	// Context. Production always supplies a snapctl-backed Context.
+	cfgPath := filepath.Join(dir, "config")
+	if err := os.WriteFile(cfgPath, nil, 0o600); err != nil {
+		t.Fatalf("writing test config: %v", err)
+	}
+	cfg, err := storage.NewFileConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("loading test config: %v", err)
+	}
 
 	srv := New(Options{
-		Socket:      SocketConfig{Path: sock, Mode: 0o660},
+		Context:     &common.Context{Config: cfg},
+		Socket:      SocketConfig{Path: sock, Group: currentUserGroup(t), Mode: 0o660},
 		BackendURLs: urls,
 	})
 
@@ -40,18 +77,18 @@ func startTestServer(t *testing.T, urls map[string]string) string {
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if _, err := os.Stat(sock); err == nil {
-			return sock
+			return sock, srv
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("socket %s was not created within the timeout", sock)
-	return ""
+	return "", nil
 }
 
 // TestServeRoot verifies the daemon binds its unix socket and that GET / returns
 // the sync envelope advertising the API version and auth state.
 func TestServeRoot(t *testing.T) {
-	sock := startTestServer(t, map[string]string{
+	sock, _ := startTestServer(t, map[string]string{
 		backendOpenSearch: "http://127.0.0.1:1",
 		backendOpenAI:     "http://127.0.0.1:1",
 		backendTika:       "http://127.0.0.1:1",
@@ -91,7 +128,7 @@ func TestServeRoot(t *testing.T) {
 // Backends pointed at a dead port must report false, proving the listener serves
 // before (and regardless of whether) backends are reachable.
 func TestServerInfoReportsBackends(t *testing.T) {
-	sock := startTestServer(t, map[string]string{
+	sock, _ := startTestServer(t, map[string]string{
 		backendOpenSearch: "http://127.0.0.1:1",
 		backendOpenAI:     "http://127.0.0.1:1",
 		backendTika:       "http://127.0.0.1:1",
@@ -120,6 +157,33 @@ func TestServerInfoReportsBackends(t *testing.T) {
 		if _, present := env.Metadata.Backends[name]; !present {
 			t.Errorf("backend %q missing from readiness map: %v", name, env.Metadata.Backends)
 		}
+	}
+}
+
+// TestUserInGroup verifies the group-membership resolution used by the
+// SO_PEERCRED auth check: the current user is a member of its own primary
+// group, and is not a member of a group it does not belong to.
+func TestUserInGroup(t *testing.T) {
+	u, err := user.Current()
+	if err != nil {
+		t.Skipf("cannot resolve current user: %v", err)
+	}
+	uid, err := strconv.ParseUint(u.Uid, 10, 32)
+	if err != nil {
+		t.Skipf("non-numeric uid %q: %v", u.Uid, err)
+	}
+
+	primary := currentUserGroup(t)
+	member, err := userInGroup(uint32(uid), primary)
+	if err != nil {
+		t.Fatalf("userInGroup(primary): %v", err)
+	}
+	if !member {
+		t.Errorf("user not reported in its own primary group %q", primary)
+	}
+
+	if _, err := userInGroup(uint32(uid), ""); err == nil {
+		t.Errorf("empty group should error")
 	}
 }
 

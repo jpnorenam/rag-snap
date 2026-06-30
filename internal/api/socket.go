@@ -46,7 +46,9 @@ func listenUnix(cfg SocketConfig) (net.Listener, error) {
 		return nil, err
 	}
 
-	return ln, nil
+	// Wrap so each accepted connection carries its peer's SO_PEERCRED creds,
+	// which the auth middleware reads to authorize the request.
+	return peerCredListener{Listener: ln}, nil
 }
 
 // removeStaleSocket unlinks an existing socket file at path, if present.

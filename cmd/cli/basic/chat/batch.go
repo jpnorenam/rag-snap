@@ -110,10 +110,46 @@ type BatchResult struct {
 	Answer   string `json:"answer"`
 }
 
-type batchOutput struct {
+// BatchOutput is the structured result of a batch run: the resolved model, a
+// generation timestamp, and the per-question answers. It is the same shape the
+// CLI writes to its JSON results file and the daemon exposes over the API.
+type BatchOutput struct {
 	GeneratedAt string        `json:"generated_at"`
 	Model       string        `json:"model"`
 	Results     []BatchResult `json:"results"`
+}
+
+// noContextAnswer is the fixed response emitted when retrieval returns nothing,
+// so the model never answers an ungrounded question from parametric knowledge.
+const noContextAnswer = "The provided context does not contain enough information to answer this question."
+
+// BatchHooks observe a batch run for presentation/progress without coupling the
+// core to a transport. Each hook is optional; nil hooks are skipped. OnStart
+// fires before a question is answered, OnResult after it is answered, and
+// OnError when a question fails and is skipped (i is 0-based; total is the
+// question count).
+type BatchHooks struct {
+	OnStart  func(i, total int, q BatchQuestion)
+	OnResult func(i, total int, result BatchResult)
+	OnError  func(i, total int, q BatchQuestion, err error)
+}
+
+func (h BatchHooks) start(i, total int, q BatchQuestion) {
+	if h.OnStart != nil {
+		h.OnStart(i, total, q)
+	}
+}
+
+func (h BatchHooks) result(i, total int, r BatchResult) {
+	if h.OnResult != nil {
+		h.OnResult(i, total, r)
+	}
+}
+
+func (h BatchHooks) failure(i, total int, q BatchQuestion, err error) {
+	if h.OnError != nil {
+		h.OnError(i, total, q, err)
+	}
 }
 
 // LoadBatchManifest reads and parses a batch chat YAML manifest file.
@@ -137,17 +173,23 @@ func LoadBatchManifest(path string) (*BatchManifest, error) {
 	return &manifest, nil
 }
 
-// ProcessBatchChat runs each question in the manifest through the RAG+LLM pipeline,
-// prints Q&A pairs to the terminal, and writes all results to a timestamped JSON file.
-func ProcessBatchChat(
+// RunBatch runs each question in the manifest through the RAG+LLM pipeline and
+// returns the structured results. It is presentation-free: progress is reported
+// through hooks rather than printed, and nothing is written to disk, so both the
+// CLI and the daemon can drive it. The run honours ctx cancellation between
+// questions. When a question retrieves no grounding context, its answer is the
+// fixed no-context response rather than an ungrounded generation.
+func RunBatch(
+	ctx context.Context,
 	baseURL string,
 	knowledgeClient *knowledge.OpenSearchClient,
 	embeddingModelID string,
 	manifest *BatchManifest,
 	prompts PromptConfig,
 	temperature float64,
+	hooks BatchHooks,
 	verbose bool,
-) error {
+) (*BatchOutput, error) {
 	client := openai.NewClient(clientOptions(baseURL)...)
 
 	modelName := manifest.Model
@@ -155,7 +197,7 @@ func ProcessBatchChat(
 		var err error
 		modelName, err = findModelName(baseURL, verbose)
 		if err != nil {
-			return fmt.Errorf("resolving model name: %w", err)
+			return nil, fmt.Errorf("resolving model name: %w", err)
 		}
 	}
 
@@ -173,8 +215,6 @@ func ProcessBatchChat(
 		ActiveIndexes:    activeIndexes,
 	}
 
-	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)
-
 	defaultSystemPrompt := prompts.AnswerSystemPrompt
 	if manifest.Prompt != "" {
 		// Append the non-negotiable source rules so custom prompts cannot
@@ -182,11 +222,14 @@ func ProcessBatchChat(
 		defaultSystemPrompt = manifest.Prompt + "\n\n" + prompts.SourceRules
 	}
 
-	ctx := context.Background()
-	results := make([]BatchResult, 0, len(manifest.Questions))
+	total := len(manifest.Questions)
+	results := make([]BatchResult, 0, total)
 
 	for i, q := range manifest.Questions {
-		fmt.Printf("[%d/%d] Question: %s\n", i+1, len(manifest.Questions), q.Question)
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		hooks.start(i, total, q)
 
 		// nil history: each question is extracted in isolation, with no prior conversation context.
 		lexicalQuery := rewriteSearchQuery(client, modelName, nil, q.Question, verbose)
@@ -206,13 +249,9 @@ func ProcessBatchChat(
 		// Skip the LLM call entirely and emit the fixed no-answer string to avoid
 		// the model hallucinating from parametric knowledge.
 		if ragContext == "" {
-			const noContext = "The provided context does not contain enough information to answer this question."
-			fmt.Printf("Answer: %s\n---\n", noContext)
-			results = append(results, BatchResult{
-				ID:       q.ID,
-				Question: q.Question,
-				Answer:   noContext,
-			})
+			result := BatchResult{ID: q.ID, Question: q.Question, Answer: noContextAnswer}
+			results = append(results, result)
+			hooks.result(i, total, result)
 			continue
 		}
 
@@ -225,7 +264,15 @@ func ProcessBatchChat(
 			Temperature: openai.Float(temperature),
 		})
 		if err != nil {
-			fmt.Printf("error on question %d: %v\n", i+1, err)
+			// A cancelled context surfaces as a request error; propagate it so
+			// the operation is recorded as cancelled rather than silently
+			// dropping the remaining questions.
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+			// A single question failing is non-fatal: report it and skip,
+			// matching the CLI's original resilience.
+			hooks.failure(i, total, q, err)
 			continue
 		}
 
@@ -234,27 +281,52 @@ func ProcessBatchChat(
 			answer = StripThinkTags(resp.Choices[0].Message.Content)
 		}
 
-		fmt.Printf("Answer: %s\n---\n", answer)
-
-		results = append(results, BatchResult{
-			ID:       q.ID,
-			Question: q.Question,
-			Answer:   answer,
-		})
+		result := BatchResult{ID: q.ID, Question: q.Question, Answer: answer}
+		results = append(results, result)
+		hooks.result(i, total, result)
 	}
 
-	if len(results) == 0 {
+	return &BatchOutput{
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		Model:       modelName,
+		Results:     results,
+	}, nil
+}
+
+// ProcessBatchChat runs each question in the manifest through the RAG+LLM pipeline,
+// prints Q&A pairs to the terminal, and writes all results to a timestamped JSON file.
+func ProcessBatchChat(
+	baseURL string,
+	knowledgeClient *knowledge.OpenSearchClient,
+	embeddingModelID string,
+	manifest *BatchManifest,
+	prompts PromptConfig,
+	temperature float64,
+	verbose bool,
+) error {
+	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)
+
+	hooks := BatchHooks{
+		OnStart: func(i, total int, q BatchQuestion) {
+			fmt.Printf("[%d/%d] Question: %s\n", i+1, total, q.Question)
+		},
+		OnResult: func(_, _ int, r BatchResult) {
+			fmt.Printf("Answer: %s\n---\n", r.Answer)
+		},
+		OnError: func(i, _ int, _ BatchQuestion, err error) {
+			fmt.Printf("error on question %d: %v\n", i+1, err)
+		},
+	}
+
+	out, err := RunBatch(context.Background(), baseURL, knowledgeClient, embeddingModelID, manifest, prompts, temperature, hooks, verbose)
+	if err != nil {
+		return err
+	}
+	if len(out.Results) == 0 {
 		return fmt.Errorf("all questions failed; no results to write")
 	}
 
-	now := time.Now()
-	filename := fmt.Sprintf("batch-results-%s.json", now.Format("20060102-150405"))
-	out := batchOutput{
-		GeneratedAt: now.UTC().Format(time.RFC3339),
-		Model:       modelName,
-		Results:     results,
-	}
-
+	filename := fmt.Sprintf("batch-results-%s.json", time.Now().Format("20060102-150405"))
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling results: %w", err)
