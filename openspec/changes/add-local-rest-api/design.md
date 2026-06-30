@@ -66,14 +66,33 @@ rag-cli.ragd`. On start it:
    `snapctl` does **not** auto-notify the daemon; a `snap restart` or explicit reload applies
    changes. (A future `POST /1.0/config` could push reloads, but config-over-API is out of scope.)
 
-**Socket path & host visibility (key confinement risk).** Under strict confinement,
-`$SNAP_COMMON` lives under `/var/snap/rag-cli/common/`, which is **not** readable by arbitrary
-host users by default. LXD (also strictly confined) solves this by placing its socket under a
-host-visible path and relying on the `lxd` group. We need to validate the equivalent for this
-snap: either (a) a snapd-managed `sockets:` activation stanza that binds a host-visible socket,
-or (b) documenting the socket path and required group, or (c) a content interface. This is
-called out as a spike in `tasks.md` — the API design does not depend on which we pick, but
-shipping does.
+**Socket path & host visibility (key confinement risk) — RESOLVED by spike 0.1.**
+Under strict confinement `$SNAP_COMMON` is `/var/snap/rag-cli/common/`, which is itself
+root-owned but world-traversable, so a socket *file* placed there can be reached by host users
+provided its own ownership/mode permit it. Findings:
+
+- snapd's `sockets:` activation stanza supports only `listen-stream` and `socket-mode` —
+  **`socket-group` was proposed but never implemented in snapd**
+  ([PR #3916](https://github.com/snapcore/snapd/pull/3916),
+  [forum](https://forum.snapcraft.io/t/socket-activation-support/2050)). So socket activation
+  alone cannot give us `root:<group>` ownership; it can only set the mode (default `0666`).
+- A world-writable `0666` socket (the "just make `$SNAP_COMMON` world-accessible" route,
+  [forum](https://forum.snapcraft.io/t/sharing-a-unix-domain-socket-between-a-daemon-and-an-app/12332))
+  removes the DAC group gate our design depends on. **Rejected** — it would force *all*
+  access control into the peercred layer with no file-permission backstop.
+- `listen-stream` paths are restricted to `$SNAP_DATA/...`, `$SNAP_COMMON/...`, or abstract
+  `@snap.<snap>.<name>` names; `/run/...` is rejected at install time.
+
+**Decision:** the daemon **creates the socket itself** (does not use the `sockets:` activation
+stanza for ownership) at `$SNAP_COMMON/ragd/unix.socket`, then `chown`s it to
+`root:<api.socket.group>` and `chmod`s it to `api.socket.mode` (default `0660`). Group
+ownership is set by the daemon at runtime because snapd cannot set it declaratively. This keeps
+the DAC group gate (file mode + group) as the first line of defence, with peercred as the
+second. The `<group>` must exist on the host; the snap declares it via `system-usernames`
+(`snap_daemon`/`_daemon_`) only if we later choose to drop privileges — for now the daemon runs
+as root (like LXD and `tika-server`) and just sets group ownership on the socket. Whether the
+chosen group is a pre-existing host group the admin populates, or one the snap must create, is a
+packaging detail for task 8.x; the API and auth design do not depend on it.
 
 ### 2. Local authentication — `SO_PEERCRED` + group membership, nothing else
 
@@ -84,6 +103,18 @@ yielding the client's uid/gid/pid. Access is granted iff the peer's effective us
 passwd/group databases (`os/user.LookupId` + group membership), not just the socket's gid, so
 the check is explicit and auditable. A granted connection has **full access** to every
 endpoint — there is no per-route authorization.
+
+**Spike 0.2 — RESOLVED.** Verified `golang.org/x/sys/unix` (already an indirect module dep —
+**no new dependency**) exposes everything needed: `type Ucred {Pid int32; Uid, Gid uint32}`,
+`GetsockoptUcred(fd, level, opt) (*Ucred, error)`, and the `SO_PEERCRED`/`SOL_SOCKET` constants.
+The concrete pattern: from the accepted `*net.UnixConn`, call `SyscallConn()` then `Control(fn)`,
+and inside `fn(fd)` call `unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)`.
+Resolve membership with `os/user.LookupId(strconv.Itoa(int(ucred.Uid)))` →
+`u.GroupIds()` and compare against the gid of `api.socket.group` (`user.LookupGroup`). Because
+the HTTP server abstracts away the raw conn, the auth seam captures the `Ucred` at accept time:
+wrap the `net.Listener` so `Accept()` stamps each `net.Conn` with its peer creds, then a base
+HTTP middleware reads them via the connection (e.g. a `ConnContext`-populated value) — this is
+the same approach LXD uses to thread peer identity from the listener into the handler.
 
 Rationale: this is precisely LXD's model ("local access through the unix socket always grants
 full access"). The socket file mode (`0660`, `root:<group>`) is the first gate; the peercred

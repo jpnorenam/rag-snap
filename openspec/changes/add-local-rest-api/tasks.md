@@ -1,24 +1,35 @@
 ## 0. Spikes / de-risking (do first)
 
-- [ ] 0.1 Spike strict-confinement unix-socket visibility: confirm how a `ragd` socket under
-  `$SNAP_COMMON` (or a snapd `sockets:` activation path) can be reached by non-snap host users in
-  the configured group. Reference LXD's socket path + `lxd` group approach. Record the chosen
-  approach in `design.md` Decision 1 before building handlers.
-- [ ] 0.2 Spike `SO_PEERCRED` retrieval from a Go `net.Listener` on a unix socket (uid/gid/pid),
-  and host group-membership resolution, under strict confinement (`os/user`, nsswitch availability).
-- [ ] 0.3 Choose the websocket library (e.g. `gorilla/websocket` vs `nhooyr.io/websocket`) and the
-  OpenAPI generator (e.g. go-swagger as LXD uses); add to `go.mod` and `make`.
+- [x] 0.1 Spike strict-confinement unix-socket visibility: confirmed snapd's `sockets:` stanza
+  supports only `listen-stream`/`socket-mode` (no `socket-group`), and world-writable `0666`
+  defeats the group gate. Decision: daemon creates the socket at `$SNAP_COMMON/ragd/unix.socket`
+  and `chown`/`chmod`s it to `root:<api.socket.group>` `0660` itself. Recorded in `design.md`
+  Decision 1.
+- [x] 0.2 Spike `SO_PEERCRED`: confirmed `golang.org/x/sys/unix` (already an indirect dep) exposes
+  `Ucred`, `GetsockoptUcred`, `SO_PEERCRED`/`SOL_SOCKET`; concrete listener-wrap + `os/user`
+  membership pattern recorded in `design.md` Decision 2. No new dependency.
+- [x] 0.3 Library choices made: **`github.com/coder/websocket`** for the chat/events websockets
+  (minimal, context-native successor to nhooyr.io/websocket) and **go-swagger** (`swagger:route`
+  annotations → `rest-api.yaml`) for the OpenAPI spec, matching LXD. Added to `go.mod`/`make` when
+  first used (websocket in phase 5, swagger in phase 7).
 
 ## 1. Daemon skeleton & unix socket (rest-api-server)
 
-- [ ] 1.1 Add `cmd/ragd/main.go`: load snapctl config, build OpenSearch/inference/Tika clients,
-  start the listener, handle `SIGHUP` (reload/rebuild) and `SIGTERM` (graceful shutdown).
-- [ ] 1.2 Add `internal/api/` router and the unix-socket listener; create the socket at the
-  decided path; set ownership `root:<api.socket.group>` and mode `api.socket.mode`.
-- [ ] 1.3 Begin backend readiness polling without blocking the listener; endpoints needing an
-  unready backend return a backend-unavailable error.
-- [ ] 1.4 Add `api.socket.group` and `api.socket.mode` config keys; seed them as package keys in
-  the snap `install` hook with sensible defaults (group e.g. `rag`, mode `0660`).
+- [x] 1.1 `cmd/ragd/main.go`: reads snapctl config via `common.Context`, resolves backend URLs +
+  socket config, serves; `SIGTERM`/`SIGINT` → graceful shutdown, `SIGHUP` → reload (re-resolve +
+  re-serve). Backend *clients* are built lazily by feature handlers (later phases); phase 1 only
+  tracks reachability.
+- [x] 1.2 `internal/api/` (`server.go` router + `GET /` and `GET /1.0`; `socket.go` listener).
+  Socket created at `$SNAP_COMMON/ragd/unix.socket`, `chown`ed `root:<api.socket.group>` and
+  `chmod`ed to `api.socket.mode` by the daemon itself (per spike 0.1; snapd can't set the group).
+  Verified end-to-end over the socket with a throwaway test (sync envelope, version, backends map).
+- [x] 1.3 `internal/api/backend.go`: background TCP-reachability poll, non-blocking; `GET /1.0`
+  reports per-backend readiness. (Per-endpoint "backend unavailable" errors wire in with the
+  feature handlers in phases 4–6, when those endpoints exist.)
+- [x] 1.4 `api.socket.group`/`api.socket.mode` seeded as package keys in `snap/hooks/install`
+  (defaults `rag` / `0660`); daemon reads them via `ResolveSocketConfig` with the same defaults.
+  NOTE: the `ragd` snap *app/build* stanza in `snapcraft.yaml` is intentionally deferred to
+  task 8.1 (phase 8) — phase 1 is the Go daemon + config only.
 
 ## 2. Auth, envelope, versioning (rest-api-server)
 
