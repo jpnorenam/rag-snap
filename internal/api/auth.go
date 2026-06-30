@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"net"
 	"net/http"
 	"os/user"
 	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
@@ -74,14 +76,40 @@ func readPeerCred(conn net.Conn) peerCred {
 	return cred
 }
 
-// connContext stamps each connection's captured peer credentials onto the
-// per-connection base context, so handlers can read them via the request
-// context. Wired into http.Server.ConnContext.
+// transportContextKey marks a connection's transport (unix vs loopback) so the
+// auth middleware can pick the right authentication path.
+type transportContextKey struct{}
+
+// transportKind names the connection transport.
+type transportKind int
+
+const (
+	transportUnix transportKind = iota
+	transportLoopback
+)
+
+// connContext stamps each connection's transport and (for unix peers) captured
+// peer credentials onto the per-connection base context, so handlers can read
+// them via the request context. Wired into http.Server.ConnContext for both the
+// unix-socket and loopback listeners.
 func connContext(ctx context.Context, c net.Conn) context.Context {
-	if cc, ok := c.(*credConn); ok {
+	switch cc := c.(type) {
+	case *credConn:
+		ctx = context.WithValue(ctx, transportContextKey{}, transportUnix)
 		return context.WithValue(ctx, credContextKey{}, cc.cred)
+	case *loopbackConn:
+		return context.WithValue(ctx, transportContextKey{}, transportLoopback)
 	}
 	return ctx
+}
+
+// transportFromRequest reports the transport the request arrived on, defaulting
+// to unix when unmarked (the historical single-listener behaviour).
+func transportFromRequest(r *http.Request) transportKind {
+	if t, ok := r.Context().Value(transportContextKey{}).(transportKind); ok {
+		return t
+	}
+	return transportUnix
 }
 
 // credFromRequest returns the peer credentials captured for the request's
@@ -99,11 +127,15 @@ type authResult struct {
 	reason string
 }
 
-// authenticate decides whether a request's peer is trusted. Access is granted
-// iff the peer's effective user is root (uid 0) or a member of the configured
-// access group. This is the single auth seam; the remote-auth change will add a
-// non-peercred branch here for cert/token clients.
+// authenticate decides whether a request's peer is trusted. The check is
+// transport-aware: unix-socket connections authenticate by SO_PEERCRED (root or
+// a member of the configured access group); loopback connections authenticate
+// by the localhost bearer token. This is the single auth seam; the remote-auth
+// change will add a cert/OIDC branch on the loopback (now network) transport.
 func (s *Server) authenticate(r *http.Request) authResult {
+	if transportFromRequest(r) == transportLoopback {
+		return s.authenticateToken(r)
+	}
 	cred, ok := credFromRequest(r)
 	if !ok {
 		// No peer credentials available. This only happens off the unix
@@ -124,6 +156,44 @@ func (s *Server) authenticate(r *http.Request) authResult {
 		return authResult{trusted: true}
 	}
 	return authResult{reason: fmt.Sprintf("permission denied: user must be a member of the %q group", s.socket.Group)}
+}
+
+// uiTokenCookie is the cookie name carrying the localhost token, set by the
+// /ui/login handoff so same-origin API calls and the chat websocket
+// authenticate without the token entering the SPA's JavaScript.
+const uiTokenCookie = "rag_ui_token"
+
+// authenticateToken validates the localhost bearer token on a loopback request.
+// The token may be presented as an `Authorization: Bearer <token>` header or as
+// the rag_ui_token cookie (the websocket upgrade can only carry the cookie). A
+// constant-time comparison guards against timing oracles.
+func (s *Server) authenticateToken(r *http.Request) authResult {
+	if s.uiToken == "" {
+		return authResult{reason: "loopback authentication is not configured"}
+	}
+	presented := bearerToken(r)
+	if presented == "" {
+		if c, err := r.Cookie(uiTokenCookie); err == nil {
+			presented = c.Value
+		}
+	}
+	if presented == "" {
+		return authResult{reason: "missing localhost token"}
+	}
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(s.uiToken)) != 1 {
+		return authResult{reason: "invalid localhost token"}
+	}
+	return authResult{trusted: true}
+}
+
+// bearerToken extracts the token from an Authorization: Bearer header, if any.
+func bearerToken(r *http.Request) string {
+	h := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if len(h) > len(prefix) && strings.EqualFold(h[:len(prefix)], prefix) {
+		return strings.TrimSpace(h[len(prefix):])
+	}
+	return ""
 }
 
 // userInGroup reports whether the user with the given uid is a member of the

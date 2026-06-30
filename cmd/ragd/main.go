@@ -58,10 +58,12 @@ func serveOnce(ctx context.Context, hup <-chan os.Signal, appCtx *common.Context
 		return err
 	}
 	socket := api.ResolveSocketConfig(appCtx)
+	uiCfg := api.ResolveUIConfig(appCtx)
 
 	srv := api.New(api.Options{
 		Context:     appCtx,
 		Socket:      socket,
+		UI:          uiCfg,
 		BackendURLs: backendURLs,
 	})
 
@@ -77,5 +79,8 @@ func serveOnce(ctx context.Context, hup <-chan os.Signal, appCtx *common.Context
 	}()
 
 	log.Printf("serving API on %s (group=%s, mode=%o)", socket.Path, socket.Group, socket.Mode)
+	if uiCfg.Enabled {
+		log.Printf("UI listener enabled on %s", uiCfg.Address)
+	}
 	return srv.Serve(runCtx)
 }

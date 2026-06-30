@@ -2,12 +2,15 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
+	"github.com/jpnorenam/rag-snap/internal/webui"
 )
 
 // apiVersion is the single supported major API version. New backward-compatible
@@ -35,14 +38,18 @@ var apiExtensions = []string{
 // long-lived backend readiness tracker, the unix-socket listener, the async
 // operations registry, and the events hub.
 type Server struct {
-	ctx      *common.Context
-	socket   SocketConfig
-	backends *backendState
-	clients  *clientCache
-	events   *eventsHub
-	ops      *operations
-	httpSrv  *http.Server
-	listener net.Listener
+	ctx          *common.Context
+	socket       SocketConfig
+	ui           UIConfig
+	uiToken      string
+	backends     *backendState
+	clients      *clientCache
+	events       *eventsHub
+	ops          *operations
+	httpSrv      *http.Server
+	uiSrv        *http.Server
+	uiListenAddr string
+	listener     net.Listener
 }
 
 // Options configure a Server.
@@ -51,6 +58,8 @@ type Options struct {
 	Context *common.Context
 	// Socket describes the unix socket path/group/mode.
 	Socket SocketConfig
+	// UI describes the loopback UI listener (opt-in; default off).
+	UI UIConfig
 	// BackendURLs maps service name ("opensearch"/"openai"/"tika") to base URL.
 	BackendURLs map[string]string
 }
@@ -61,6 +70,7 @@ func New(opts Options) *Server {
 	s := &Server{
 		ctx:      opts.Context,
 		socket:   opts.Socket,
+		ui:       opts.UI,
 		backends: newBackendState(opts.BackendURLs),
 		clients:  newClientCache(opts.Context, opts.BackendURLs),
 		events:   newEventsHub(),
@@ -89,15 +99,40 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	s.listener = ln
 
+	// Open the loopback UI listener when enabled (opt-in, default off). A
+	// failure here is fatal: a misconfigured non-loopback bind must not be
+	// silently ignored.
+	var uiLn net.Listener
+	if s.ui.Enabled {
+		uiLn, err = s.startUI()
+		if err != nil {
+			_ = ln.Close()
+			return err
+		}
+	}
+
 	go s.backends.poll(ctx, 10*time.Second)
 
-	// Shut the HTTP server down when the context is cancelled.
+	// Shut the HTTP servers down when the context is cancelled.
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.httpSrv.Shutdown(shutCtx)
+		if s.uiSrv != nil {
+			_ = s.uiSrv.Shutdown(shutCtx)
+		}
 	}()
+
+	// Serve the UI listener in the background; the unix socket is the primary
+	// serve loop that blocks until shutdown.
+	if uiLn != nil {
+		go func() {
+			if serveErr := s.uiSrv.Serve(uiLn); serveErr != nil && serveErr != http.ErrServerClosed {
+				log.Printf("UI listener stopped: %v", serveErr)
+			}
+		}()
+	}
 
 	if err := s.httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
@@ -105,16 +140,64 @@ func (s *Server) Serve(ctx context.Context) error {
 	return nil
 }
 
-// routes builds the HTTP router. The version root GET / is reachable by an
-// untrusted caller (so a client can discover whether it has access); every
-// other endpoint requires a trusted peer. Later phases register knowledge,
-// chat, and answer handlers on this mux.
+// startUI ensures the localhost token exists, builds the UI router, and opens
+// the loopback listener. It returns the listener for the caller to serve, and
+// records the UI http.Server and resolved URL on the Server. A non-loopback
+// bind is refused by listenLoopback.
+func (s *Server) startUI() (net.Listener, error) {
+	tokenPath, token, err := localhostToken(s.socket.Group)
+	if err != nil {
+		// A token-permissions issue (e.g. the access group is missing) should
+		// not crash the daemon, but a failure to obtain any token at all must.
+		if token == "" {
+			return nil, fmt.Errorf("preparing UI token: %w", err)
+		}
+		log.Printf("UI token permissions warning: %v", err)
+	}
+	s.uiToken = token
+
+	handler, err := s.uiRoutes()
+	if err != nil {
+		return nil, fmt.Errorf("building UI routes: %w", err)
+	}
+
+	uiLn, err := listenLoopback(s.ui)
+	if err != nil {
+		return nil, err
+	}
+
+	s.uiSrv = &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ConnContext:       connContext,
+	}
+	s.uiListenAddr = uiLn.Addr().String()
+	log.Printf("serving UI on http://%s/ui/ (token at %s)", uiLn.Addr(), tokenPath)
+	return uiLn, nil
+}
+
+// uiAddr returns the resolved loopback listen address (host:port) once the UI
+// listener has been opened, or empty before then.
+func (s *Server) uiAddr() string { return s.uiListenAddr }
+
+// routes builds the unix-socket HTTP router. The version root GET / is
+// reachable by an untrusted caller (so a client can discover whether it has
+// access); every other endpoint requires a trusted peer.
 func (s *Server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	// Discovery: open to untrusted callers.
 	mux.HandleFunc("GET /{$}", s.handleRoot)
 
+	s.registerAPI(mux)
+	return mux
+}
+
+// registerAPI registers the shared /1.0/... API endpoints on mux. It is used by
+// both the unix-socket router and the loopback (UI) router, so the same
+// handlers serve both transports; authentication is transport-aware (peercred
+// on the unix socket, token on loopback — see auth.go).
+func (s *Server) registerAPI(mux *http.ServeMux) {
 	// Server info.
 	mux.HandleFunc("GET /1.0", s.requireAuth(s.handleServerInfo))
 	mux.HandleFunc("GET /1.0/{$}", s.requireAuth(s.handleServerInfo))
@@ -150,8 +233,64 @@ func (s *Server) routes() http.Handler {
 
 	// Batch answering (prepared manifest, async operation).
 	mux.HandleFunc("POST /1.0/answer/batch", s.requireAuth(s.handleAnswerBatch))
+}
 
-	return mux
+// uiRoutes builds the loopback (UI) HTTP router. It serves the embedded UI
+// under /ui/ (static assets, unauthenticated so the shell can load), redirects
+// GET / to /ui/, exposes the token-login endpoint used by `rag ui`, and shares
+// the same /1.0/... API handlers as the unix socket via registerAPI. The
+// loopback listener carries no peer credentials, so requireAuth resolves to the
+// token check on this transport.
+func (s *Server) uiRoutes() (http.Handler, error) {
+	uiHandler, err := webui.Handler()
+	if err != nil {
+		return nil, err
+	}
+
+	mux := http.NewServeMux()
+
+	// Discovery: open to untrusted callers (matches the unix root).
+	mux.HandleFunc("GET /{$}", s.handleRootRedirect)
+
+	// Token handoff: `rag ui` opens /ui/login?token=... which sets a loopback
+	// cookie and redirects into the SPA, so same-origin API/websocket calls
+	// authenticate automatically without the token touching the SPA's JS.
+	mux.HandleFunc("GET /ui/login", s.handleUILogin)
+
+	// Static UI assets (unauthenticated). StripPrefix so the embedded FS sees
+	// paths rooted at the SPA root.
+	mux.Handle("/ui/", http.StripPrefix("/ui", uiHandler))
+
+	s.registerAPI(mux)
+	return mux, nil
+}
+
+// handleRootRedirect sends a browser hitting / on the loopback listener to the
+// UI under /ui/.
+func (s *Server) handleRootRedirect(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/ui/", http.StatusFound)
+}
+
+// handleUILogin is the token handoff endpoint `rag ui` opens. It validates the
+// token in the query string against the daemon token, sets it as an HttpOnly
+// cookie scoped to the loopback origin, and redirects into the SPA. This keeps
+// the token out of the SPA's JavaScript and out of the address bar (the cookie
+// then travels with every same-origin API call and the chat websocket upgrade).
+func (s *Server) handleUILogin(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if s.uiToken == "" || token == "" ||
+		subtle.ConstantTimeCompare([]byte(token), []byte(s.uiToken)) != 1 {
+		http.Error(w, "invalid token", http.StatusForbidden)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     uiTokenCookie,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	http.Redirect(w, r, "/ui/", http.StatusFound)
 }
 
 // swagger:route GET / server apiRoot
@@ -206,6 +345,16 @@ func (s *Server) authState(r *http.Request) string {
 // for diagnostics. It exposes backend URLs and the socket group/mode only; no
 // credentials are read or returned (secrets live in env vars, never config).
 func (s *Server) configSummary() map[string]any {
+	// The UI section reports whether the loopback listener is enabled and, when
+	// it is, the resolved listen address and the token file path (group-readable)
+	// so a trusted CLI caller (`rag ui`) can discover the OS-assigned port and
+	// read the token itself. The token VALUE is never exposed over the API.
+	ui := map[string]any{"enabled": s.ui.Enabled}
+	if s.ui.Enabled {
+		ui["address"] = s.uiListenAddr
+		ui["url"] = fmt.Sprintf("http://%s/ui/", s.uiListenAddr)
+		ui["token_path"] = tokenPath()
+	}
 	return map[string]any{
 		"backend_urls": s.backends.urls,
 		"socket": map[string]any{
@@ -213,5 +362,6 @@ func (s *Server) configSummary() map[string]any {
 			"group": s.socket.Group,
 			"mode":  fmt.Sprintf("%#o", s.socket.Mode),
 		},
+		"ui": ui,
 	}
 }

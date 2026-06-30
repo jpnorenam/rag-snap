@@ -51,6 +51,32 @@ type SearchHit struct {
 	Content    string  `json:"content"`
 }
 
+// UIInfo is the client view of the daemon's loopback UI listener state, read
+// from GET /1.0 config.ui.
+type UIInfo struct {
+	Enabled   bool   `json:"enabled"`
+	Address   string `json:"address"`
+	URL       string `json:"url"`
+	TokenPath string `json:"token_path"`
+}
+
+// ServerInfo is the subset of GET /1.0 metadata the CLI needs: the effective
+// config summary, including the UI listener state.
+type ServerInfo struct {
+	Config struct {
+		UI UIInfo `json:"ui"`
+	} `json:"config"`
+}
+
+// ServerInfo fetches GET /1.0 server information.
+func (c *Client) ServerInfo(ctx context.Context) (*ServerInfo, error) {
+	var info ServerInfo
+	if err := c.Sync(ctx, "GET", "/1.0", nil, &info); err != nil {
+		return nil, err
+	}
+	return &info, nil
+}
+
 // ListKnowledge returns all knowledge bases.
 func (c *Client) ListKnowledge(ctx context.Context) ([]KnowledgeBase, error) {
 	var bases []KnowledgeBase

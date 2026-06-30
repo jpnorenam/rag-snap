@@ -42,6 +42,16 @@ snapctl set config.package.gdrive.client.secret=""
 #   sudo rag set api.socket.mode=<mode>
 snapctl set config.package.api.socket.group="rag"
 snapctl set config.package.api.socket.mode="0666"
+
+# Register the local UI listener keys. api.ui.enabled gates the opt-in loopback
+# HTTP listener that serves the embedded browser UI (default off; the unix
+# socket is the only default surface). api.ui.address is its loopback bind
+# address; the daemon refuses to bind a non-loopback address. Seeded as package
+# keys so they can be overridden with:
+#   sudo rag set api.ui.enabled=true
+#   sudo rag set api.ui.address=127.0.0.1:0
+snapctl set config.package.api.ui.enabled="false"
+snapctl set config.package.api.ui.address="127.0.0.1:0"
 #
 # sudo snap start $SNAP_INSTANCE_NAME.tika-server
 # sudo snap start $SNAP_INSTANCE_NAME.ragd

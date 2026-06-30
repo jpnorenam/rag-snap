@@ -10,6 +10,9 @@ The surface is deliberately small: a single unix socket, full access gated only 
 group membership, async operations with a progress events websocket, and an auto-generated
 OpenAPI specification. Remote HTTPS access is intentionally **not** part of this surface.
 
+> For the **local browser UI** (an opt-in loopback HTTP listener that serves an embedded
+> single-page app same-origin with this API), see [Local web UI](local-ui.md).
+
 - [Security model](#security-model)
 - [Service management](#service-management)
 - [Socket configuration](#socket-configuration)

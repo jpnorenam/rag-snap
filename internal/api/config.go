@@ -32,6 +32,9 @@ const (
 
 	confAPISocketGroup = "api.socket.group"
 	confAPISocketMode  = "api.socket.mode"
+
+	confAPIUIEnabled = "api.ui.enabled"
+	confAPIUIAddress = "api.ui.address"
 )
 
 // Backend names used as keys in the BackendURLs map and readiness tracker.
@@ -48,7 +51,32 @@ const (
 	// chowned to api.socket.group under strict confinement; the SO_PEERCRED check
 	// is the access gate, not the file mode. See socket.go / design Decision 1.
 	defaultSocketMode = 0o666
+
+	// defaultUIAddress binds the UI listener to an OS-assigned loopback port.
+	// :0 is safe against collisions; rag ui discovers the resolved port.
+	defaultUIAddress = "127.0.0.1:0"
 )
+
+// UIConfig describes the loopback UI listener. Enabled is opt-in (api.ui.enabled,
+// default off); Address is the loopback bind address (api.ui.address, default an
+// OS-assigned loopback port). The daemon refuses to bind a non-loopback address
+// (see listenLoopback).
+type UIConfig struct {
+	Enabled bool
+	Address string
+}
+
+// ResolveUIConfig reads the api.ui.* keys, applying defaults when unset.
+func ResolveUIConfig(ctx *common.Context) UIConfig {
+	addr, _ := config.GetString(ctx.Config, confAPIUIAddress)
+	if addr == "" {
+		addr = defaultUIAddress
+	}
+	return UIConfig{
+		Enabled: getBool(ctx, confAPIUIEnabled, false),
+		Address: addr,
+	}
+}
 
 // ResolveBackendURLs builds the service URL map from config. It is the daemon's
 // equivalent of the CLI's serverApiUrls and reads the same keys. Missing keys
