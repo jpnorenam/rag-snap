@@ -99,6 +99,13 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 			log.SetOutput(rl.Stderr())
 			continue
 		}
+		// /search runs retrieval-only over the daemon: the daemon owns the
+		// embedding model and OpenSearch client, so the REPL just forwards the
+		// query plus the locally-tracked active bases and renders the hits.
+		if verb, args, _ := strings.Cut(strings.TrimSpace(prompt), " "); verb == cmdSearch {
+			remoteSearch(ctx, dc, args, activeBases)
+			continue
+		}
 		if strings.HasPrefix(prompt, "/") {
 			fmt.Printf("Command %q is not available over the daemon; use it in direct mode.\n", prompt)
 			continue
@@ -194,6 +201,66 @@ func remoteSelectBasesMenu(ctx context.Context, dc *apiclient.Client, current []
 		return nil, false, nil
 	}
 	return selected, true, nil
+}
+
+// remoteSearch implements /search over the daemon: it parses the optional
+// "-k N" flag and query terms with the same parser as the direct REPL, then
+// POSTs to /1.0/search with the currently active bases. The daemon holds the
+// embedding model and runs the hybrid pipeline server-side; the REPL only
+// renders the returned hits.
+func remoteSearch(ctx context.Context, dc *apiclient.Client, args string, activeBases []string) {
+	k, terms, ok := parseSearchArgs(args)
+	if !ok {
+		fmt.Println(searchUsage)
+		return
+	}
+	if len(activeBases) == 0 {
+		fmt.Printf("No active knowledge bases. Select one with %s first.\n", cmdUseKnowledge)
+		return
+	}
+
+	stop := common.StartProgressSpinner("Searching")
+	hits, err := dc.Search(ctx, terms, activeBases, k)
+	stop()
+	if err != nil {
+		fmt.Printf("Search failed: %v\n", err)
+		return
+	}
+	if len(hits) == 0 {
+		fmt.Println("No results found.")
+		return
+	}
+	fmt.Print(formatRemoteSearchResults(hits))
+}
+
+// formatRemoteSearchResults renders daemon search hits for human reading,
+// mirroring formatSearchResults but sourcing the base name and provenance from
+// the API response (which already resolved them server-side). Hits are sorted
+// by score descending by the daemon.
+func formatRemoteSearchResults(hits []apiclient.SearchHit) string {
+	var b strings.Builder
+	for i, hit := range hits {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+
+		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", i+1, hit.Score, hit.Base, remoteProvenanceLabel(hit.Provenance))
+		fmt.Fprintln(&b, color.New(color.Bold).Sprint(header))
+		fmt.Fprintf(&b, "    source: %s   created: %s\n", hit.SourceID, hit.CreatedAt)
+		fmt.Fprintln(&b, color.HiBlackString("    "+strings.Repeat("─", 56)))
+		b.WriteString(hit.Content)
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// remoteProvenanceLabel maps the daemon's lowercase provenance tag to the same
+// bracketed label the direct REPL prints via sourceLabel.
+func remoteProvenanceLabel(provenance string) string {
+	if strings.EqualFold(provenance, "upstream") {
+		return "[UPSTREAM]"
+	}
+	return "[CANONICAL]"
 }
 
 // remotePromptTurn sends one prompt and renders streamed frames until the
