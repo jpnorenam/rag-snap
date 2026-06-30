@@ -206,6 +206,20 @@ apps:
       # Backend secrets live on the daemon service environment only, never in
       # config and never on the `rag` CLI app (task 8.2). API clients talk to the
       # daemon over the unix socket and never receive these values.
+      #
+      # IMPORTANT: values set here are applied by `snap run` *after* systemd and
+      # therefore OVERRIDE any systemd drop-in / EnvironmentFile. So only hardcode
+      # a key here when its baked-in value is the one you want; a key whose value
+      # the operator must supply at runtime must NOT appear here, or the empty
+      # default silently clobbers their drop-in.
+      #
+      # OPENSEARCH_USERNAME/PASSWORD keep the bundled-dev default (admin/admin).
+      # CHAT_API_KEY is intentionally absent: it has no usable default, and the
+      # operator injects it on the service environment, e.g.
+      #   sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
+      #   printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$KEY" | \
+      #     sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
+      #   sudo chmod 600 .../10-chat-key.conf && sudo systemctl daemon-reload
+      #   sudo snap restart rag-cli.ragd
       OPENSEARCH_USERNAME: "admin"
       OPENSEARCH_PASSWORD: "admin"
-      CHAT_API_KEY: ""

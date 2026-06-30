@@ -57,9 +57,24 @@ sudo snap logs -f rag-cli.ragd
 ```
 
 Backend secrets (`OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `CHAT_API_KEY`) are set on
-the **daemon's** service environment, not on each CLI invocation. The daemon reads the rest
-of its configuration (`chat.*`, `knowledge.*`, `tika.*`, `api.socket.*`) from `snapctl` at
-startup.
+the **daemon's** service environment, not on each CLI invocation and never in `snapctl`
+config. The daemon reads the rest of its configuration (`chat.*`, `knowledge.*`, `tika.*`,
+`api.socket.*`) from `snapctl` at startup.
+
+To give the daemon an inference API key (e.g. for OpenRouter or AWS Bedrock), inject it via a
+root-only systemd drop-in, then restart the daemon:
+
+```bash
+sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
+printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$YOUR_KEY" | \
+  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf >/dev/null
+sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
+sudo systemctl daemon-reload
+sudo snap restart rag-cli.ragd
+```
+
+The drop-in file is `root:root 0600`, so the secret is never world-readable and never passes
+through the `snapctl` config store or the `GET /1.0` config summary.
 
 > **Applying config changes:** the daemon snapshots config at startup. After changing config
 > with `rag set ...`, reload the daemon to pick up the new values — either `sudo snap restart
