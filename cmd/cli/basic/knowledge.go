@@ -167,6 +167,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 	var fileFlag string
 	var urlFlag string
 	var batchFlag string
+	var formatFlag string
 	var forceFlag bool
 
 	cobraCmd := &cobra.Command{
@@ -174,7 +175,9 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 		Short: "Ingest a document into the knowledge base",
 		Long: "Ingest a document into the knowledge base index with the given source ID.\n" +
 			"Provide the document via --file (local path) or --url (remote URL).\n" +
-			"Use --batch <config.yaml> to ingest multiple documents from a YAML file.",
+			"Use --batch <config.yaml> to ingest multiple documents from a YAML file.\n" +
+			"Use --format rfp to ingest a CSV of previous RFP question/answer pairs\n" +
+			"(columns: question, answer, source), one chunk per row.",
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			// Batch mode: delegate to ProcessBatch, no positional args needed.
@@ -208,6 +211,13 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 				return fmt.Errorf("--file and --url are mutually exclusive")
 			}
 
+			if formatFlag != "" && formatFlag != "rfp" {
+				return fmt.Errorf("unsupported format %q (supported: rfp)", formatFlag)
+			}
+			if formatFlag == "rfp" && urlFlag != "" {
+				return fmt.Errorf("--format rfp requires --file, not --url")
+			}
+
 			// Resolve the file path
 			var filePath string
 			var metadataPath string // stored in SourceMetadata.FilePath
@@ -233,7 +243,12 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 				return fmt.Errorf("getting server API URLs: %w", err)
 			}
 
-			result, err := processing.Ingest(apiUrls[tika], filePath, sourceID)
+			var result *processing.IngestResult
+			if formatFlag == "rfp" {
+				result, err = processing.IngestRFP(filePath, sourceID)
+			} else {
+				result, err = processing.Ingest(apiUrls[tika], filePath, sourceID)
+			}
 			if err != nil {
 				return fmt.Errorf("ingesting document: %w", err)
 			}
@@ -247,6 +262,10 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 
 			// Build source metadata with status=processing
 			now := time.Now().UTC().Format(knowledge.DateFormat)
+			chunkOverlap := processing.DefaultChunkOverlap
+			if formatFlag == "rfp" {
+				chunkOverlap = 0
+			}
 			meta := knowledge.SourceMetadata{
 				SourceID:      sourceID,
 				FileName:      filepath.Base(filePath),
@@ -255,11 +274,14 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 				IndexName:     indexName,
 				ChunkCount:    len(result.Chunks),
 				ChunkSize:     processing.DefaultChunkSize,
-				ChunkOverlap:  processing.DefaultChunkOverlap,
+				ChunkOverlap:  chunkOverlap,
 				ContentLength: result.ContentLength,
 				Status:        knowledge.StatusProcessing,
 				IngestedAt:    now,
 				UpdatedAt:     now,
+			}
+			if formatFlag == "rfp" {
+				meta.ContentType = "text/csv"
 			}
 			if result.TikaMetadata != nil {
 				meta.ContentType = result.TikaMetadata.ContentType
@@ -315,6 +337,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 	cobraCmd.Flags().StringVarP(&fileFlag, "file", "f", "", "Local file path to ingest")
 	cobraCmd.Flags().StringVarP(&urlFlag, "url", "u", "", "URL to download and ingest")
 	cobraCmd.Flags().StringVarP(&batchFlag, "batch", "B", "", "YAML batch config file — ingest multiple documents at once")
+	cobraCmd.Flags().StringVar(&formatFlag, "format", "", "Input format: 'rfp' for a CSV of question,answer,source rows (default: auto-detect via Tika)")
 	cobraCmd.Flags().BoolVar(&forceFlag, "force", false, "Re-ingest sources even if already present in the knowledge base")
 
 	return cobraCmd
