@@ -2,14 +2,21 @@ import { postAsync } from "./envelope";
 import { ROOT_PATH } from "./rootPath";
 import { getToken } from "./token";
 
-// chatStartMetadata is the operation metadata returned by POST /1.0/chat: the
-// resolved model plus the websocket connect URL and one-time secret.
+// chatStartMetadata is the operation's own metadata: the resolved model plus
+// the websocket connect URL and one-time secret.
 interface ChatStartMetadata {
   model?: string;
   websocket?: {
     url: string;
     secret: string;
   };
+}
+
+// chatStartOperation is the operation view carried in the async envelope's
+// metadata. POST /1.0/chat returns an async (operation) response, so the
+// connect details live in the operation view's *own* nested `metadata` field.
+interface ChatStartOperation {
+  metadata?: ChatStartMetadata;
 }
 
 // ChatSession holds the resolved connect details for a started chat session.
@@ -28,12 +35,13 @@ export interface ChatStartOptions {
 // startChat issues POST /1.0/chat and resolves the websocket URL (with the
 // one-time secret applied) from the returned operation metadata.
 export async function startChat(opts: ChatStartOptions = {}): Promise<ChatSession> {
-  const { metadata } = await postAsync<ChatStartMetadata>("/1.0/chat", opts);
-  const ws = metadata.websocket;
+  const { metadata: op } = await postAsync<ChatStartOperation>("/1.0/chat", opts);
+  const meta = op.metadata;
+  const ws = meta?.websocket;
   if (!ws?.url || !ws.secret) {
     throw new Error("chat operation did not return a websocket URL/secret");
   }
-  return { model: metadata.model ?? opts.model ?? "", websocketUrl: buildWsUrl(ws.url, ws.secret) };
+  return { model: meta?.model ?? opts.model ?? "", websocketUrl: buildWsUrl(ws.url, ws.secret) };
 }
 
 // buildWsUrl turns the operation's websocket path + secret into an absolute

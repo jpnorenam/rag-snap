@@ -8,9 +8,53 @@ the daemon's unix socket, so this opt-in TCP listener is what bridges the browse
 Remote/HTTPS exposure is intentionally **not** part of this surface: the listener binds
 `127.0.0.1` only and refuses any non-loopback address.
 
+- [Quick start: from install to a first answer](#quick-start-from-install-to-a-first-answer)
 - [Enabling the listener](#enabling-the-listener)
+- [Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key)
 - [Launching with `rag ui`](#launching-with-rag-ui)
 - [Trust model](#trust-model)
+- [Troubleshooting](#troubleshooting)
+
+---
+
+## Quick start: from install to a first answer
+
+This is the full path for a fresh install of the latest snap: enable the UI listener,
+give the daemon a chat API key, open the UI, and ask a question.
+
+```bash
+# 1. Install the snap (use the exact filename, not a glob — an older snap in the
+#    same directory will otherwise be matched).
+sudo snap install --dangerous ./rag-cli_0.0.4_amd64.snap
+
+# 2. Enable the loopback UI listener and configure the chat backend.
+sudo rag-cli.rag set api.ui.enabled=true
+sudo rag-cli.rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
+sudo rag-cli.rag set --package chat.http.port="443"
+sudo rag-cli.rag set --package chat.http.tls="true"
+sudo rag-cli.rag set --package chat.http.path="openai/v1"
+
+# 3. Give the *daemon* the chat API key (see the section below for why a shell
+#    `export` is not enough). Replace <your-api-key> with a real key.
+sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
+sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/apikey.conf >/dev/null <<'EOF'
+[Service]
+Environment="CHAT_API_KEY=<your-api-key>"
+EOF
+
+# 4. Reload systemd and (re)start the daemon so it picks up both the listener and the key.
+sudo systemctl daemon-reload
+sudo snap restart rag-cli.ragd
+
+# 5. Open the UI. This fetches the current loopback URL + token and opens your browser.
+rag-cli.rag ui
+```
+
+In the browser, type a question and press **Enter**. The UI opens a websocket to the daemon,
+which streams the model's answer back token by token. If you keep knowledge bases, select them
+from the chips at the top of the page to ground answers in your documents.
+
+> For obtaining a Bedrock API key step by step, see the [Bedrock guide](bedrock_guide.md).
 
 ---
 
@@ -41,6 +85,47 @@ The resolved URL (with the OS-assigned port) is written to the daemon log and re
 sudo snap logs rag-cli.ragd | grep 'serving UI'
 # serving UI on http://127.0.0.1:43210/ui/ (token at /var/snap/rag-cli/common/ragd/ui.token)
 ```
+
+---
+
+## Configuring the chat backend and API key
+
+The UI talks to the daemon, and the **daemon** — not your shell — makes the call to the
+inference backend. Backend secrets are passed to `ragd` through environment variables
+(`OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `CHAT_API_KEY`), never through config.
+
+This matters for the chat API key. When you run `rag-cli.rag chat` interactively, the CLI
+inherits `CHAT_API_KEY` from your shell, so a plain `export CHAT_API_KEY=…` is enough. But
+the UI is served by the **`ragd` systemd service**, which has its own environment and does
+**not** see your shell exports. Without the key, the daemon calls the backend with no
+`Authorization` header and the backend replies `401 Unauthorized` (e.g. Bedrock:
+`"Authorization header is missing"`).
+
+Give the key to the daemon with a **systemd drop-in** (the snap's auto-generated unit is
+regenerated on every restart and must not be edited directly):
+
+```bash
+sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
+sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/apikey.conf >/dev/null <<'EOF'
+[Service]
+Environment="CHAT_API_KEY=<your-api-key>"
+EOF
+sudo systemctl daemon-reload
+sudo snap restart rag-cli.ragd
+```
+
+Confirm the running daemon actually has the key (checks the live process, not just the unit):
+
+```bash
+sudo tr '\0' '\n' < /proc/$(pgrep -x ragd)/environ | grep CHAT_API_KEY
+```
+
+The drop-in directory survives `snap restart` and `snap install --dangerous` of the same
+build. A full `snap remove` clears it, so re-apply the drop-in after a clean reinstall.
+
+> **Note:** the snap deliberately does **not** declare `CHAT_API_KEY` in its own metadata.
+> Declaring it (even as an empty string) would make snapd apply that value over whatever the
+> systemd unit provides, so the drop-in could never take effect.
 
 ---
 
@@ -87,3 +172,26 @@ credentials do not exist for TCP connections, so the loopback listener authentic
 > access over the RAG stack. The token is the local trust boundary, and the seam where TLS
 > client certs / OIDC attach if the surface is ever exposed remotely (a separate, deferred
 > decision).
+
+---
+
+## Troubleshooting
+
+**`unknown command "ui"` from `rag-cli.rag ui`.** The installed snap predates the UI command.
+Confirm the version with `snap list rag-cli` and reinstall the latest build, naming the file
+explicitly (`sudo snap install --dangerous ./rag-cli_0.0.4_amd64.snap`) — a `rag-cli_*.snap`
+glob can match an older snap left in the directory.
+
+**The old UI URL no longer loads after a restart.** Expected. With the default
+`api.ui.address=127.0.0.1:0` the OS assigns a fresh port on every start, and the handoff token
+is regenerated, so a bookmarked link goes stale. Always reopen with `rag-cli.rag ui` rather
+than reusing a previous URL.
+
+**`401 Unauthorized` / `"Authorization header is missing"` when sending a message.** The
+daemon has no chat API key. See
+[Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key) — set it
+via the systemd drop-in, not a shell `export`.
+
+**`chat operation did not return a websocket URL/secret`.** The UI bundle is older than the
+daemon. Rebuild the snap so the embedded UI matches (`make ui` then `snapcraft`), reinstall,
+restart the daemon, and hard-reload the browser (Ctrl+Shift+R) to bypass the cached bundle.
