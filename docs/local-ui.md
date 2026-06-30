@@ -35,12 +35,12 @@ sudo rag-cli.rag set --package chat.http.tls="true"
 sudo rag-cli.rag set --package chat.http.path="openai/v1"
 
 # 3. Give the *daemon* the chat API key (see the section below for why a shell
-#    `export` is not enough). Replace <your-api-key> with a real key.
+#    `export` is not enough). The drop-in is root-only (0600) so the key is
+#    never world-readable. Replace $YOUR_KEY with a real key.
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/apikey.conf >/dev/null <<'EOF'
-[Service]
-Environment="CHAT_API_KEY=<your-api-key>"
-EOF
+printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$YOUR_KEY" | \
+  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf >/dev/null
+sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
 
 # 4. Reload systemd and (re)start the daemon so it picks up both the listener and the key.
 sudo systemctl daemon-reload
@@ -101,18 +101,21 @@ the UI is served by the **`ragd` systemd service**, which has its own environmen
 `Authorization` header and the backend replies `401 Unauthorized` (e.g. Bedrock:
 `"Authorization header is missing"`).
 
-Give the key to the daemon with a **systemd drop-in** (the snap's auto-generated unit is
-regenerated on every restart and must not be edited directly):
+Give the key to the daemon with a **root-only systemd drop-in** (the snap's auto-generated
+unit is regenerated on every restart and must not be edited directly). The same recipe is in
+[the REST API guide](rest-api.md#service-management):
 
 ```bash
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/apikey.conf >/dev/null <<'EOF'
-[Service]
-Environment="CHAT_API_KEY=<your-api-key>"
-EOF
+printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$YOUR_KEY" | \
+  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf >/dev/null
+sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
 sudo systemctl daemon-reload
 sudo snap restart rag-cli.ragd
 ```
+
+The drop-in is `root:root 0600`, so the secret is never world-readable and never passes
+through the `snapctl` config store or the `GET /1.0` config summary.
 
 Confirm the running daemon actually has the key (checks the live process, not just the unit):
 
