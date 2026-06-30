@@ -54,9 +54,14 @@ type SearchHit struct {
 // UIInfo is the client view of the daemon's loopback UI listener state, read
 // from GET /1.0 config.ui.
 type UIInfo struct {
-	Enabled   bool   `json:"enabled"`
-	Address   string `json:"address"`
-	URL       string `json:"url"`
+	Enabled bool   `json:"enabled"`
+	Address string `json:"address"`
+	URL     string `json:"url"`
+	// Token is the localhost bearer token, returned over the peercred-gated
+	// /1.0 endpoint so `rag ui` can authenticate the browser handoff without
+	// reading the (owner-only) token file.
+	Token string `json:"token"`
+	// TokenPath is the on-disk token location, retained for diagnostics.
 	TokenPath string `json:"token_path"`
 }
 

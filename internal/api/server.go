@@ -145,14 +145,9 @@ func (s *Server) Serve(ctx context.Context) error {
 // records the UI http.Server and resolved URL on the Server. A non-loopback
 // bind is refused by listenLoopback.
 func (s *Server) startUI() (net.Listener, error) {
-	tokenPath, token, err := localhostToken(s.socket.Group)
+	_, token, err := localhostToken()
 	if err != nil {
-		// A token-permissions issue (e.g. the access group is missing) should
-		// not crash the daemon, but a failure to obtain any token at all must.
-		if token == "" {
-			return nil, fmt.Errorf("preparing UI token: %w", err)
-		}
-		log.Printf("UI token permissions warning: %v", err)
+		return nil, fmt.Errorf("preparing UI token: %w", err)
 	}
 	s.uiToken = token
 
@@ -172,7 +167,7 @@ func (s *Server) startUI() (net.Listener, error) {
 		ConnContext:       connContext,
 	}
 	s.uiListenAddr = uiLn.Addr().String()
-	log.Printf("serving UI on http://%s/ui/ (token at %s)", uiLn.Addr(), tokenPath)
+	log.Printf("serving UI on http://%s/ui/ (token at %s)", uiLn.Addr(), tokenPath())
 	return uiLn, nil
 }
 
@@ -341,18 +336,26 @@ func (s *Server) authState(r *http.Request) string {
 	return "untrusted"
 }
 
-// configSummary returns a read-only, secret-free view of the effective config
-// for diagnostics. It exposes backend URLs and the socket group/mode only; no
-// credentials are read or returned (secrets live in env vars, never config).
+// configSummary returns a read-only view of the effective config for
+// diagnostics. It exposes backend URLs and the socket group/mode; no backend
+// credentials are read or returned (those live in env vars, never config). When
+// the UI listener is enabled it also returns the localhost token — safe because
+// the GET /1.0 endpoint that serves this summary is peercred-gated to the same
+// principals the token grants (see the ui section below).
 func (s *Server) configSummary() map[string]any {
 	// The UI section reports whether the loopback listener is enabled and, when
-	// it is, the resolved listen address and the token file path (group-readable)
-	// so a trusted CLI caller (`rag ui`) can discover the OS-assigned port and
-	// read the token itself. The token VALUE is never exposed over the API.
+	// it is, the resolved listen address and the localhost token so a trusted
+	// CLI caller (`rag ui`) can discover the OS-assigned port and authenticate
+	// the browser handoff. Returning the token here is safe because GET /1.0 is
+	// gated by requireAuth (peercred): only root and access-group members reach
+	// it — exactly the principals the token is scoped to grant. This replaces
+	// reading a group-readable token file, which strict confinement prevents the
+	// daemon from making group-readable (it cannot chown to an arbitrary group).
 	ui := map[string]any{"enabled": s.ui.Enabled}
 	if s.ui.Enabled {
 		ui["address"] = s.uiListenAddr
 		ui["url"] = fmt.Sprintf("http://%s/ui/", s.uiListenAddr)
+		ui["token"] = s.uiToken
 		ui["token_path"] = tokenPath()
 	}
 	return map[string]any{

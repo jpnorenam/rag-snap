@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"os"
 	"os/exec"
 	"runtime"
 	"strings"
@@ -63,18 +62,15 @@ func (cmd *uiCommand) run(_ *cobra.Command, _ []string) error {
 	if !ui.Enabled {
 		return cmd.reportDisabled()
 	}
-	if ui.URL == "" || ui.TokenPath == "" {
+	if ui.URL == "" || ui.Token == "" {
 		return fmt.Errorf("the daemon reported the UI as enabled but did not return its URL/token; check the ragd service logs")
 	}
 
-	token, err := readToken(ui.TokenPath)
-	if err != nil {
-		return fmt.Errorf("reading the UI token at %s: %w\n\nYou must be a member of the API access group to read it.", ui.TokenPath, err)
-	}
-
+	// The daemon returns the token over the peercred-authenticated socket, so
+	// reaching this point means we are already authorized to use it.
 	// Build the token-handoff URL: /ui/login?token=... sets a loopback cookie
 	// and redirects into the SPA, keeping the token out of the SPA's JS.
-	loginURL, err := buildLoginURL(ui.URL, token)
+	loginURL, err := buildLoginURL(ui.URL, ui.Token)
 	if err != nil {
 		return err
 	}
@@ -97,19 +93,6 @@ func (cmd *uiCommand) reportDisabled() error {
 		"the local UI is disabled.\n\nEnable it with:\n  sudo %s set api.ui.enabled=true\n  sudo snap restart %s.ragd\n\nThen run `%s ui` again.",
 		snapName(), snapName(), snapName(),
 	)
-}
-
-// readToken reads and trims the localhost token from the token file.
-func readToken(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	tok := strings.TrimSpace(string(data))
-	if tok == "" {
-		return "", fmt.Errorf("token file is empty")
-	}
-	return tok, nil
 }
 
 // buildLoginURL appends the token to the daemon's /ui/login handoff endpoint.

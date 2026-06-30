@@ -5,9 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/canonical/go-snapctl/env"
@@ -21,13 +19,20 @@ const tokenRelPath = "ragd/ui.token"
 const tokenBytes = 32
 
 // localhostToken loads or generates the localhost bearer token used to
-// authenticate the loopback UI listener. The token is persisted under
-// $SNAP_COMMON readable by the configured access group (the same trust boundary
-// as the unix socket), so group members can read it and other users cannot. On
-// restart an existing token is reused rather than regenerated.
+// authenticate the loopback UI listener. The token is persisted owner-only
+// (0600) under $SNAP_COMMON, alongside the unix socket, so it survives daemon
+// restarts. On restart an existing token is reused rather than regenerated.
+//
+// The token VALUE is never read off disk by clients: the daemon hands it to
+// `rag ui` over the peercred-authenticated /1.0 endpoint, which already admits
+// exactly the principals (root + access-group members) the token is meant to
+// grant. This avoids relying on group-readability of the file, which strict
+// confinement forbids the daemon from establishing (it cannot chown the file to
+// an arbitrary group; snapd's seccomp profile denies it — the same restriction
+// the unix socket sidesteps via peercred).
 //
 // Returns the token path and value.
-func localhostToken(group string) (string, string, error) {
+func localhostToken() (string, string, error) {
 	path := tokenPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", "", fmt.Errorf("creating token directory: %w", err)
@@ -36,8 +41,6 @@ func localhostToken(group string) (string, string, error) {
 	// Reuse an existing token if present and non-empty.
 	if data, err := os.ReadFile(path); err == nil {
 		if tok := strings.TrimSpace(string(data)); tok != "" {
-			// Re-apply group ownership/permissions in case the group changed.
-			_ = applyTokenPermissions(path, group)
 			return path, tok, nil
 		}
 	} else if !os.IsNotExist(err) {
@@ -48,13 +51,10 @@ func localhostToken(group string) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
-	// Write 0640 so the owner can read/write and the group can read; other
-	// users have no access. Group readability is finalised by chown below.
-	if err := os.WriteFile(path, []byte(tok+"\n"), 0o640); err != nil {
+	// Write 0600: only the daemon's user (root) can read the file. Clients
+	// obtain the token over the trusted socket, not from this file.
+	if err := os.WriteFile(path, []byte(tok+"\n"), 0o600); err != nil {
 		return "", "", fmt.Errorf("writing token file: %w", err)
-	}
-	if err := applyTokenPermissions(path, group); err != nil {
-		return "", "", err
 	}
 	return path, tok, nil
 }
@@ -76,32 +76,4 @@ func generateToken() (string, error) {
 		return "", fmt.Errorf("generating token: %w", err)
 	}
 	return hex.EncodeToString(buf), nil
-}
-
-// applyTokenPermissions chowns the token file's group to the named access group
-// and re-applies 0640 so the group can read it. A failure to resolve the group
-// (e.g. it does not exist on the host) is non-fatal for the file mode but is
-// reported so the operator can fix group membership; the file remains
-// owner-only readable in that case.
-func applyTokenPermissions(path, group string) error {
-	if err := os.Chmod(path, 0o640); err != nil {
-		return fmt.Errorf("setting token file mode: %w", err)
-	}
-	if group == "" {
-		return nil
-	}
-	g, err := user.LookupGroup(group)
-	if err != nil {
-		// Group not found on host: leave the file owner-readable. Surface a
-		// soft error so the daemon can log it without failing startup.
-		return fmt.Errorf("looking up access group %q for token file: %w", group, err)
-	}
-	gid, err := strconv.Atoi(g.Gid)
-	if err != nil {
-		return fmt.Errorf("parsing gid for group %q: %w", group, err)
-	}
-	if err := os.Chown(path, -1, gid); err != nil {
-		return fmt.Errorf("chowning token file to group %q: %w", group, err)
-	}
-	return nil
 }
