@@ -32,9 +32,23 @@ type ingestRequest struct {
 	Batch    []ingestItem `json:"batch,omitempty"`
 }
 
-// handleSourcesIngest implements POST /1.0/knowledge/{name}/sources: ingest one
-// or more sources as an async operation. Accepts either a multipart file upload
-// or a JSON body describing a URL or a batch of URLs.
+// swagger:route POST /1.0/knowledge/{name}/sources knowledge sourcesIngest
+//
+// Ingest sources into a knowledge base.
+//
+// Ingests one or more sources as an async operation. Accepts either a multipart
+// file upload or a JSON body describing a URL or a batch of URLs.
+//
+//	Consumes:
+//	- application/json
+//	- multipart/form-data
+//
+//	Responses:
+//	  202: asyncResponse
+//	  400: errorResponse
+//	  403: errorResponse
+//	  404: errorResponse
+//	  500: errorResponse
 func (s *Server) handleSourcesIngest(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 

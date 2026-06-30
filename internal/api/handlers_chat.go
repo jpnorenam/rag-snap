@@ -48,9 +48,19 @@ type chatServerMessage struct {
 // defaultChatTemperature matches the chat REPL's default sampling temperature.
 const defaultChatTemperature = 0.3
 
-// handleChatStart implements POST /1.0/chat: start a chat session as a
-// websocket-class operation. The operation metadata carries the websocket
-// connect URL and one-time secret; the client dials it to hold the session.
+// swagger:route POST /1.0/chat chat chatStart
+//
+// Start a chat session.
+//
+// Starts a chat session as a websocket-class operation. The operation metadata
+// carries the websocket connect URL and one-time secret; the client dials it to
+// hold the interactive, multi-turn session.
+//
+//	Responses:
+//	  202: asyncResponse
+//	  400: errorResponse
+//	  403: errorResponse
+//	  500: errorResponse
 func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 	var req chatStartRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
@@ -123,10 +133,19 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 	respondAsync(w, op.url(), op.view())
 }
 
-// handleChatConnect implements GET /1.0/operations/{id}/websocket?secret=...:
-// upgrade to the chat websocket for a websocket-class operation after checking
-// the one-time secret. The interaction runs until the connection closes, an
-// idle timeout fires, or the operation is cancelled.
+// swagger:route GET /1.0/operations/{id}/websocket operations chatConnect
+//
+// Connect to an operation's websocket.
+//
+// Upgrades to the websocket for a websocket-class operation (e.g. a chat
+// session) after checking the one-time secret. The interaction runs until the
+// connection closes, an idle timeout fires, or the operation is cancelled.
+//
+//	Responses:
+//	  101: syncResponse
+//	  400: errorResponse
+//	  403: errorResponse
+//	  404: errorResponse
 func (s *Server) handleChatConnect(w http.ResponseWriter, r *http.Request) {
 	op := s.ops.get(r.PathValue("id"))
 	if op == nil {

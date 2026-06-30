@@ -82,8 +82,8 @@
 
 ## 7. OpenAPI spec generation (rest-api-server)
 
-- [ ] 7.1 Annotate handlers; wire the generator to emit `rest-api.yaml`.
-- [ ] 7.2 Add a `make` target/check that fails the build when the spec is out of sync with handlers.
+- [x] 7.1 Annotate handlers; wire the generator to emit `rest-api.yaml`.
+- [x] 7.2 Add a `make` target/check that fails the build when the spec is out of sync with handlers.
 
 ## 8. Snap packaging
 

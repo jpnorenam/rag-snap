@@ -53,10 +53,21 @@ func (req batchManifestRequest) toManifest() *chat.BatchManifest {
 	}
 }
 
-// handleAnswerBatch implements POST /1.0/answer/batch: run a prepared batch
-// manifest of questions through the RAG+LLM pipeline as an async operation.
-// Progress is reported in the operation metadata across the questions, and the
-// structured results are stored on the operation for retrieval on completion.
+// swagger:route POST /1.0/answer/batch answer answerBatch
+//
+// Run a batch of questions.
+//
+// Runs a prepared batch manifest of questions through the RAG+LLM pipeline as
+// an async operation. Progress is reported in the operation metadata across the
+// questions, and the structured results are stored on the operation for
+// retrieval on completion. The interactive document-to-manifest build flow is
+// CLI-only and not exposed here.
+//
+//	Responses:
+//	  202: asyncResponse
+//	  400: errorResponse
+//	  403: errorResponse
+//	  500: errorResponse
 func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 	var req batchManifestRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

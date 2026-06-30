@@ -154,9 +154,16 @@ func (s *Server) routes() http.Handler {
 	return mux
 }
 
-// handleRoot implements GET /: advertise the supported version(s), the caller's
-// auth state, and the api_extensions list. This endpoint is reachable by an
-// untrusted caller so a client can discover whether it has access.
+// swagger:route GET / server apiRoot
+//
+// Discover the API.
+//
+// Advertises the supported version(s), the caller's auth state, and the
+// api_extensions list. Reachable by an untrusted caller so a client can
+// discover whether it has access.
+//
+//	Responses:
+//	  200: syncResponse
 func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	respondSync(w, map[string]any{
 		"api_status":     "stable",
@@ -166,8 +173,16 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleServerInfo implements GET /1.0: server metadata plus a read-only,
-// secret-free summary of effective config and backend readiness for diagnostics.
+// swagger:route GET /1.0 server serverInfo
+//
+// Return server information.
+//
+// Server metadata plus a read-only, secret-free summary of effective config and
+// backend readiness for diagnostics.
+//
+//	Responses:
+//	  200: syncResponse
+//	  403: errorResponse
 func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 	respondSync(w, map[string]any{
 		"api_version":    apiVersion,

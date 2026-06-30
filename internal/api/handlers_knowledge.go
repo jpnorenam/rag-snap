@@ -24,7 +24,14 @@ type createKnowledgeRequest struct {
 	Name string `json:"name"`
 }
 
-// handleKnowledgeList implements GET /1.0/knowledge: list knowledge bases.
+// swagger:route GET /1.0/knowledge knowledge knowledgeList
+//
+// List knowledge bases.
+//
+//	Responses:
+//	  200: syncResponse
+//	  403: errorResponse
+//	  500: errorResponse
 func (s *Server) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 	client, err := s.clients.openSearchClient()
 	if err != nil {
@@ -51,7 +58,16 @@ func (s *Server) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 	respondSync(w, bases)
 }
 
-// handleKnowledgeCreate implements POST /1.0/knowledge: create a knowledge base.
+// swagger:route POST /1.0/knowledge knowledge knowledgeCreate
+//
+// Create a knowledge base.
+//
+//	Responses:
+//	  200: syncResponse
+//	  400: errorResponse
+//	  403: errorResponse
+//	  409: errorResponse
+//	  500: errorResponse
 func (s *Server) handleKnowledgeCreate(w http.ResponseWriter, r *http.Request) {
 	var req createKnowledgeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -87,7 +103,15 @@ func (s *Server) handleKnowledgeCreate(w http.ResponseWriter, r *http.Request) {
 	respondSync(w, knowledgeBaseSummary{Name: req.Name, Index: index})
 }
 
-// handleKnowledgeGet implements GET /1.0/knowledge/{name}: return KB detail.
+// swagger:route GET /1.0/knowledge/{name} knowledge knowledgeGet
+//
+// Return knowledge base detail.
+//
+//	Responses:
+//	  200: syncResponse
+//	  403: errorResponse
+//	  404: errorResponse
+//	  500: errorResponse
 func (s *Server) handleKnowledgeGet(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	client, err := s.clients.openSearchClient()
@@ -124,8 +148,18 @@ func (s *Server) handleKnowledgeGet(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleKnowledgeDelete implements DELETE /1.0/knowledge/{name}: delete a base
-// and its source metadata. No interactive confirmation at the API layer.
+// swagger:route DELETE /1.0/knowledge/{name} knowledge knowledgeDelete
+//
+// Delete a knowledge base.
+//
+// Deletes the base and its source metadata. No interactive confirmation at the
+// API layer.
+//
+//	Responses:
+//	  200: syncResponse
+//	  403: errorResponse
+//	  404: errorResponse
+//	  500: errorResponse
 func (s *Server) handleKnowledgeDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	client, err := s.clients.openSearchClient()
@@ -158,7 +192,15 @@ func (s *Server) handleKnowledgeDelete(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleSourcesList implements GET /1.0/knowledge/{name}/sources.
+// swagger:route GET /1.0/knowledge/{name}/sources knowledge sourcesList
+//
+// List the sources in a knowledge base.
+//
+//	Responses:
+//	  200: syncResponse
+//	  403: errorResponse
+//	  404: errorResponse
+//	  500: errorResponse
 func (s *Server) handleSourcesList(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	client, err := s.clients.openSearchClient()
@@ -184,7 +226,15 @@ func (s *Server) handleSourcesList(w http.ResponseWriter, r *http.Request) {
 	respondSync(w, sources)
 }
 
-// handleSourceGet implements GET /1.0/knowledge/{name}/sources/{id}.
+// swagger:route GET /1.0/knowledge/{name}/sources/{id} knowledge sourceGet
+//
+// Return source metadata.
+//
+//	Responses:
+//	  200: syncResponse
+//	  403: errorResponse
+//	  404: errorResponse
+//	  500: errorResponse
 func (s *Server) handleSourceGet(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	client, err := s.clients.openSearchClient()
@@ -200,8 +250,17 @@ func (s *Server) handleSourceGet(w http.ResponseWriter, r *http.Request) {
 	respondSync(w, meta)
 }
 
-// handleSourceDelete implements DELETE /1.0/knowledge/{name}/sources/{id}:
-// forget a source by removing its chunks and metadata.
+// swagger:route DELETE /1.0/knowledge/{name}/sources/{id} knowledge sourceDelete
+//
+// Forget a source.
+//
+// Removes the source's chunks and metadata from the knowledge base.
+//
+//	Responses:
+//	  200: syncResponse
+//	  403: errorResponse
+//	  404: errorResponse
+//	  500: errorResponse
 func (s *Server) handleSourceDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	id := r.PathValue("id")

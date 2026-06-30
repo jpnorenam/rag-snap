@@ -11,12 +11,26 @@ import (
 	"github.com/coder/websocket/wsjson"
 )
 
-// handleOperationsList implements GET /1.0/operations: list current operations.
+// swagger:route GET /1.0/operations operations operationsList
+//
+// List operations.
+//
+// Returns a snapshot of all current operations.
+//
+//	Responses:
+//	  200: syncResponse
+//	  403: errorResponse
 func (s *Server) handleOperationsList(w http.ResponseWriter, _ *http.Request) {
 	respondSync(w, s.ops.list())
 }
 
-// handleOperationGet implements GET /1.0/operations/{id}: return one operation.
+// swagger:route GET /1.0/operations/{id} operations operationGet
+//
+// Return an operation.
+//
+//	Responses:
+//	  200: syncResponse
+//	  404: errorResponse
 func (s *Server) handleOperationGet(w http.ResponseWriter, r *http.Request) {
 	op := s.ops.get(r.PathValue("id"))
 	if op == nil {
@@ -26,8 +40,17 @@ func (s *Server) handleOperationGet(w http.ResponseWriter, r *http.Request) {
 	respondSync(w, op.view())
 }
 
-// handleOperationDelete implements DELETE /1.0/operations/{id}: request
-// cooperative cancellation. Fails if the operation cannot be cancelled.
+// swagger:route DELETE /1.0/operations/{id} operations operationDelete
+//
+// Cancel an operation.
+//
+// Requests cooperative cancellation. Fails if the operation cannot be cancelled
+// or is already complete.
+//
+//	Responses:
+//	  200: syncResponse
+//	  400: errorResponse
+//	  404: errorResponse
 func (s *Server) handleOperationDelete(w http.ResponseWriter, r *http.Request) {
 	op := s.ops.get(r.PathValue("id"))
 	if op == nil {
@@ -41,10 +64,18 @@ func (s *Server) handleOperationDelete(w http.ResponseWriter, r *http.Request) {
 	respondSync(w, op.view())
 }
 
-// handleOperationWait implements GET /1.0/operations/{id}/wait?timeout=N: block
-// until the operation is terminal or the timeout (in seconds) elapses, then
-// return the operation. A timeout that elapses returns the current state, not
-// an error.
+// swagger:route GET /1.0/operations/{id}/wait operations operationWait
+//
+// Wait for an operation.
+//
+// Blocks until the operation is terminal or the timeout (in seconds) elapses,
+// then returns the operation. A timeout that elapses returns the current state,
+// not an error.
+//
+//	Responses:
+//	  200: syncResponse
+//	  400: errorResponse
+//	  404: errorResponse
 func (s *Server) handleOperationWait(w http.ResponseWriter, r *http.Request) {
 	op := s.ops.get(r.PathValue("id"))
 	if op == nil {
@@ -65,8 +96,17 @@ func (s *Server) handleOperationWait(w http.ResponseWriter, r *http.Request) {
 	respondSync(w, op.wait(r.Context(), timeout))
 }
 
-// handleEvents implements GET /1.0/events: upgrade to a websocket and stream
-// typed events. The ?type=operation,logging query filters the event types.
+// swagger:route GET /1.0/events operations events
+//
+// Stream events over a websocket.
+//
+// Upgrades to a websocket and streams typed events. The type query filters the
+// event types (e.g. "operation,logging"). Clients should subscribe before
+// launching an operation to avoid a poll race.
+//
+//	Responses:
+//	  101: syncResponse
+//	  403: errorResponse
 func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	conn, err := websocket.Accept(w, r, nil)
 	if err != nil {

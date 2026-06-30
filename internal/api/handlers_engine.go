@@ -10,9 +10,17 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
 )
 
-// handleEngineInit implements POST /1.0/knowledge-engine:init style endpoint:
-// initialize the knowledge engine (models, pipelines, indexes) as an async
-// operation. On success the operation metadata reports the resolved model IDs.
+// swagger:route POST /1.0/knowledge-engine knowledge engineInit
+//
+// Initialize the knowledge engine.
+//
+// Sets up models, pipelines, and indexes as an async operation. On success the
+// operation metadata reports the resolved model IDs.
+//
+//	Responses:
+//	  202: asyncResponse
+//	  403: errorResponse
+//	  500: errorResponse
 func (s *Server) handleEngineInit(w http.ResponseWriter, r *http.Request) {
 	client, err := s.clients.openSearchClient()
 	if err != nil {
@@ -52,8 +60,17 @@ type exportRequest struct {
 	Compress  bool   `json:"compress"`
 }
 
-// handleKnowledgeExport implements POST /1.0/knowledge/{name}/export: export a
-// base as an async operation (reuses the elasticdump-based exporter).
+// swagger:route POST /1.0/knowledge/{name}/export knowledge knowledgeExport
+//
+// Export a knowledge base.
+//
+// Exports a base as an async operation, reusing the elasticdump-based exporter.
+//
+//	Responses:
+//	  202: asyncResponse
+//	  400: errorResponse
+//	  403: errorResponse
+//	  500: errorResponse
 func (s *Server) handleKnowledgeExport(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	var req exportRequest
@@ -90,9 +107,18 @@ type importRequest struct {
 	Force    bool   `json:"force"`
 }
 
-// handleKnowledgeImport implements POST /1.0/knowledge/import: import a base
-// from a previously exported artifact as an async operation. The interactive
-// Google Drive auth flow is intentionally not exposed.
+// swagger:route POST /1.0/knowledge/import knowledge knowledgeImport
+//
+// Import a knowledge base.
+//
+// Imports a base from a previously exported artifact as an async operation. The
+// interactive Google Drive auth flow is intentionally not exposed.
+//
+//	Responses:
+//	  202: asyncResponse
+//	  400: errorResponse
+//	  403: errorResponse
+//	  500: errorResponse
 func (s *Server) handleKnowledgeImport(w http.ResponseWriter, r *http.Request) {
 	var req importRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

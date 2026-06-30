@@ -39,7 +39,18 @@ func provenanceLabel(indexName string) string {
 	return "canonical"
 }
 
-// handleSearch implements POST /1.0/search: hybrid retrieval over named bases.
+// swagger:route POST /1.0/search search search
+//
+// Hybrid search over knowledge bases.
+//
+// Runs hybrid (neural + lexical) retrieval over the named bases. Requires a
+// configured embedding model.
+//
+//	Responses:
+//	  200: syncResponse
+//	  400: errorResponse
+//	  403: errorResponse
+//	  500: errorResponse
 func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	var req searchRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
