@@ -27,3 +27,6 @@ ubuntu-pro-questions.yaml
 test-kb/
 test-questions/
 test-rfp/
+test-rfp-results/
+.claude/settings.local.json
+.gitignore
