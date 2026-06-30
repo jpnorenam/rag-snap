@@ -8,6 +8,7 @@ import (
 	"log"
 	"strings"
 
+	"github.com/charmbracelet/huh"
 	"github.com/chzyer/readline"
 	"github.com/fatih/color"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
@@ -36,8 +37,21 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 	}
 	fmt.Println("Type your prompt, then ENTER to submit. CTRL-C to quit.")
 
+	// Track the active bases locally so the /use-knowledge menu can pre-select
+	// the current set; kept in sync with the daemon's acknowledged set.
+	activeBases := append([]string{}, bases...)
+
+	// Build autocomplete for slash commands, matching the direct REPL.
+	var completions []readline.PrefixCompleterInterface
+	for _, cmd := range slashCommands {
+		completions = append(completions, readline.PcItem(cmd.name))
+	}
+
 	rlConfig := &readline.Config{
 		Prompt:                 color.RedString("» "),
+		AutoComplete:           readline.NewPrefixCompleter(completions...),
+		Listener:               slashHinter(),
+		Painter:                syntaxPainter{},
 		DisableAutoSaveHistory: true,
 		InterruptPrompt:        "^C",
 		HistorySearchFold:      true,
@@ -52,6 +66,7 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 
 	for {
 		prompt, err := rl.Readline()
+		clearSlashHints()
 		if errors.Is(err, readline.ErrInterrupt) {
 			if len(prompt) == 0 {
 				break
@@ -65,11 +80,23 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 		}
 
 		// /use-knowledge maps to a set-active-kbs control frame; the daemon
-		// holds the active set for the session.
-		if strings.HasPrefix(prompt, cmdUseKnowledge) {
-			if err := remoteSetActiveBases(ctx, session, prompt); err != nil {
-				fmt.Printf("Error: %v\n", err)
+		// holds the active set for the session. With no inline args it opens
+		// the same interactive multi-select menu as the direct REPL. Readline
+		// is torn down and recreated around the menu because huh and readline
+		// both drive the terminal and conflict if left active together.
+		if verb, _, _ := strings.Cut(strings.TrimSpace(prompt), " "); verb == cmdUseKnowledge {
+			rl.Close()
+			acked, uerr := remoteSetActiveBases(ctx, dc, session, prompt, activeBases)
+			if uerr != nil {
+				fmt.Printf("Error: %v\n", uerr)
+			} else {
+				activeBases = acked
 			}
+			rl, err = readline.NewEx(rlConfig)
+			if err != nil {
+				return fmt.Errorf("error reinitializing readline: %w", err)
+			}
+			log.SetOutput(rl.Stderr())
 			continue
 		}
 		if strings.HasPrefix(prompt, "/") {
@@ -89,26 +116,84 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 	return nil
 }
 
-// remoteSetActiveBases parses "/use-knowledge base1 base2 ..." and sends the
-// active-KB set to the daemon, printing the acknowledged set.
-func remoteSetActiveBases(ctx context.Context, session *apiclient.ChatSession, input string) error {
+// remoteSetActiveBases resolves the desired active knowledge bases and sends
+// them to the daemon as a set-active-kbs frame, returning the acknowledged set.
+// "/use-knowledge base1 base2 ..." uses the inline names; bare "/use-knowledge"
+// opens the same interactive multi-select menu as the direct REPL, fetching the
+// available bases from the daemon over the socket. The daemon expects base names
+// (not full index names) and applies the index prefix itself.
+func remoteSetActiveBases(ctx context.Context, dc *apiclient.Client, session *apiclient.ChatSession, input string, current []string) ([]string, error) {
 	_, args, _ := strings.Cut(strings.TrimSpace(input), " ")
+
 	var bases []string
-	for _, b := range strings.Fields(args) {
-		bases = append(bases, b)
+	if strings.TrimSpace(args) != "" {
+		bases = strings.Fields(args)
+	} else {
+		selected, ok, err := remoteSelectBasesMenu(ctx, dc, current)
+		if err != nil {
+			return current, err
+		}
+		if !ok {
+			// User cancelled the menu — leave the active set unchanged.
+			return current, nil
+		}
+		bases = selected
 	}
+
 	if err := session.SetActiveBases(ctx, bases); err != nil {
-		return err
+		return current, err
 	}
 	msg, err := session.Read(ctx)
 	if err != nil {
-		return err
+		return current, err
 	}
 	if msg.Type == "error" {
-		return fmt.Errorf("%s", msg.Error)
+		return current, fmt.Errorf("%s", msg.Error)
 	}
-	fmt.Printf("Active knowledge bases: %s\n", strings.Join(msg.Bases, ", "))
-	return nil
+	if len(msg.Bases) == 0 {
+		fmt.Println("Active knowledge bases: (none)")
+	} else {
+		fmt.Printf("Active knowledge bases: %s\n", strings.Join(msg.Bases, ", "))
+	}
+	return msg.Bases, nil
+}
+
+// remoteSelectBasesMenu lists knowledge bases from the daemon and presents the
+// interactive multi-select menu, pre-selecting the currently active set. The
+// boolean is false when the user cancelled (Ctrl+C / Esc).
+func remoteSelectBasesMenu(ctx context.Context, dc *apiclient.Client, current []string) ([]string, bool, error) {
+	stop := common.StartProgressSpinner("Fetching knowledge bases")
+	bases, err := dc.ListKnowledge(ctx)
+	stop()
+	if err != nil {
+		return nil, false, fmt.Errorf("listing knowledge bases: %w", err)
+	}
+	if len(bases) == 0 {
+		fmt.Println("No knowledge bases found. Create one with 'knowledge create <name>'.")
+		return nil, false, nil
+	}
+
+	options := make([]huh.Option[string], len(bases))
+	for i, kb := range bases {
+		label := fmt.Sprintf("%s (%s docs, %s)", kb.Name, kb.DocsCount, kb.StoreSize)
+		options[i] = huh.NewOption(label, kb.Name)
+	}
+
+	selected := append([]string{}, current...)
+
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Select active knowledge bases").
+				Options(options...).
+				Value(&selected),
+		),
+	)
+	if err := form.Run(); err != nil {
+		// User cancelled (Ctrl+C / Esc) — keep existing context.
+		return nil, false, nil
+	}
+	return selected, true, nil
 }
 
 // remotePromptTurn sends one prompt and renders streamed frames until the
