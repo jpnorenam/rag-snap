@@ -58,10 +58,12 @@ func serveOnce(ctx context.Context, hup <-chan os.Signal, appCtx *common.Context
 		return err
 	}
 	socket := api.ResolveSocketConfig(appCtx)
+	loopback := api.ResolveLoopbackConfig(appCtx)
 
 	srv := api.New(api.Options{
 		Context:     appCtx,
 		Socket:      socket,
+		Loopback:    loopback,
 		BackendURLs: backendURLs,
 	})
 
@@ -77,5 +79,10 @@ func serveOnce(ctx context.Context, hup <-chan os.Signal, appCtx *common.Context
 	}()
 
 	log.Printf("serving API on %s (group=%s, mode=%o)", socket.Path, socket.Group, socket.Mode)
+	if loopback.Enabled {
+		// The resolved port (when api.loopback.address uses :0) is logged by the
+		// server once the listener is bound; here we log the configured target.
+		log.Printf("loopback API enabled on %s", loopback.Address)
+	}
 	return srv.Serve(runCtx)
 }

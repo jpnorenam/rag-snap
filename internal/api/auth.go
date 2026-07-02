@@ -2,14 +2,49 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"net"
 	"net/http"
 	"os/user"
 	"strconv"
+	"strings"
 
 	"golang.org/x/sys/unix"
 )
+
+// transportKind identifies which listener accepted a connection, so the auth
+// seam can pick the right check: peercred for the unix socket, the localhost
+// token for the loopback listener.
+type transportKind int
+
+const (
+	// transportUnix is the unix-socket transport (SO_PEERCRED). It is the zero
+	// value so an unmarked connection (e.g. an older test dialling directly)
+	// defaults to the historical peercred path.
+	transportUnix transportKind = iota
+	// transportLoopback is the loopback TCP transport (bearer-token auth).
+	transportLoopback
+)
+
+// transportContextKey is the context key under which a connection's transport
+// kind is stored by connContext and read by authenticate.
+type transportContextKey struct{}
+
+// uiTokenCookie is the cookie name carrying the localhost token for clients that
+// cannot set an Authorization header (notably a browser websocket upgrade). The
+// name is retained from the UI branch for continuity (design Decision 3).
+const uiTokenCookie = "rag_ui_token"
+
+// transportFromRequest returns the transport the request's connection arrived
+// on. An unmarked connection defaults to transportUnix, preserving the original
+// single-listener behaviour and keeping the existing peercred tests valid.
+func transportFromRequest(r *http.Request) transportKind {
+	if t, ok := r.Context().Value(transportContextKey{}).(transportKind); ok {
+		return t
+	}
+	return transportUnix
+}
 
 // peerCred holds the operating-system credentials of a unix-socket peer, read
 // via SO_PEERCRED at accept time. err records any failure to read the creds so
@@ -74,14 +109,20 @@ func readPeerCred(conn net.Conn) peerCred {
 	return cred
 }
 
-// connContext stamps each connection's captured peer credentials onto the
-// per-connection base context, so handlers can read them via the request
-// context. Wired into http.Server.ConnContext.
+// connContext stamps each connection's transport (and, for the unix socket, its
+// captured peer credentials) onto the per-connection base context, so the auth
+// seam can pick the right check. Wired into http.Server.ConnContext for both
+// listeners.
 func connContext(ctx context.Context, c net.Conn) context.Context {
-	if cc, ok := c.(*credConn); ok {
+	switch cc := c.(type) {
+	case *credConn:
+		ctx = context.WithValue(ctx, transportContextKey{}, transportUnix)
 		return context.WithValue(ctx, credContextKey{}, cc.cred)
+	case *loopbackConn:
+		return context.WithValue(ctx, transportContextKey{}, transportLoopback)
+	default:
+		return ctx
 	}
-	return ctx
 }
 
 // credFromRequest returns the peer credentials captured for the request's
@@ -99,11 +140,14 @@ type authResult struct {
 	reason string
 }
 
-// authenticate decides whether a request's peer is trusted. Access is granted
-// iff the peer's effective user is root (uid 0) or a member of the configured
-// access group. This is the single auth seam; the remote-auth change will add a
-// non-peercred branch here for cert/token clients.
+// authenticate decides whether a request's peer is trusted. It is the single
+// auth seam, transport-aware: a loopback request is authenticated by the
+// localhost bearer token; a unix-socket request is authenticated by SO_PEERCRED
+// (root or a member of the configured access group).
 func (s *Server) authenticate(r *http.Request) authResult {
+	if transportFromRequest(r) == transportLoopback {
+		return s.authenticateToken(r)
+	}
 	cred, ok := credFromRequest(r)
 	if !ok {
 		// No peer credentials available. This only happens off the unix
@@ -124,6 +168,48 @@ func (s *Server) authenticate(r *http.Request) authResult {
 		return authResult{trusted: true}
 	}
 	return authResult{reason: fmt.Sprintf("permission denied: user must be a member of the %q group", s.socket.Group)}
+}
+
+// authenticateToken authenticates a loopback request by the localhost bearer
+// token, presented as an "Authorization: Bearer <token>" header or the
+// rag_ui_token cookie (the cookie path lets a browser websocket upgrade, which
+// cannot set headers, carry the token). Comparison is constant-time.
+func (s *Server) authenticateToken(r *http.Request) authResult {
+	if s.token == "" {
+		return authResult{reason: "localhost token is not configured"}
+	}
+	presented := bearerToken(r)
+	if presented == "" {
+		presented = uiTokenFromCookie(r)
+	}
+	if presented == "" {
+		return authResult{reason: "missing localhost token"}
+	}
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(s.token)) == 1 {
+		return authResult{trusted: true}
+	}
+	return authResult{reason: "invalid localhost token"}
+}
+
+// bearerToken extracts the token from an "Authorization: Bearer <token>" header,
+// or "" if the header is absent or not a bearer credential.
+func bearerToken(r *http.Request) string {
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if len(h) < len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
+		return ""
+	}
+	return strings.TrimSpace(h[len(prefix):])
+}
+
+// uiTokenFromCookie returns the localhost token carried in the rag_ui_token
+// cookie, or "" when the cookie is absent.
+func uiTokenFromCookie(r *http.Request) string {
+	c, err := r.Cookie(uiTokenCookie)
+	if err != nil {
+		return ""
+	}
+	return c.Value
 }
 
 // userInGroup reports whether the user with the given uid is a member of the
