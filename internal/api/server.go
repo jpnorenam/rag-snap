@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"time"
@@ -37,12 +38,21 @@ var apiExtensions = []string{
 type Server struct {
 	ctx      *common.Context
 	socket   SocketConfig
+	loopback LoopbackConfig
 	backends *backendState
 	clients  *clientCache
 	events   *eventsHub
 	ops      *operations
 	httpSrv  *http.Server
 	listener net.Listener
+	// token is the localhost bearer token authenticating loopback requests. It
+	// is populated by startLoopback when the loopback listener is enabled and
+	// left empty otherwise (no token → no token-authenticated surface).
+	token string
+	// loopbackSrv and loopbackListenAddr are the loopback HTTP server and its
+	// resolved listen address, set when the loopback listener is enabled.
+	loopbackSrv        *http.Server
+	loopbackListenAddr string
 }
 
 // Options configure a Server.
@@ -51,6 +61,8 @@ type Options struct {
 	Context *common.Context
 	// Socket describes the unix socket path/group/mode.
 	Socket SocketConfig
+	// Loopback describes the opt-in loopback TCP listener (disabled by default).
+	Loopback LoopbackConfig
 	// BackendURLs maps service name ("opensearch"/"openai"/"tika") to base URL.
 	BackendURLs map[string]string
 }
@@ -61,6 +73,7 @@ func New(opts Options) *Server {
 	s := &Server{
 		ctx:      opts.Context,
 		socket:   opts.Socket,
+		loopback: opts.Loopback,
 		backends: newBackendState(opts.BackendURLs),
 		clients:  newClientCache(opts.Context, opts.BackendURLs),
 		events:   newEventsHub(),
@@ -89,20 +102,72 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	s.listener = ln
 
+	// Open the opt-in loopback listener before serving the socket, so a
+	// misconfigured (non-loopback) bind is a fatal startup error rather than a
+	// silent downgrade. Close the unix listener if it fails.
+	var loopbackLn net.Listener
+	if s.loopback.Enabled {
+		loopbackLn, err = s.startLoopback()
+		if err != nil {
+			_ = ln.Close()
+			return err
+		}
+	}
+
 	go s.backends.poll(ctx, 10*time.Second)
 
-	// Shut the HTTP server down when the context is cancelled.
+	// Shut both HTTP servers down when the context is cancelled.
 	go func() {
 		<-ctx.Done()
 		shutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = s.httpSrv.Shutdown(shutCtx)
+		if s.loopbackSrv != nil {
+			_ = s.loopbackSrv.Shutdown(shutCtx)
+		}
 	}()
+
+	// Serve the loopback listener in the background; the unix socket remains the
+	// primary blocking serve loop.
+	if loopbackLn != nil {
+		go func() {
+			if err := s.loopbackSrv.Serve(loopbackLn); err != nil && err != http.ErrServerClosed {
+				log.Printf("loopback listener stopped: %v", err)
+			}
+		}()
+	}
 
 	if err := s.httpSrv.Serve(ln); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
+}
+
+// startLoopback ensures the localhost token, builds the loopback router, binds
+// the loopback listener, and prepares the loopback HTTP server (records the
+// resolved address and logs it). It returns the listener for Serve to serve in a
+// goroutine. Any error is fatal to startup.
+func (s *Server) startLoopback() (net.Listener, error) {
+	_, token, err := localhostToken()
+	if err != nil {
+		return nil, fmt.Errorf("preparing localhost token: %w", err)
+	}
+	s.token = token
+
+	ln, err := listenLoopback(s.loopback)
+	if err != nil {
+		return nil, err
+	}
+	s.loopbackListenAddr = ln.Addr().String()
+
+	s.loopbackSrv = &http.Server{
+		Handler:           s.loopbackRoutes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		// Tag each connection as loopback so the auth seam uses token auth.
+		ConnContext: connContext,
+	}
+	log.Printf("serving loopback API on %s", s.loopbackListenAddr)
+	return ln, nil
 }
 
 // routes builds the HTTP router. The version root GET / is reachable by an
@@ -115,6 +180,30 @@ func (s *Server) routes() http.Handler {
 	// Discovery: open to untrusted callers.
 	mux.HandleFunc("GET /{$}", s.handleRoot)
 
+	s.registerAPI(mux)
+
+	return mux
+}
+
+// loopbackRoutes builds the router served on the loopback listener. It registers
+// exactly the same /1.0/... API as the unix socket (via registerAPI) plus the
+// discovery root, and nothing else: no /ui/ assets, no /ui/login, no root
+// redirect — those belong to the deferred UI change.
+func (s *Server) loopbackRoutes() http.Handler {
+	mux := http.NewServeMux()
+
+	// Discovery: open to untrusted callers, same as the socket.
+	mux.HandleFunc("GET /{$}", s.handleRoot)
+
+	s.registerAPI(mux)
+
+	return mux
+}
+
+// registerAPI registers the /1.0/... handlers on mux. It is called from both
+// routes() (unix socket) and loopbackRoutes() (loopback listener) so the two
+// transports always expose an identical API surface and can never drift.
+func (s *Server) registerAPI(mux *http.ServeMux) {
 	// Server info.
 	mux.HandleFunc("GET /1.0", s.requireAuth(s.handleServerInfo))
 	mux.HandleFunc("GET /1.0/{$}", s.requireAuth(s.handleServerInfo))
@@ -150,8 +239,6 @@ func (s *Server) routes() http.Handler {
 
 	// Batch answering (prepared manifest, async operation).
 	mux.HandleFunc("POST /1.0/answer/batch", s.requireAuth(s.handleAnswerBatch))
-
-	return mux
 }
 
 // swagger:route GET / server apiRoot
@@ -206,7 +293,7 @@ func (s *Server) authState(r *http.Request) string {
 // for diagnostics. It exposes backend URLs and the socket group/mode only; no
 // credentials are read or returned (secrets live in env vars, never config).
 func (s *Server) configSummary() map[string]any {
-	return map[string]any{
+	summary := map[string]any{
 		"backend_urls": s.backends.urls,
 		"socket": map[string]any{
 			"path":  s.socket.Path,
@@ -214,4 +301,22 @@ func (s *Server) configSummary() map[string]any {
 			"mode":  fmt.Sprintf("%#o", s.socket.Mode),
 		},
 	}
+
+	// Report the loopback listener state. When enabled, expose the resolved
+	// address/url and the localhost token so a trusted client (this endpoint is
+	// peercred-gated to exactly the token's grantees) can reach the listener
+	// without reading the owner-only token file. Kept out of the summary when
+	// disabled so no token is ever returned for an inactive listener.
+	loopback := map[string]any{"enabled": s.loopback.Enabled}
+	if s.loopback.Enabled {
+		loopback["address"] = s.loopbackListenAddr
+		loopback["url"] = "http://" + s.loopbackListenAddr
+		loopback["token"] = s.token
+		if path, err := tokenPath(); err == nil {
+			loopback["token_path"] = path
+		}
+	}
+	summary["loopback"] = loopback
+
+	return summary
 }

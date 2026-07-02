@@ -32,6 +32,9 @@ const (
 
 	confAPISocketGroup = "api.socket.group"
 	confAPISocketMode  = "api.socket.mode"
+
+	confAPILoopbackEnabled = "api.loopback.enabled"
+	confAPILoopbackAddress = "api.loopback.address"
 )
 
 // Backend names used as keys in the BackendURLs map and readiness tracker.
@@ -48,7 +51,37 @@ const (
 	// chowned to api.socket.group under strict confinement; the SO_PEERCRED check
 	// is the access gate, not the file mode. See socket.go / design Decision 1.
 	defaultSocketMode = 0o666
+
+	// defaultLoopbackAddress binds an OS-assigned port on the loopback interface.
+	// The resolved port is discovered at runtime and reported in GET /1.0.
+	defaultLoopbackAddress = "127.0.0.1:0"
 )
+
+// LoopbackConfig describes the opt-in loopback TCP listener. It is disabled by
+// default; when enabled the daemon serves the same /1.0 API it serves over the
+// unix socket, authenticated by the localhost bearer token instead of peercred.
+type LoopbackConfig struct {
+	// Enabled controls whether the daemon opens the loopback listener at all
+	// (api.loopback.enabled, default false — opt-in like the daemon itself).
+	Enabled bool
+	// Address is the loopback bind address (api.loopback.address, default
+	// 127.0.0.1:0). A non-loopback value is refused by listenLoopback.
+	Address string
+}
+
+// ResolveLoopbackConfig reads the api.loopback.* keys, applying defaults when
+// unset. Like ResolveSocketConfig it never returns an error for a missing key:
+// the listener is opt-in and simply stays off when the key is absent.
+func ResolveLoopbackConfig(ctx *common.Context) LoopbackConfig {
+	address, _ := config.GetString(ctx.Config, confAPILoopbackAddress)
+	if address == "" {
+		address = defaultLoopbackAddress
+	}
+	return LoopbackConfig{
+		Enabled: getBool(ctx, confAPILoopbackEnabled, false),
+		Address: address,
+	}
+}
 
 // ResolveBackendURLs builds the service URL map from config. It is the daemon's
 // equivalent of the CLI's serverApiUrls and reads the same keys. Missing keys
