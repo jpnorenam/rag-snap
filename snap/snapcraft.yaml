@@ -57,13 +57,29 @@ parts:
     plugin: go
     build-snaps:
       - go/1.24/stable
+      - node/20/stable
     source: .
     source-type: local
     override-build: |
+      # Build the browser UI (Next.js static export) and copy it into the
+      # go:embed directory BEFORE the Go build, so ragd embeds the real SPA
+      # rather than the committed placeholder. The project already vendors a
+      # Node tarball for elasticdump, so a Node toolchain in the build is
+      # precedented; here we use the node build-snap for the static export.
+      (
+        cd ui
+        npm ci
+        npm run build
+      )
+      rm -rf internal/webui/dist
+      mkdir -p internal/webui/dist
+      cp -r ui/out/. internal/webui/dist/
+
       CGO_ENABLED=0 go build -trimpath \
         -ldflags="-w -s" \
         -o "${CRAFT_PART_INSTALL}/bin/cli" ./cmd/cli
       # ragd is the REST API daemon (opt-in service, see the `ragd` app below).
+      # It embeds the UI built above and serves it on the loopback listener.
       CGO_ENABLED=0 go build -trimpath \
         -ldflags="-w -s" \
         -o "${CRAFT_PART_INSTALL}/bin/ragd" ./cmd/ragd

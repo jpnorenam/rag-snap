@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"log"
 	"net"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
+	"github.com/jpnorenam/rag-snap/internal/webui"
 )
 
 // apiVersion is the single supported major API version. New backward-compatible
@@ -160,8 +162,13 @@ func (s *Server) startLoopback() (net.Listener, error) {
 	}
 	s.loopbackListenAddr = ln.Addr().String()
 
+	handler, err := s.loopbackRoutes()
+	if err != nil {
+		_ = ln.Close()
+		return nil, fmt.Errorf("building loopback routes: %w", err)
+	}
 	s.loopbackSrv = &http.Server{
-		Handler:           s.loopbackRoutes(),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		// Tag each connection as loopback so the auth seam uses token auth.
 		ConnContext: connContext,
@@ -186,18 +193,64 @@ func (s *Server) routes() http.Handler {
 }
 
 // loopbackRoutes builds the router served on the loopback listener. It registers
-// exactly the same /1.0/... API as the unix socket (via registerAPI) plus the
-// discovery root, and nothing else: no /ui/ assets, no /ui/login, no root
-// redirect — those belong to the deferred UI change.
-func (s *Server) loopbackRoutes() http.Handler {
+// the same /1.0/... API as the unix socket (via registerAPI) plus, unlike the
+// socket, the embedded browser UI: static assets under /ui/ (unauthenticated so
+// the shell can load), a GET / redirect into /ui/, and the /ui/login token
+// handoff. The loopback listener carries no peer credentials, so requireAuth
+// resolves to the token check on this transport while /ui/ assets stay open.
+func (s *Server) loopbackRoutes() (http.Handler, error) {
+	uiHandler, err := webui.Handler()
+	if err != nil {
+		return nil, err
+	}
+
 	mux := http.NewServeMux()
 
-	// Discovery: open to untrusted callers, same as the socket.
-	mux.HandleFunc("GET /{$}", s.handleRoot)
+	// Discovery root: redirect a browser hitting / into the UI.
+	mux.HandleFunc("GET /{$}", s.handleRootRedirect)
+
+	// Token handoff: `rag ui` opens /ui/login?token=... which sets a loopback
+	// cookie and redirects into the SPA, so same-origin API/websocket calls
+	// authenticate automatically without the token touching the SPA's JS.
+	mux.HandleFunc("GET /ui/login", s.handleUILogin)
+
+	// Static UI assets (unauthenticated). StripPrefix so the embedded FS sees
+	// paths rooted at the SPA root.
+	mux.Handle("/ui/", http.StripPrefix("/ui", uiHandler))
 
 	s.registerAPI(mux)
 
-	return mux
+	return mux, nil
+}
+
+// handleRootRedirect sends a browser hitting / on the loopback listener to the
+// UI under /ui/.
+func (s *Server) handleRootRedirect(w http.ResponseWriter, r *http.Request) {
+	http.Redirect(w, r, "/ui/", http.StatusFound)
+}
+
+// handleUILogin is the token handoff endpoint `rag ui` opens. It validates the
+// token in the query string against the daemon token, sets it as an HttpOnly
+// cookie scoped to the loopback origin, and redirects into the SPA. This keeps
+// the token out of the SPA's JavaScript and out of the address bar (the cookie
+// then travels with every same-origin API call and the chat websocket upgrade).
+// It is reachable without prior authentication so a freshly launched browser can
+// present the token it was given.
+func (s *Server) handleUILogin(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if s.token == "" || token == "" ||
+		subtle.ConstantTimeCompare([]byte(token), []byte(s.token)) != 1 {
+		http.Error(w, "invalid token", http.StatusForbidden)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{
+		Name:     uiTokenCookie,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+	http.Redirect(w, r, "/ui/", http.StatusFound)
 }
 
 // registerAPI registers the /1.0/... handlers on mux. It is called from both
