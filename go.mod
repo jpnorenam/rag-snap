@@ -9,12 +9,14 @@ require (
 	github.com/canonical/go-snapctl v1.0.0-beta.4
 	github.com/charmbracelet/huh v0.8.0
 	github.com/chzyer/readline v1.5.1
+	github.com/coder/websocket v1.8.15
 	github.com/fatih/color v1.18.0
 	github.com/markusmobius/go-trafilatura v1.12.2
 	github.com/openai/openai-go/v3 v3.11.0
 	github.com/opensearch-project/opensearch-go/v4 v4.6.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/net v0.49.0
+	golang.org/x/sys v0.40.0
 	golang.org/x/term v0.39.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -73,6 +75,5 @@ require (
 	github.com/yosssi/gohtml v0.0.0-20201013000340-ee4748c638f4 // indirect
 	golang.org/x/exp v0.0.0-20241009180824-f66d83c29e7c // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.40.0 // indirect
 	golang.org/x/text v0.33.0 // indirect
 )

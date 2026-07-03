@@ -30,5 +30,18 @@ export OPENSEARCH_PASSWORD="admin"
 #   sudo rag set gdrive.client.secret=<client-secret>
 snapctl set config.package.gdrive.client.id=""
 snapctl set config.package.gdrive.client.secret=""
+
+# Register the REST API daemon (ragd) socket keys. Members of api.socket.group
+# (plus root) may access the local unix socket; access is enforced by the daemon's
+# SO_PEERCRED check, not by the socket's file ownership (under strict confinement
+# the daemon cannot chown the socket to an arbitrary group). api.socket.mode is the
+# socket's octal file mode and defaults to 0666 (world-connectable at the DAC
+# layer) so non-root group members can reach it; the peercred check is the gate.
+# Seeded as package keys so they can be overridden with:
+#   sudo rag set api.socket.group=<group>
+#   sudo rag set api.socket.mode=<mode>
+snapctl set config.package.api.socket.group="rag"
+snapctl set config.package.api.socket.mode="0666"
 #
 # sudo snap start $SNAP_INSTANCE_NAME.tika-server
+# sudo snap start $SNAP_INSTANCE_NAME.ragd
