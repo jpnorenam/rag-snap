@@ -22,6 +22,7 @@ using any `knowledge` sub-command.
 | `knowledge list --sources` | List ingested source documents |
 | `knowledge create <name>` | Create a new knowledge base |
 | `knowledge ingest <name> <source-id>` | Ingest a document into a knowledge base |
+| `knowledge ingest <name> <source-id> --format rfp` | Ingest a CSV of previous RFP question/answer pairs, one chunk per row |
 | `knowledge ingest --batch <config.yaml>` | Ingest multiple documents from a YAML config file |
 | `knowledge search <query>` | Semantic + lexical search across one or more bases |
 | `knowledge metadata <name> <source-id>` | Show metadata for an ingested source |
@@ -148,6 +149,7 @@ rag-cli.rag knowledge ingest <knowledge_base_name> <source_id> (--file <path> | 
 | `--file` | `-f` | one of three | Local file path (PDF, HTML, plain text, …) |
 | `--url` | `-u` | one of three | URL of a static HTML page to fetch and extract |
 | `--batch` | `-B` | one of three | YAML batch config file — ingest multiple documents at once |
+| `--format` | | No | Input format. Use `rfp` to ingest a CSV of question/answer/source rows (requires `--file`). Default auto-detects via Tika. |
 | `--force` | | No | Re-ingest the source even if it is already recorded as `completed` |
 
 `<source_id>` is a human-readable identifier you choose (e.g. `snap-docs`, `rag-wiki`). It is used
@@ -172,6 +174,58 @@ Ingested 37 chunks into index 'rag-kb-wiki-rag'
 > **Note on JavaScript-heavy pages:** `--url` fetches and extracts static HTML. Pages that render
 > their content entirely in JavaScript (SPAs) will produce an error with a suggestion to save the
 > rendered page locally and use `--file` instead.
+
+---
+
+### `knowledge ingest --format rfp`
+
+Ingest a CSV of previous RFP/RFI question-and-answer pairs. Each row becomes its own chunk that
+keeps the question and answer together, so a search for a similar future question retrieves the
+matching answer as a single unit — instead of the chunker splitting the question and answer apart
+or mixing unrelated rows into one chunk.
+
+```
+rag-cli.rag knowledge ingest <knowledge_base_name> <source_id> --file <path.csv> --format rfp
+```
+
+#### CSV layout
+
+The first row is treated as a header and skipped. Columns are read positionally:
+
+| Column | Content |
+|---|---|
+| A | Question |
+| B | Answer |
+| C | Source / reference (optional — e.g. the original document the answer came from) |
+
+Extra columns are ignored. Rows where both the question and answer are empty are skipped.
+
+#### Chunking behaviour
+
+Each row is rendered as a single chunk:
+
+```
+Question: <question text>
+
+Answer: <answer text>
+
+Reference: <source>
+```
+
+(the `Reference:` line is omitted if column C is empty). If the rendered chunk exceeds the default
+chunk size, the answer is split into multiple chunks, with the `Question:` and `Reference:` lines
+repeated on every segment so each chunk remains self-contained and embeddings stay anchored to the
+original question. No overlap is applied between chunks — `knowledge metadata` reports
+`overlap=0` for sources ingested this way.
+
+**Example**
+
+```bash
+$ rag-cli.rag knowledge ingest sales master-rfp --file MasterRFP.csv --format rfp
+Ingested 1889/1889 chunks into index 'rag-kb-sales'
+```
+
+`--format rfp` requires `--file` (CSV input); it cannot be combined with `--url` or `--batch`.
 
 ---
 
