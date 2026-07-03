@@ -201,9 +201,6 @@ apps:
     plugs:
       # Reach the OpenSearch, inference, and Tika backends over the network.
       - network
-      # network-bind also lets the opt-in loopback listener bind its port when
-      # api.loopback.enabled=true. The bind is loopback-only: the daemon refuses
-      # any non-loopback address (enforced in internal/api/loopback.go).
       - network-bind
     environment:
       # Backend secrets live on the daemon service environment only, never in

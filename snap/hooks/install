@@ -42,16 +42,6 @@ snapctl set config.package.gdrive.client.secret=""
 #   sudo rag set api.socket.mode=<mode>
 snapctl set config.package.api.socket.group="rag"
 snapctl set config.package.api.socket.mode="0666"
-
-# Register the opt-in loopback (local REST API) listener keys. When enabled, ragd
-# also serves the /1.0 API over a 127.0.0.1 TCP listener authenticated by a
-# per-installation bearer token (peercred is unavailable for TCP). The listener is
-# OFF by default; the bind is loopback-only and a non-loopback address is refused
-# by the daemon. Seeded as package keys so they can be overridden with:
-#   sudo rag set api.loopback.enabled=true
-#   sudo rag set api.loopback.address=127.0.0.1:0   # :0 = OS-assigned port
-snapctl set config.package.api.loopback.enabled="false"
-snapctl set config.package.api.loopback.address="127.0.0.1:0"
 #
 # sudo snap start $SNAP_INSTANCE_NAME.tika-server
 # sudo snap start $SNAP_INSTANCE_NAME.ragd

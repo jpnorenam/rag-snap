@@ -6,16 +6,13 @@ socket**. It owns the long-lived OpenSearch, inference, and Tika clients and hol
 backend secrets, so any local program — including the `rag` CLI itself — can drive the RAG
 stack without rebuilding clients or handling credentials.
 
-The surface is deliberately small: a unix socket (access gated by socket group membership),
-an **opt-in loopback TCP listener** for local clients that cannot dial a unix socket (gated by
-a per-installation bearer token), async operations with a progress events websocket, and an
-auto-generated OpenAPI specification. Remote HTTPS access is intentionally **not** part of this
-surface — the loopback listener binds `127.0.0.1` only and refuses any non-loopback address.
+The surface is deliberately small: a single unix socket, full access gated only by socket
+group membership, async operations with a progress events websocket, and an auto-generated
+OpenAPI specification. Remote HTTPS access is intentionally **not** part of this surface.
 
 - [Security model](#security-model)
 - [Service management](#service-management)
 - [Socket configuration](#socket-configuration)
-- [Loopback (local REST API over TCP)](#loopback-local-rest-api-over-tcp)
 - [CLI integration](#cli-integration)
 - [Quick start over the socket](#quick-start-over-the-socket)
 - [Response envelope](#response-envelope)
@@ -123,85 +120,6 @@ newgrp rag   # or log out and back in
 
 A connection from a user outside the group and not `root` is rejected with HTTP `403` and a
 message naming the group to join.
-
----
-
-## Loopback (local REST API over TCP)
-
-The unix socket is unreachable by a browser and awkward for non-CLI local clients (scripts,
-another process). `ragd` can **optionally** serve the exact same `/1.0` API over a loopback TCP
-listener bound to `127.0.0.1`. This is off by default and controlled by two package-scoped,
-user-overridable config keys:
-
-| Key | Default | Purpose |
-|---|---|---|
-| `api.loopback.enabled` | `false` | Whether the daemon opens the loopback listener at all. |
-| `api.loopback.address` | `127.0.0.1:0` | Loopback bind address. `:0` means an OS-assigned port, discovered at runtime. A non-loopback host (e.g. `0.0.0.0:8080` or an empty host `:8080`) is **refused** — the daemon fails to start rather than exposing the API on a LAN. |
-
-```bash
-# Enable the loopback listener and restart the daemon to pick it up.
-sudo rag set api.loopback.enabled=true
-sudo snap restart rag-cli.ragd
-```
-
-### Token model
-
-Because `SO_PEERCRED` is unavailable for TCP peers, loopback requests authenticate with a
-**per-installation bearer token** rather than by group membership. On first enable the daemon
-generates a high-entropy (256-bit) token, persists it owner-only (`0600`) under
-`$SNAP_COMMON/ragd/ui.token` so it survives restarts, and reuses it thereafter. The comparison
-is constant-time.
-
-The token value is **never read off disk by clients**. Instead the daemon returns it in the
-`GET /1.0` config summary, which is already peercred-gated to `root` and access-group members
-— exactly the principals the token is scoped to grant. (This mirrors why the token file is not
-made group-readable: under strict confinement the daemon cannot `chown` it to a group without
-crashing, so delivery over the trusted socket is used instead.)
-
-### Discovering the port and token over the socket
-
-A trusted unix-socket client reads both the resolved port and the token from `GET /1.0` under
-`config.loopback`:
-
-```bash
-SOCK=/var/snap/rag-cli/common/ragd/unix.socket
-
-# The config summary's loopback section carries enabled/address/url/token/token_path.
-curl --unix-socket "$SOCK" http://ragd/1.0 | jq '.metadata.config.loopback'
-# {
-#   "enabled": true,
-#   "address": "127.0.0.1:38283",
-#   "url": "http://127.0.0.1:38283",
-#   "token": "…64 hex chars…",
-#   "token_path": "/var/snap/rag-cli/common/ragd/ui.token"
-# }
-```
-
-### Calling the API over loopback
-
-Present the token as an `Authorization: Bearer` header (a browser websocket upgrade that
-cannot set headers may instead carry it as the `rag_ui_token` cookie):
-
-```bash
-SOCK=/var/snap/rag-cli/common/ragd/unix.socket
-URL=$(curl -s --unix-socket "$SOCK" http://ragd/1.0 | jq -r '.metadata.config.loopback.url')
-TOKEN=$(curl -s --unix-socket "$SOCK" http://ragd/1.0 | jq -r '.metadata.config.loopback.token')
-
-# Authenticated request over the loopback port.
-curl -H "Authorization: Bearer $TOKEN" "$URL/1.0"
-
-# The same request without the token is rejected with 403.
-curl -i "$URL/1.0"
-```
-
-The unix socket and its `SO_PEERCRED` gate are unchanged when the loopback listener is enabled;
-the two transports share one handler set and never diverge. To turn the listener back off, `sudo
-rag set api.loopback.enabled=false` and restart the daemon; the owner-only token file is inert
-while disabled.
-
-> **Inference API key:** the loopback listener serves the same RAG stack, so giving the daemon
-> a chat/inference key works exactly as for the socket — via the root-only systemd drop-in in
-> [Service management](#service-management), never through config or the token.
 
 ---
 

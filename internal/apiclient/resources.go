@@ -41,33 +41,6 @@ type Source struct {
 	Language      string `json:"language,omitempty"`
 }
 
-// LoopbackInfo is the client view of the loopback listener's state from the
-// GET /1.0 config summary. When Enabled, Address/URL give the resolved listen
-// address and Token is the localhost bearer token — obtained here over the
-// trusted unix socket so a client never reads the owner-only token file.
-type LoopbackInfo struct {
-	Enabled   bool   `json:"enabled"`
-	Address   string `json:"address,omitempty"`
-	URL       string `json:"url,omitempty"`
-	Token     string `json:"token,omitempty"`
-	TokenPath string `json:"token_path,omitempty"`
-}
-
-// ServerInfo fetches GET /1.0 and returns the loopback section of its config
-// summary, so a trusted unix-socket client can discover the loopback listener's
-// (OS-assigned) port and its bearer token.
-func (c *Client) ServerInfo(ctx context.Context) (*LoopbackInfo, error) {
-	var info struct {
-		Config struct {
-			Loopback LoopbackInfo `json:"loopback"`
-		} `json:"config"`
-	}
-	if err := c.Sync(ctx, "GET", "/1.0", nil, &info); err != nil {
-		return nil, err
-	}
-	return &info.Config.Loopback, nil
-}
-
 // SearchHit is the client view of a single search result.
 type SearchHit struct {
 	Score      float64 `json:"score"`
