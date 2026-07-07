@@ -130,9 +130,17 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 		resources, true,
 		func(ctx context.Context, op *Operation) error {
 			op.UpdateMetadata(map[string]any{"questions_total": total, "questions_done": 0})
+			// Publish each answer as it completes so a client can render the
+			// Q&A pairs live, matching the direct-mode `answer batch` output.
+			var done []chat.BatchResult
 			hooks := chat.BatchHooks{
-				OnResult: func(i, total int, _ chat.BatchResult) {
-					op.UpdateMetadata(map[string]any{"questions_total": total, "questions_done": i + 1})
+				OnResult: func(i, total int, r chat.BatchResult) {
+					done = append(done, r)
+					op.UpdateMetadata(map[string]any{
+						"questions_total": total,
+						"questions_done":  i + 1,
+						"results":         append([]chat.BatchResult(nil), done...),
+					})
 				},
 				OnError: func(i, total int, _ chat.BatchQuestion, _ error) {
 					op.UpdateMetadata(map[string]any{"questions_total": total, "questions_done": i + 1})

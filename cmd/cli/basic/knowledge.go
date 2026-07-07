@@ -261,6 +261,8 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 				}
 				fmt.Printf("Ingested source '%s' into knowledge base '%s'\n", sourceID, knowledgeBaseName)
 				return nil
+			}
+
 			if formatFlag != "" && formatFlag != "rfp" {
 				return fmt.Errorf("unsupported format %q (supported: rfp)", formatFlag)
 			}
