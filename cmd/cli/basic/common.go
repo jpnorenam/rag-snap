@@ -3,7 +3,9 @@ package basic
 import (
 	"fmt"
 	"net/url"
+	"os"
 
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
 	"github.com/jpnorenam/rag-snap/pkg/storage"
@@ -129,6 +131,28 @@ func getConfigBool(ctx *common.Context, key string, fallback bool) bool {
 		return fallback
 	}
 	return val == "true" || val == "1"
+}
+
+// buildKapaClient reads kapa configuration and environment variables and
+// returns a ready-to-use KapaClient. Returns nil when Kapa is disabled or
+// credentials are not configured.
+func buildKapaClient(ctx *common.Context) *knowledge.KapaClient {
+	enabled := getConfigBool(ctx, knowledge.ConfKapaEnabled, true)
+	if !enabled {
+		return nil
+	}
+	apiKey, _ := getConfigString(ctx, knowledge.ConfKapaAPIKey)
+	if v := os.Getenv("KAPA_API_KEY"); v != "" {
+		apiKey = v
+	}
+	projectID, _ := getConfigString(ctx, knowledge.ConfKapaProjectID)
+	if v := os.Getenv("KAPA_PROJECT_ID"); v != "" {
+		projectID = v
+	}
+	if apiKey != "" && projectID != "" {
+		return knowledge.NewKapaClient(projectID, apiKey)
+	}
+	return nil
 }
 
 func serverApiUrls(ctx *common.Context) (map[string]string, error) {

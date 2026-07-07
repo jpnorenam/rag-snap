@@ -26,14 +26,11 @@ type extractedKeywords struct {
 }
 
 // sourceLabel returns a provenance tag for a search hit based on its index name.
-// - Index names containing "kapa"     → [KAPA-CANONICAL] (official Canonical public docs)
-// - Index names containing "upstream" → [UPSTREAM] (third-party upstream docs)
-// - All others                        → [CANONICAL] (private internal documents)
 // Convention: when ingesting open-source / third-party documentation, the KB name
 // must include "upstream" (e.g. "openstack-upstream", "kubernetes-upstream").
 func sourceLabel(indexName string) string {
 	lower := strings.ToLower(indexName)
-	if strings.Contains(lower, "kapa") {
+	if lower == knowledge.KapaIndexName {
 		return "[KAPA-CANONICAL]"
 	}
 	if strings.Contains(lower, "upstream") {
@@ -64,7 +61,7 @@ func formatContext(hits []knowledge.SearchHit) string {
 // Returns an empty string when no sources are configured or retrieval yields nothing.
 func retrieveContext(session *Session, query, lexicalQuery string, verbose bool) string {
 	hasLocal := session.KnowledgeClient != nil && len(session.ActiveIndexes) > 0 && session.EmbeddingModelID != ""
-	hasKapa := session.KapaClient != nil && session.KapaEnabled
+	hasKapa := session.KapaClient != nil && len(session.ActiveKapaGroups) > 0
 
 	if !hasLocal && !hasKapa {
 		return ""
@@ -94,10 +91,13 @@ func retrieveContext(session *Session, query, lexicalQuery string, verbose bool)
 	}
 
 	if hasKapa {
+		if verbose {
+			fmt.Printf("Kapa search: groups=%v\n", session.ActiveKapaGroups)
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			kapaHits, kapaErr = session.KapaClient.Search(context.Background(), query, defaultRAGTopK)
+			kapaHits, kapaErr = session.KapaClient.Search(context.Background(), query, defaultRAGTopK, session.ActiveKapaGroups)
 		}()
 	}
 
@@ -291,9 +291,11 @@ func formatConversationForRewrite(messages []openai.ChatCompletionMessageParamUn
 // ragSourceRules is the non-negotiable source-grounding block appended to any
 // custom manifest prompt to ensure [CANONICAL]/[UPSTREAM] rules are always active.
 const ragSourceRules = "Source rules (mandatory, override any prior instruction):\n" +
-	"- Context chunks are tagged [CANONICAL] or [UPSTREAM]. [CANONICAL] is the sole authoritative source.\n" +
-	"- Only name a product or component if a [CANONICAL] chunk explicitly documents it. Do NOT name anything found only in [UPSTREAM] chunks.\n" +
-	"- If the question names a product as an example, do not repeat or endorse it unless a [CANONICAL] chunk confirms it.\n" +
+	"- Context chunks are tagged [CANONICAL], [KAPA-CANONICAL], or [UPSTREAM].\n" +
+	"- [CANONICAL] (private internal documents) takes precedence over [KAPA-CANONICAL] on the same point.\n" +
+	"- [KAPA-CANONICAL] (official Canonical public documentation) takes precedence over [UPSTREAM].\n" +
+	"- Only name a product or component if a [CANONICAL] or [KAPA-CANONICAL] chunk explicitly documents it. Do NOT name anything found only in [UPSTREAM] chunks.\n" +
+	"- If the question names a product as an example, do not repeat or endorse it unless a [CANONICAL] or [KAPA-CANONICAL] chunk confirms it.\n" +
 	"- Never speculate or use knowledge outside the provided context."
 
 // ragAnswerSystemPrompt is the system-level instruction for batch answer (rag answer batch).
