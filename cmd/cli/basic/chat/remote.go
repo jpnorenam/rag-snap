@@ -264,11 +264,25 @@ func remoteProvenanceLabel(provenance string) string {
 }
 
 // remotePromptTurn sends one prompt and renders streamed frames until the
-// terminal "done" frame, colouring <think> content like the direct REPL.
+// terminal "done" frame, colouring <think> content like the direct REPL. A
+// spinner covers the server-side retrieval phase (query rewrite + search) that
+// precedes the first token, so the wait shows activity like direct mode does;
+// it is stopped as soon as the first frame arrives.
 func remotePromptTurn(ctx context.Context, session *apiclient.ChatSession, prompt string) error {
 	if err := session.Prompt(ctx, prompt); err != nil {
 		return err
 	}
+
+	stop := common.StartProgressSpinner("Thinking")
+	stopped := false
+	haltSpinner := func() {
+		if !stopped {
+			stop()
+			stopped = true
+		}
+	}
+	defer haltSpinner()
+
 	for {
 		msg, err := session.Read(ctx)
 		if err != nil {
@@ -276,13 +290,17 @@ func remotePromptTurn(ctx context.Context, session *apiclient.ChatSession, promp
 		}
 		switch msg.Type {
 		case string(TokenAnswer):
+			haltSpinner()
 			fmt.Print(msg.Content)
 		case string(TokenThink):
+			haltSpinner()
 			fmt.Print(color.BlueString(msg.Content))
 		case "done":
+			haltSpinner()
 			fmt.Println()
 			return nil
 		case "error":
+			haltSpinner()
 			fmt.Println()
 			return fmt.Errorf("%s", msg.Error)
 		}
