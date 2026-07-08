@@ -73,18 +73,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			}
 			knowledgeClient, _ := knowledge.NewClient(apiUrls[opensearch])
 			embeddingModelID, _ := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
-			kapaAPIKey, _ := getConfigString(cmd.Context, knowledge.ConfKapaAPIKey)
-			if v := os.Getenv("KAPA_API_KEY"); v != "" {
-				kapaAPIKey = v
-			}
-			kapaProjectID, _ := getConfigString(cmd.Context, knowledge.ConfKapaProjectID)
-			if v := os.Getenv("KAPA_PROJECT_ID"); v != "" {
-				kapaProjectID = v
-			}
-			var kapaClient *knowledge.KapaClient
-			if kapaAPIKey != "" && kapaProjectID != "" {
-				kapaClient = knowledge.NewKapaClient(kapaProjectID, kapaAPIKey)
-			}
+			kapaClient := buildKapaClient(cmd.Context)
 			return chat.ProcessBatchChat(apiUrls[openAi], knowledgeClient, kapaClient, embeddingModelID, manifest, chat.LoadPrompts(), temperature, cmd.Verbose)
 		},
 	}

@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -14,11 +15,11 @@ import (
 
 const (
 	cmdUseKnowledge = "/use-knowledge"
-	cmdToggleKapa   = "/toggle-kapa"
+	cmdUseKapa      = "/use-kapa"
 )
 
 // slashCommands lists every registered slash command name.
-var slashCommands = []string{cmdUseKnowledge, cmdToggleKapa}
+var slashCommands = []string{cmdUseKnowledge, cmdUseKapa}
 
 // slashHinter returns a readline listener that displays matching slash
 // commands below the input line as the user types, filtering the list
@@ -70,7 +71,7 @@ type Session struct {
 	KapaClient       *knowledge.KapaClient
 	EmbeddingModelID string
 	ActiveIndexes    []string
-	KapaEnabled      bool
+	ActiveKapaGroups []string
 }
 
 // handleSlashCommand processes slash commands entered in the chat REPL.
@@ -84,20 +85,17 @@ func handleSlashCommand(input string, session *Session) bool {
 			fmt.Printf("Error: %v\n", err)
 		}
 		return true
-	case cmd == cmdToggleKapa:
+	case cmd == cmdUseKapa:
 		if session.KapaClient == nil {
 			fmt.Println("Kapa is not configured. Set kapa.api.key and kapa.project.id.")
 		} else {
-			session.KapaEnabled = !session.KapaEnabled
-			if session.KapaEnabled {
-				fmt.Println("Kapa knowledge enabled.")
-			} else {
-				fmt.Println("Kapa knowledge disabled.")
+			if err := selectKapaGroups(session); err != nil {
+				fmt.Printf("Error: %v\n", err)
 			}
 		}
 		return true
 	default:
-		fmt.Printf("Unknown command: %s\nAvailable commands: %s, %s\n", cmd, cmdUseKnowledge, cmdToggleKapa)
+		fmt.Printf("Unknown command: %s\nAvailable commands: %s\n", cmd, strings.Join(slashCommands, ", "))
 		return false
 	}
 }
@@ -144,11 +142,65 @@ func selectActiveContext(session *Session) error {
 	)
 
 	if err := form.Run(); err != nil {
-		// User cancelled (Ctrl+C / Esc) — keep existing context.
+		if !errors.Is(err, huh.ErrUserAborted) {
+			return err
+		}
 		return nil
 	}
 
 	session.ActiveIndexes = selected
+
+	return nil
+}
+
+// selectKapaGroups fetches available Kapa source groups and presents an
+// interactive multi-select menu. Selecting no groups disables Kapa retrieval.
+// session.ActiveKapaGroups stores source group IDs (not names) for the API call.
+func selectKapaGroups(session *Session) error {
+	stop := common.StartProgressSpinner("Fetching Kapa source groups")
+	groups, err := session.KapaClient.ListSourceGroups(context.Background())
+	stop()
+	if err != nil {
+		return fmt.Errorf("listing Kapa source groups: %w", err)
+	}
+
+	if len(groups) == 0 {
+		fmt.Println("No Kapa source groups found.")
+		return nil
+	}
+
+	// Display Name, store ID — the retrieval API filters by ID.
+	options := make([]huh.Option[string], len(groups))
+	for i, g := range groups {
+		options[i] = huh.NewOption(g.Name, g.ID)
+	}
+
+	selected := make([]string, len(session.ActiveKapaGroups))
+	copy(selected, session.ActiveKapaGroups)
+
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Select active Kapa source groups").
+				Options(options...).
+				Value(&selected),
+		),
+	)
+
+	if err := form.Run(); err != nil {
+		if !errors.Is(err, huh.ErrUserAborted) {
+			return err
+		}
+		return nil
+	}
+
+	if len(selected) == 0 {
+		session.ActiveKapaGroups = nil
+		fmt.Println("Kapa knowledge disabled.")
+	} else {
+		session.ActiveKapaGroups = selected
+		fmt.Printf("Kapa knowledge active — %d source group(s) selected.\n", len(selected))
+	}
 
 	return nil
 }

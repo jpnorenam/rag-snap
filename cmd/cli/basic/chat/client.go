@@ -66,7 +66,7 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 		)
 	}
 	if kapaClient != nil {
-		fmt.Printf("\t> Kapa knowledge enabled — use `%s` to toggle\n", cmdToggleKapa)
+		fmt.Printf("\t> Use `%s` to select Kapa.ai source groups\n", cmdUseKapa)
 	}
 	fmt.Println()
 
@@ -133,7 +133,6 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 		KapaClient:       kapaClient,
 		EmbeddingModelID: embeddingModelID,
 		ActiveIndexes:    []string{knowledge.DefaultIndexName()},
-		KapaEnabled:      kapaClient != nil,
 	}
 
 	for {
@@ -298,7 +297,7 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	// Rewrite the query for richer BM25 matching using conversation context.
 	// On the first turn (no history) this returns the original prompt.
 	lexicalQuery := prompt
-	if session.KnowledgeClient != nil {
+	if session.KnowledgeClient != nil || (session.KapaClient != nil && len(session.ActiveKapaGroups) > 0) {
 		lexicalQuery = rewriteSearchQuery(client, params.Model, params.Messages, prompt, verbose)
 	}
 
@@ -312,7 +311,7 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	llmPrompt := prompt
 	if ragContext != "" {
 		llmPrompt = buildRAGPrompt(ragContext, prompt)
-	} else if session.KnowledgeClient != nil || (session.KapaClient != nil && session.KapaEnabled) {
+	} else if session.KnowledgeClient != nil || (session.KapaClient != nil && len(session.ActiveKapaGroups) > 0) {
 		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", prompt)
 	}
 

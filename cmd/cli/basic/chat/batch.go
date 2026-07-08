@@ -96,11 +96,12 @@ type BatchQuestion struct {
 
 // BatchManifest is the top-level structure of a batch chat YAML file.
 type BatchManifest struct {
-	Version        string          `yaml:"version"`
-	Model          string          `yaml:"model,omitempty"`
-	KnowledgeBases []string        `yaml:"knowledge_bases,omitempty"`
-	Prompt         string          `yaml:"prompt,omitempty"`
-	Questions      []BatchQuestion `yaml:"questions"`
+	Version          string          `yaml:"version"`
+	Model            string          `yaml:"model,omitempty"`
+	KnowledgeBases   []string        `yaml:"knowledge_bases,omitempty"`
+	KapaSourceGroups []string        `yaml:"kapa_source_groups,omitempty"`
+	Prompt           string          `yaml:"prompt,omitempty"`
+	Questions        []BatchQuestion `yaml:"questions"`
 }
 
 // BatchResult holds the answer for a single question.
@@ -173,7 +174,7 @@ func ProcessBatchChat(
 		KapaClient:       kapaClient,
 		EmbeddingModelID: embeddingModelID,
 		ActiveIndexes:    activeIndexes,
-		KapaEnabled:      kapaClient != nil,
+		ActiveKapaGroups: manifest.KapaSourceGroups,
 	}
 
 	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)

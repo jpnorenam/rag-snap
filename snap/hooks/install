@@ -30,5 +30,13 @@ export OPENSEARCH_PASSWORD="admin"
 #   sudo rag set gdrive.client.secret=<client-secret>
 snapctl set config.package.gdrive.client.id=""
 snapctl set config.package.gdrive.client.secret=""
+
+# Register Kapa AI keys so users can configure them with:
+#   sudo rag set kapa.enabled=false
+#   sudo rag set kapa.api.key=<key>
+#   sudo rag set kapa.project.id=<id>
+snapctl set config.package.kapa.enabled="true"
+snapctl set config.package.kapa.api.key=""
+snapctl set config.package.kapa.project.id=""
 #
 # sudo snap start $SNAP_INSTANCE_NAME.tika-server
