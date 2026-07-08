@@ -16,6 +16,25 @@ SPEC_SRC     := ./internal/api
 SPEC_FILE    := rest-api.yaml
 
 # ------------------------------------------------------------------------------
+#  Browser UI
+#
+# The browser UI (ui/) builds to a static export (ui/out) that ragd embeds via
+# go:embed from internal/webui/dist. The `ui` target builds the SPA and copies
+# it into the embed directory; it MUST run before the ragd build so ragd embeds
+# the real UI rather than the committed placeholder.
+
+UI_DIR       := ui
+UI_OUT       := $(UI_DIR)/out
+WEBUI_DIST   := internal/webui/dist
+
+.PHONY: ui
+ui:
+	cd $(UI_DIR) && npm ci && npm run build
+	rm -rf $(WEBUI_DIST)
+	mkdir -p $(WEBUI_DIST)
+	cp -r $(UI_OUT)/. $(WEBUI_DIST)/
+
+# ------------------------------------------------------------------------------
 #  Build
 
 .PHONY: build
@@ -24,6 +43,13 @@ build: $(BINDIR)/$(BINNAME)
 $(BINDIR)/$(BINNAME): $(SRC)
 	@mkdir -p $(BINDIR)
 	CGO_ENABLED=$(CGO_ENABLED) go build $(GOFLAGS) -trimpath -tags '$(TAGS)' -ldflags '$(LDFLAGS)' -o '$(BINDIR)'/$(BINNAME) ./cmd/cli
+
+# Build the ragd daemon (embeds the UI from internal/webui/dist; run `make ui`
+# first to embed the real SPA rather than the committed placeholder).
+.PHONY: build-ragd
+build-ragd:
+	@mkdir -p $(BINDIR)
+	CGO_ENABLED=$(CGO_ENABLED) go build $(GOFLAGS) -trimpath -tags '$(TAGS)' -ldflags '$(LDFLAGS)' -o '$(BINDIR)'/ragd ./cmd/ragd
 
 # ------------------------------------------------------------------------------
 #  Development

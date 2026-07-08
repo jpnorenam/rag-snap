@@ -28,6 +28,24 @@ type batchQuestionJSON struct {
 	Keywords []string `json:"keywords,omitempty"`
 }
 
+// batchResultsFrom decodes the per-question results the daemon publishes in the
+// operation metadata. Returns nil when no results are present yet.
+func batchResultsFrom(op *apiclient.Operation) []chat.BatchResult {
+	raw, ok := op.Metadata["results"]
+	if !ok {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var results []chat.BatchResult
+	if err := json.Unmarshal(b, &results); err != nil {
+		return nil
+	}
+	return results
+}
+
 // runBatchRemote posts a prepared manifest to the daemon, waits for the async
 // operation with progress, and writes the structured results to the same
 // timestamped JSON file the direct path produces.
@@ -52,19 +70,33 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 	if err != nil {
 		return err
 	}
-	op, err := waitWithProgress(dc, opURL, "Answering batch", "questions_done", "questions_total")
+
+	// Render each Q&A pair as the daemon publishes it, matching the direct-mode
+	// `answer batch` output rather than a bare progress counter.
+	printed := 0
+	printResults := func(op *apiclient.Operation) {
+		results := batchResultsFrom(op)
+		total := op.MetadataInt("questions_total")
+		for ; printed < len(results); printed++ {
+			r := results[printed]
+			fmt.Printf("[%d/%d] Question: %s\n", printed+1, total, r.Question)
+			fmt.Printf("Answer: %s\n---\n", r.Answer)
+		}
+	}
+
+	op, err := dc.WaitForOperation(context.Background(), opURL, apiclient.WaitOptions{
+		OnProgress: printResults,
+	})
 	if err != nil {
 		return err
 	}
+	printResults(op) // flush any results only present in the terminal view
 
 	// The operation metadata carries the structured results on success.
 	out := chat.BatchOutput{
 		GeneratedAt: op.MetadataString("generated_at"),
 		Model:       op.MetadataString("model"),
-	}
-	if raw, ok := op.Metadata["results"]; ok {
-		b, _ := json.Marshal(raw)
-		_ = json.Unmarshal(b, &out.Results)
+		Results:     batchResultsFrom(op),
 	}
 	if len(out.Results) == 0 {
 		return fmt.Errorf("all questions failed; no results to write")

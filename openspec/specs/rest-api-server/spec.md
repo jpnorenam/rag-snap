@@ -21,8 +21,10 @@ confinement the seccomp profile denies chowning to an arbitrary group, which wou
 daemon. Access SHALL therefore be gated by the peer-credential check (see "Local
 authentication"), not by the socket's file ownership.
 
-The daemon SHALL NOT open any TCP or HTTPS listener as part of this capability; remote
-access is out of scope.
+The unix socket SHALL be the only listener opened by default. The daemon MAY additionally
+open an opt-in loopback TCP listener when `api.loopback.enabled` is set, as defined by the
+`rest-api-loopback` capability; that listener binds a loopback address only. The daemon SHALL
+NOT open any non-loopback TCP or HTTPS listener; remote access is out of scope.
 
 #### Scenario: Socket is created with the configured mode
 
@@ -36,11 +38,17 @@ access is out of scope.
 - **THEN** the `ragd` service is present but not started automatically
 - **AND** it starts only when explicitly started via snap service controls
 
-#### Scenario: No network listener is opened
+#### Scenario: No listener opened beyond the socket by default
 
-- **WHEN** the `ragd` daemon is running
+- **WHEN** the `ragd` daemon is running and `api.loopback.enabled` is false (the default)
 - **THEN** it accepts connections only on the local unix socket
 - **AND** it does not bind any TCP port or TLS listener
+
+#### Scenario: Only a loopback TCP listener may be added
+
+- **WHEN** `api.loopback.enabled` is true
+- **THEN** the only additional listener the daemon opens is bound to a loopback address
+- **AND** it still opens no non-loopback TCP or TLS listener
 
 ### Requirement: Versioned API root with feature detection
 
@@ -95,13 +103,16 @@ that clients use in preference to any text status.
 
 ### Requirement: Local authentication via socket group membership
 
-The daemon SHALL authenticate every connection on the unix socket using the peer's operating-
-system credentials (`SO_PEERCRED`). A connection SHALL be granted full access if and only if
-the peer's effective user is `root` or is a member of the configured `api.socket.group`.
+The daemon SHALL authenticate every connection using a transport-aware check. Connections on
+the unix socket SHALL be authenticated by the peer's operating-system credentials
+(`SO_PEERCRED`): access is granted if and only if the peer's effective user is `root` or is a
+member of the configured `api.socket.group`. Connections on the loopback listener SHALL be
+authenticated by the localhost bearer token (see the `rest-api-localhost-auth` capability),
+because `SO_PEERCRED` is unavailable for TCP peers.
 
 A granted connection SHALL have access to all endpoints; there SHALL be no per-endpoint
-authorization in this capability. A denied connection SHALL receive a `403` error with a
-message naming the group the user must join.
+authorization in this capability. A denied unix-socket connection SHALL receive a `403` error
+with a message naming the group the user must join.
 
 #### Scenario: Member of the access group is granted access
 
@@ -118,6 +129,11 @@ message naming the group the user must join.
 - **WHEN** a process owned by a user not in the access group and not `root` connects
 - **THEN** the daemon returns a `403` error
 - **AND** the error message states the user must be a member of the configured access group
+
+#### Scenario: Loopback connection uses token authentication
+
+- **WHEN** a request arrives on the loopback listener rather than the unix socket
+- **THEN** the daemon authenticates it by the localhost token, not by `SO_PEERCRED`
 
 ### Requirement: Configuration is read from snapctl, not the API
 

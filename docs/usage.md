@@ -1,5 +1,9 @@
 # RAG Snap Usage Guide
 
+> Prefer a browser to the terminal? `ragd` can serve a local web UI for chatting with your
+> knowledge bases over an opt-in loopback listener. See the
+> [Local web UI guide](local-ui.md) (`rag-cli.rag ui`).
+
 ## Knowledge base management
 
 The `knowledge` command (alias `k`) manages the OpenSearch-backed knowledge bases used for
