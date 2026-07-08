@@ -191,6 +191,6 @@ func (cmd *answerCommand) runBuild(docPath, outputPath string, previewOnly, noRe
 	}
 
 	fmt.Printf("\nManifest saved to %s  (%d questions)\n", outputPath, len(questions))
-	fmt.Printf("Run: rag-cli answer batch %s\n", outputPath)
+	fmt.Printf("Run: %s answer batch %s\n", cliCommand(), outputPath)
 	return nil
 }

@@ -742,18 +742,12 @@ func (cmd *knowledgeCommand) exportCommand() *cobra.Command {
 		RunE: func(_ *cobra.Command, args []string) error {
 			kbName := args[0]
 
-			if dc := daemonClient(cmd.Context); dc != nil {
-				opURL, err := dc.Export(context.Background(), kbName, outputDir, compress)
-				if err != nil {
-					return err
-				}
-				if _, err := waitWithProgress(dc, opURL, "Exporting knowledge base "+kbName, "", ""); err != nil {
-					return err
-				}
-				fmt.Printf("Exported knowledge base '%s'.\n", kbName)
-				return nil
-			}
-
+			// Export runs client-side even when the daemon is enabled: it writes
+			// to the user's filesystem (default: ./<kb>-export), which the
+			// strictly-confined daemon cannot reach (no home plug, and its own
+			// working directory differs from the user's shell). Routing it to the
+			// daemon would silently write the archive into an inaccessible
+			// directory. The CLI has the home plug and OpenSearch access.
 			client, err := cmd.opensearchClient()
 			if err != nil {
 				return err
@@ -812,22 +806,11 @@ func (cmd *knowledgeCommand) importCommand() *cobra.Command {
 			ctx := context.Background()
 
 			// ── Local import ────────────────────────────────────────────────
-			// Route local imports through the daemon when present; the Google
-			// Drive flow below stays CLI-only (interactive auth, per design).
-			if inputDir != "" {
-				if dc := daemonClient(cmd.Context); dc != nil {
-					opURL, err := dc.Import(ctx, kbName, inputDir, force)
-					if err != nil {
-						return err
-					}
-					if _, err := waitWithProgress(dc, opURL, "Importing knowledge base", "", ""); err != nil {
-						return err
-					}
-					fmt.Println("Import complete.")
-					return nil
-				}
-			}
-
+			// Import runs client-side even when the daemon is enabled: it reads
+			// the export directory/archive from the user's filesystem, which the
+			// strictly-confined daemon cannot reach (no home plug). The CLI has
+			// the home plug and OpenSearch access. The Google Drive flow below is
+			// likewise CLI-only (interactive auth, per design).
 			client, err := cmd.opensearchClient()
 			if err != nil {
 				return err
