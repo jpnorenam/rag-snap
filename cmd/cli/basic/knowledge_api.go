@@ -98,7 +98,7 @@ func printDeletePreview(knowledgeBaseName, indexName string, sourceCount int) {
 // confirmDeletion prompts the operator to type the knowledge base name to
 // confirm a destructive delete, returning an error if it does not match.
 func confirmDeletion(knowledgeBaseName, indexName string) error {
-	fmt.Printf("\nThis will permanently delete the index '%s' and all its data.\n", indexName)
+	fmt.Printf("\nThis will permanently delete the knowledge base '%s' and all its data.\n", knowledgeBaseName)
 	fmt.Printf("Type the knowledge base name to confirm: ")
 
 	reader := bufio.NewReader(os.Stdin)

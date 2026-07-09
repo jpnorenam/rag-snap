@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
+	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/internal/apiclient"
 )
 
@@ -72,25 +73,55 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 	}
 
 	// Render each Q&A pair as the daemon publishes it, matching the direct-mode
-	// `answer batch` output rather than a bare progress counter.
+	// `answer batch` output rather than a bare progress counter. Between answers
+	// a spinner reports which question is being worked on, so the wait shows
+	// activity like the direct path does instead of sitting blank.
+	total := len(manifest.Questions)
 	printed := 0
+	var updateSpinner func(string)
+	var stopSpinner func()
+	spinning := false
+	haltSpinner := func() {
+		if spinning {
+			stopSpinner()
+			spinning = false
+		}
+	}
+	showSpinner := func(done int) {
+		label := fmt.Sprintf("Answering question %d/%d", min(done+1, total), total)
+		if spinning {
+			updateSpinner(label)
+			return
+		}
+		updateSpinner, stopSpinner = common.StartUpdatableSpinner(label)
+		spinning = true
+	}
 	printResults := func(op *apiclient.Operation) {
 		results := batchResultsFrom(op)
-		total := op.MetadataInt("questions_total")
-		for ; printed < len(results); printed++ {
-			r := results[printed]
-			fmt.Printf("[%d/%d] Question: %s\n", printed+1, total, r.Question)
-			fmt.Printf("Answer: %s\n---\n", r.Answer)
+		if printed < len(results) {
+			// Stop the spinner before writing so its redraw does not garble the
+			// Q&A lines, then resume it for the next in-flight question below.
+			haltSpinner()
+			for ; printed < len(results); printed++ {
+				r := results[printed]
+				fmt.Printf("[%d/%d] Question: %s\n", printed+1, total, r.Question)
+				fmt.Printf("Answer: %s\n---\n", r.Answer)
+			}
+		}
+		if done := op.MetadataInt("questions_done"); done < total {
+			showSpinner(done)
 		}
 	}
 
 	op, err := dc.WaitForOperation(context.Background(), opURL, apiclient.WaitOptions{
 		OnProgress: printResults,
 	})
+	haltSpinner()
 	if err != nil {
 		return err
 	}
 	printResults(op) // flush any results only present in the terminal view
+	haltSpinner()
 
 	// The operation metadata carries the structured results on success.
 	out := chat.BatchOutput{

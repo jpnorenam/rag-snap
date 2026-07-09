@@ -120,6 +120,17 @@ func snapName() string {
 	return "rag-cli"
 }
 
+// cliCommand returns the user-facing CLI invocation for copy-paste instructions.
+// Inside a snap the CLI app is exposed as "<instance>.rag" (e.g. "rag-cli.rag"),
+// so a bare "rag-cli ..." suggestion would not resolve. Falls back to "rag-cli"
+// outside a snap.
+func cliCommand() string {
+	if name := env.SnapInstanceName(); name != "" {
+		return name + ".rag"
+	}
+	return "rag-cli"
+}
+
 // openBrowser attempts to open url in the user's default browser.
 func openBrowser(rawURL string) {
 	var cmd string

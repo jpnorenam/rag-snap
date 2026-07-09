@@ -290,24 +290,30 @@ func findModelName(baseURL string, verbose bool) (string, error) {
 }
 
 func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, prompt string, session *Session, verbose bool) (openai.ChatCompletionNewParams, error) {
+	// RAG augmentation applies only when a knowledge client is present AND at
+	// least one base is active. With no active base the prompt is answered
+	// without retrieval (mirroring the daemon's LiveSession.Prompt), so a plain
+	// greeting like "Hi" gets a natural reply instead of a grounded refusal.
+	hasRAG := session.KnowledgeClient != nil && len(session.ActiveIndexes) > 0
+
 	// Rewrite the query for richer BM25 matching using conversation context.
 	// On the first turn (no history) this returns the original prompt.
 	lexicalQuery := prompt
-	if session.KnowledgeClient != nil {
+	ragContext := ""
+	if hasRAG {
 		lexicalQuery = rewriteSearchQuery(client, params.Model, params.Messages, prompt, verbose)
+		// Retrieve RAG context from knowledge base (no-op when unavailable).
+		ragContext = retrieveContext(session, prompt, lexicalQuery, verbose)
 	}
 
-	// Retrieve RAG context from knowledge base (no-op when unavailable).
-	ragContext := retrieveContext(session, prompt, lexicalQuery, verbose)
-
 	// Build the message sent to the LLM: augmented when context is found.
-	// When a knowledge base is configured but retrieval returned nothing, inject
-	// an explicit empty-context note so the grounding rules in the system prompt
-	// apply and the model does not answer from parametric knowledge.
+	// When a base is active but retrieval returned nothing, inject an explicit
+	// empty-context note so the grounding rules in the system prompt apply and
+	// the model does not answer from parametric knowledge.
 	llmPrompt := prompt
 	if ragContext != "" {
 		llmPrompt = buildRAGPrompt(ragContext, prompt)
-	} else if session.KnowledgeClient != nil {
+	} else if hasRAG {
 		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", prompt)
 	}
 

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Header from "@/components/Header";
+import Sidebar from "@/components/Sidebar";
 import { useDarkMode } from "@/lib/useDarkMode";
 import { captureTokenFromUrl } from "@/lib/api/token";
 import { ApiError } from "@/lib/api/envelope";
@@ -183,28 +184,31 @@ export default function ChatScreen() {
 
   return (
     <div className="app-shell">
-      <Header darkMode={darkMode} onToggleDark={toggleDark}>
-        <div className="chat__status header-meta__right">
-          <span
-            className={`chat__status-dot ${
-              connState === "connected" ? "is-connected" : connState === "error" ? "is-error" : ""
-            }`}
-          />
-          <span className="u-text--muted p-text--small u-no-margin--bottom">
-            {connState === "connected"
-              ? model
-                ? `Connected · ${model}`
-                : "Connected"
-              : connState === "connecting"
-                ? "Connecting…"
-                : connState === "error"
-                  ? "Connection error"
-                  : "Ready"}
-          </span>
-        </div>
-      </Header>
+      <Sidebar darkMode={darkMode} onToggleDark={toggleDark} />
 
-      <main className="app-main chat">
+      <div className="app-content">
+        <Header title="Chat">
+          <div className="chat__status">
+            <span
+              className={`chat__status-dot ${
+                connState === "connected" ? "is-connected" : connState === "error" ? "is-error" : ""
+              }`}
+            />
+            <span className="u-text--muted p-text--small u-no-margin--bottom">
+              {connState === "connected"
+                ? model
+                  ? `Connected · ${model}`
+                  : "Connected"
+                : connState === "connecting"
+                  ? "Connecting…"
+                  : connState === "error"
+                    ? "Connection error"
+                    : "Ready"}
+            </span>
+          </div>
+        </Header>
+
+        <main className="app-main chat">
         {bases.length > 0 && (
           <div className="kb-selector">
             <span className="kb-selector__label">Knowledge bases:</span>
@@ -265,7 +269,8 @@ export default function ChatScreen() {
             Send
           </button>
         </div>
-      </main>
+        </main>
+      </div>
     </div>
   );
 }
