@@ -1,5 +1,9 @@
 # RAG Snap Usage Guide
 
+> Prefer a browser to the terminal? `ragd` can serve a local web UI for chatting with your
+> knowledge bases over an opt-in loopback listener. See the
+> [Local web UI guide](local-ui.md) (`rag-cli.rag ui`).
+
 ## Knowledge base management
 
 The `knowledge` command (alias `k`) manages the OpenSearch-backed knowledge bases used for
@@ -22,6 +26,7 @@ using any `knowledge` sub-command.
 | `knowledge list --sources` | List ingested source documents |
 | `knowledge create <name>` | Create a new knowledge base |
 | `knowledge ingest <name> <source-id>` | Ingest a document into a knowledge base |
+| `knowledge ingest <name> <source-id> --format rfp` | Ingest a CSV of previous RFP question/answer pairs, one chunk per row |
 | `knowledge ingest --batch <config.yaml>` | Ingest multiple documents from a YAML config file |
 | `knowledge search <query>` | Semantic + lexical search across one or more bases |
 | `knowledge metadata <name> <source-id>` | Show metadata for an ingested source |
@@ -148,6 +153,7 @@ rag-cli.rag knowledge ingest <knowledge_base_name> <source_id> (--file <path> | 
 | `--file` | `-f` | one of three | Local file path (PDF, HTML, plain text, …) |
 | `--url` | `-u` | one of three | URL of a static HTML page to fetch and extract |
 | `--batch` | `-B` | one of three | YAML batch config file — ingest multiple documents at once |
+| `--format` | | No | Input format. Use `rfp` to ingest a CSV of question/answer/source rows (requires `--file`). Default auto-detects via Tika. |
 | `--force` | | No | Re-ingest the source even if it is already recorded as `completed` |
 
 `<source_id>` is a human-readable identifier you choose (e.g. `snap-docs`, `rag-wiki`). It is used
@@ -172,6 +178,58 @@ Ingested 37 chunks into index 'rag-kb-wiki-rag'
 > **Note on JavaScript-heavy pages:** `--url` fetches and extracts static HTML. Pages that render
 > their content entirely in JavaScript (SPAs) will produce an error with a suggestion to save the
 > rendered page locally and use `--file` instead.
+
+---
+
+### `knowledge ingest --format rfp`
+
+Ingest a CSV of previous RFP/RFI question-and-answer pairs. Each row becomes its own chunk that
+keeps the question and answer together, so a search for a similar future question retrieves the
+matching answer as a single unit — instead of the chunker splitting the question and answer apart
+or mixing unrelated rows into one chunk.
+
+```
+rag-cli.rag knowledge ingest <knowledge_base_name> <source_id> --file <path.csv> --format rfp
+```
+
+#### CSV layout
+
+The first row is treated as a header and skipped. Columns are read positionally:
+
+| Column | Content |
+|---|---|
+| A | Question |
+| B | Answer |
+| C | Source / reference (optional — e.g. the original document the answer came from) |
+
+Extra columns are ignored. Rows where both the question and answer are empty are skipped.
+
+#### Chunking behaviour
+
+Each row is rendered as a single chunk:
+
+```
+Question: <question text>
+
+Answer: <answer text>
+
+Reference: <source>
+```
+
+(the `Reference:` line is omitted if column C is empty). If the rendered chunk exceeds the default
+chunk size, the answer is split into multiple chunks, with the `Question:` and `Reference:` lines
+repeated on every segment so each chunk remains self-contained and embeddings stay anchored to the
+original question. No overlap is applied between chunks — `knowledge metadata` reports
+`overlap=0` for sources ingested this way.
+
+**Example**
+
+```bash
+$ rag-cli.rag knowledge ingest sales master-rfp --file MasterRFP.csv --format rfp
+Ingested 1889/1889 chunks into index 'rag-kb-sales'
+```
+
+`--format rfp` requires `--file` (CSV input); it cannot be combined with `--url` or `--batch`.
 
 ---
 
@@ -737,6 +795,7 @@ Type your prompt, then ENTER to submit. CTRL-C to quit.
 |---|---|
 | Type a prompt, press Enter | Send to the LLM (with RAG context if available) |
 | `Tab` | Autocomplete slash commands |
+| Finish typing a slash command name | A dimmed inline hint shows its argument syntax (e.g. `/search [-k N] <query>`) |
 | `Ctrl-C` (empty line) | Exit the session |
 | `Ctrl-C` (mid-prompt) | Cancel current input, stay in session |
 | Type `exit`, press Enter | Exit the session |
@@ -765,6 +824,37 @@ the session. Changes take effect on the very next prompt.
 ```
 
 Use Space to toggle, Enter to confirm, Esc/Ctrl-C to keep the current selection unchanged.
+
+#### `/search`
+
+Retrieves matching chunks from the active knowledge bases and prints them, without generating an
+answer — retrieval only, no augmentation. It runs the same hybrid pipeline (BM25 + neural + rerank)
+that chat uses, over exactly the knowledge bases toggled with `/use-knowledge`, passing your terms
+verbatim (no query rewriting, no inference-server call). Useful for inspecting what RAG would feed
+the model for a given query.
+
+```
+» /search [-k N] <query>
+```
+
+- `<query>` — the keywords or question to retrieve for.
+- `-k N` — maximum number of results (default: 15). Also accepts `-k=N`.
+
+Each result shows its relevance score, knowledge base name, `[CANONICAL]`/`[UPSTREAM]` provenance
+tag, source ID, creation date, and the full (untruncated) chunk content. Results are ordered by score
+descending.
+
+```
+» /search -k 5 ceph osd recovery
+
+[1] score 0.8421  ·  ops-docs  [CANONICAL]
+    source: ceph/recovery.md   created: 2026-03-11
+    ────────────────────────────────────────────────────────
+    <full chunk content>
+```
+
+If no knowledge bases are active, `/search` tells you to select some with `/use-knowledge` first; an
+empty query or an invalid `-k` prints a short usage line.
 
 ---
 
@@ -1250,3 +1340,17 @@ answer_system_prompt updated and saved to ~/.config/rag-cli/prompts.json
 
 > **Note on defaults:** Deleting `~/.config/rag-cli/prompts.json` restores all built-in defaults.
 > You can also reset a single prompt by editing it back to the original text via `prompt init`.
+
+---
+
+## REST API (`ragd`)
+
+`rag-cli` ships an optional daemon, `ragd`, that exposes the knowledge, search, chat, and
+batch-answering capabilities over a versioned REST API on a local unix socket — so any local
+program (including the `rag` CLI itself) can drive the RAG stack without rebuilding clients
+or handling credentials.
+
+See **[REST API guide](rest-api.md)** for service management, socket configuration and the
+security model, the response envelope, async operations and events, and the full endpoint
+reference. The authoritative contract is the generated
+[`rest-api.yaml`](../rest-api.yaml) OpenAPI specification.

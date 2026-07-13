@@ -43,30 +43,92 @@ func rfpOpenSearchURL(ctx *common.Context) (string, error) {
 	return buildServiceURL(host, port, "", osTLS), nil
 }
 
-// rfpSelectKnowledgeBases attempts to list knowledge bases from OpenSearch and
-// presents a multi-select. Falls back to a plain text input if OpenSearch is
-// not reachable or not configured.
-func rfpSelectKnowledgeBases(ctx *common.Context) ([]string, error) {
-	osURL, err := rfpOpenSearchURL(ctx)
-	if err == nil {
-		stop := common.StartProgressSpinner("Fetching knowledge bases")
-		client, clientErr := knowledge.NewClient(osURL)
-		var indexes []knowledge.IndexInfo
-		if clientErr == nil {
-			indexes, clientErr = client.ListIndexes(context.Background())
-		}
-		stop()
+// rfpKBChoice is one selectable knowledge base presented by the manifest builder.
+type rfpKBChoice struct {
+	Name      string
+	DocsCount string
+	StoreSize string
+}
 
-		if clientErr == nil && len(indexes) > 0 {
-			return rfpKBMultiSelect(indexes)
-		}
-		// OpenSearch reachable but no KBs yet — fall through to text input
-		if clientErr == nil {
+// rfpSelectKnowledgeBases lists the available knowledge bases and presents an
+// interactive multi-select. It prefers the running daemon (which owns backend
+// access under strict confinement) and falls back to a direct OpenSearch
+// connection; only when neither is reachable does it drop to free-text entry.
+func rfpSelectKnowledgeBases(ctx *common.Context) ([]string, error) {
+	choices, reachable := rfpListKnowledgeBases(ctx)
+	if reachable {
+		if len(choices) == 0 {
 			fmt.Println("No knowledge bases found. You can add them later by editing the manifest.")
+			return nil, nil
+		}
+		return rfpKBMultiSelect(choices)
+	}
+	return rfpKBTextInput()
+}
+
+// rfpListKnowledgeBases returns the knowledge bases available for selection,
+// preferring the daemon and falling back to a direct OpenSearch connection. The
+// bool reports whether a backend was reachable at all; when false the caller
+// drops to free-text entry.
+func rfpListKnowledgeBases(ctx *common.Context) ([]rfpKBChoice, bool) {
+	if dc := daemonClient(ctx); dc != nil {
+		stop := common.StartProgressSpinner("Fetching knowledge bases")
+		bases, err := dc.ListKnowledge(context.Background())
+		stop()
+		if err == nil {
+			choices := make([]rfpKBChoice, len(bases))
+			for i, b := range bases {
+				choices[i] = rfpKBChoice{Name: b.Name, DocsCount: b.DocsCount, StoreSize: b.StoreSize}
+			}
+			return choices, true
 		}
 	}
 
-	// Fallback: free-text input
+	osURL, err := rfpOpenSearchURL(ctx)
+	if err != nil {
+		return nil, false
+	}
+	stop := common.StartProgressSpinner("Fetching knowledge bases")
+	client, clientErr := knowledge.NewClient(osURL)
+	var indexes []knowledge.IndexInfo
+	if clientErr == nil {
+		indexes, clientErr = client.ListIndexes(context.Background())
+	}
+	stop()
+	if clientErr != nil {
+		return nil, false
+	}
+	choices := make([]rfpKBChoice, len(indexes))
+	for i, idx := range indexes {
+		name, _ := knowledge.KnowledgeBaseNameFromIndex(idx.Name)
+		choices[i] = rfpKBChoice{Name: name, DocsCount: idx.DocsCount, StoreSize: idx.StoreSize}
+	}
+	return choices, true
+}
+
+// rfpKBMultiSelect presents an interactive multi-select over available knowledge bases.
+func rfpKBMultiSelect(choices []rfpKBChoice) ([]string, error) {
+	options := make([]huh.Option[string], len(choices))
+	for i, c := range choices {
+		label := fmt.Sprintf("%s  (%s docs, %s)", c.Name, c.DocsCount, c.StoreSize)
+		options[i] = huh.NewOption(label, c.Name)
+	}
+
+	var selected []string
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewMultiSelect[string]().
+			Title("Select knowledge bases (Space to toggle, Enter to confirm):").
+			Options(options...).
+			Value(&selected),
+	)).Run(); err != nil {
+		return nil, fmt.Errorf("knowledge base selection cancelled: %w", err)
+	}
+	return selected, nil
+}
+
+// rfpKBTextInput is the last-resort free-text entry used when no backend is
+// reachable to enumerate the knowledge bases.
+func rfpKBTextInput() ([]string, error) {
 	var kbInput string
 	if err := huh.NewForm(huh.NewGroup(
 		huh.NewInput().
@@ -84,27 +146,6 @@ func rfpSelectKnowledgeBases(ctx *common.Context) ([]string, error) {
 		}
 	}
 	return kbs, nil
-}
-
-// rfpKBMultiSelect presents an interactive multi-select over available knowledge bases.
-func rfpKBMultiSelect(indexes []knowledge.IndexInfo) ([]string, error) {
-	options := make([]huh.Option[string], len(indexes))
-	for i, idx := range indexes {
-		name, _ := knowledge.KnowledgeBaseNameFromIndex(idx.Name)
-		label := fmt.Sprintf("%s  (%s docs, %s)", name, idx.DocsCount, idx.StoreSize)
-		options[i] = huh.NewOption(label, name)
-	}
-
-	var selected []string
-	if err := huh.NewForm(huh.NewGroup(
-		huh.NewMultiSelect[string]().
-			Title("Select knowledge bases (Space to toggle, Enter to confirm):").
-			Options(options...).
-			Value(&selected),
-	)).Run(); err != nil {
-		return nil, fmt.Errorf("knowledge base selection cancelled: %w", err)
-	}
-	return selected, nil
 }
 
 // rfpExtractCSV guides the user through column selection and extracts questions from a CSV.

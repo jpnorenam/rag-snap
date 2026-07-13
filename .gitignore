@@ -1,6 +1,3 @@
-*.claude
-CLAUDE.md
-PLAN.md
 *.snap
 /bin
 *__debug*
@@ -30,3 +27,22 @@ ubuntu-pro-questions.yaml
 test-kb/
 test-questions/
 test-rfp/
+
+# UI project files: the broad *.json rule above would otherwise swallow the
+# UI's package manifests. npm ci (used by `make ui` and the snapcraft build)
+# requires a committed lockfile, so these must be tracked.
+!ui/package.json
+!ui/package-lock.json
+!ui/tsconfig.json
+# Build artifacts and deps are not tracked (the UI build regenerates them).
+ui/node_modules/
+ui/.next/
+ui/out/
+ui/next-env.d.ts
+
+# The embedded UI dist holds only a committed placeholder index.html; the real
+# SPA is copied in by `make ui` / the snapcraft build and must not be committed.
+# (A nested .gitignore can't work here: the root rule above ignores every file
+# named .gitignore.)
+internal/webui/dist/*
+!internal/webui/dist/index.html

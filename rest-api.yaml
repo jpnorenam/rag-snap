@@ -1,0 +1,740 @@
+basePath: /
+consumes:
+    - application/json
+definitions:
+    asyncResponse:
+        description: |-
+            asyncResponse references a background operation. The operation object is
+            carried in metadata; the operation URL is also echoed in the Location header.
+        properties:
+            metadata:
+                x-go-name: Metadata
+            operation:
+                type: string
+                x-go-name: Operation
+            status:
+                type: string
+                x-go-name: Status
+            status_code:
+                format: int64
+                type: integer
+                x-go-name: StatusCode
+            type:
+                type: string
+                x-go-name: Type
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    batchManifestRequest:
+        description: |-
+            batchManifestRequest is the prepared batch manifest accepted by
+            POST /1.0/answer/batch. It mirrors chat.BatchManifest but is JSON-tagged and
+            decoupled from the YAML on-disk format. The interactive document-to-manifest
+            "build" flow is intentionally CLI-only (see the rest-api-answer spec).
+        properties:
+            knowledge_bases:
+                items:
+                    type: string
+                type: array
+                x-go-name: KnowledgeBases
+            model:
+                type: string
+                x-go-name: Model
+            prompt:
+                type: string
+                x-go-name: Prompt
+            questions:
+                items:
+                    $ref: '#/definitions/batchQuestionRequest'
+                type: array
+                x-go-name: Questions
+            temperature:
+                format: double
+                type: number
+                x-go-name: Temperature
+            version:
+                type: string
+                x-go-name: Version
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    batchQuestionRequest:
+        properties:
+            id:
+                type: string
+                x-go-name: ID
+            keywords:
+                items:
+                    type: string
+                type: array
+                x-go-name: Keywords
+            question:
+                type: string
+                x-go-name: Question
+        title: batchQuestionRequest is a single question in a posted manifest.
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    chatStartRequest:
+        description: |-
+            chatStartRequest is the body of POST /1.0/chat. All fields are optional: the
+            model falls back to config/server lookup, and the active bases and
+            temperature default to the chat REPL's behaviour.
+        properties:
+            bases:
+                items:
+                    type: string
+                type: array
+                x-go-name: Bases
+            model:
+                type: string
+                x-go-name: Model
+            temperature:
+                format: double
+                type: number
+                x-go-name: Temperature
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    createKnowledgeRequest:
+        properties:
+            name:
+                type: string
+                x-go-name: Name
+        title: createKnowledgeRequest is the body of POST /1.0/knowledge.
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    errorResponse:
+        properties:
+            error:
+                type: string
+                x-go-name: Error
+            error_code:
+                format: int64
+                type: integer
+                x-go-name: ErrorCode
+            type:
+                type: string
+                x-go-name: Type
+        title: errorResponse is the body of a failed request. error_code mirrors the HTTP status.
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    exportRequest:
+        properties:
+            compress:
+                type: boolean
+                x-go-name: Compress
+            output_dir:
+                type: string
+                x-go-name: OutputDir
+        title: exportRequest is the body of POST /1.0/knowledge/{name}/export.
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    importRequest:
+        properties:
+            force:
+                type: boolean
+                x-go-name: Force
+            input_dir:
+                type: string
+                x-go-name: InputDir
+            name:
+                type: string
+                x-go-name: Name
+        title: importRequest is the body of POST /1.0/knowledge:import.
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    ingestItem:
+        description: |-
+            ingestItem describes a single source to ingest. Exactly one of File (a
+            staged upload path) or URL is set per item.
+        properties:
+            source_id:
+                type: string
+                x-go-name: SourceID
+            url:
+                type: string
+                x-go-name: URL
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    ingestRequest:
+        description: |-
+            ingestRequest is the JSON body for URL or batch ingestion of
+            POST /1.0/knowledge/{name}/sources. File uploads use multipart instead.
+        properties:
+            batch:
+                items:
+                    $ref: '#/definitions/ingestItem'
+                type: array
+                x-go-name: Batch
+            source_id:
+                type: string
+                x-go-name: SourceID
+            url:
+                type: string
+                x-go-name: URL
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    searchRequest:
+        properties:
+            bases:
+                items:
+                    type: string
+                type: array
+                x-go-name: Bases
+            count:
+                format: int64
+                type: integer
+                x-go-name: Count
+            query:
+                type: string
+                x-go-name: Query
+        title: searchRequest is the body of POST /1.0/search.
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    syncResponse:
+        properties:
+            metadata:
+                x-go-name: Metadata
+            status:
+                type: string
+                x-go-name: Status
+            status_code:
+                format: int64
+                type: integer
+                x-go-name: StatusCode
+            type:
+                type: string
+                x-go-name: Type
+        title: syncResponse is the body of a successful, immediately-completed request.
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+info:
+    description: |-
+        The spec below is consumed by go-swagger to generate rest-api.yaml. Handlers
+        this file are referenced by those routes. Keep annotations in sync with the
+        routes registered in server.go — `make spec-check` fails the build on drift.
+
+        Package api ragd REST API.
+
+        ragd exposes knowledge management, hybrid search, interactive chat, and batch
+        answering over a local unix socket. Every JSON response uses a uniform
+        sync/async/error envelope; long-running work is modelled as operations with a
+        companion events websocket. Local access is authenticated by socket peer
+        credentials (root or a member of the configured group); there is no
+        per-route authorization.
+    title: implements the ragd local REST API.
+    version: "1.0"
+paths:
+    /:
+        get:
+            description: |-
+                Advertises the supported version(s), the caller's auth state, and the
+                api_extensions list. Reachable by an untrusted caller so a client can
+                discover whether it has access.
+            operationId: apiRoot
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+            summary: Discover the API.
+            tags:
+                - server
+    /1.0:
+        get:
+            description: |-
+                Server metadata plus a read-only, secret-free summary of effective config and
+                backend readiness for diagnostics.
+            operationId: serverInfo
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+            summary: Return server information.
+            tags:
+                - server
+    /1.0/answer/batch:
+        post:
+            description: |-
+                Runs a prepared batch manifest of questions through the RAG+LLM pipeline as
+                an async operation. Progress is reported in the operation metadata across the
+                questions, and the structured results are stored on the operation for
+                retrieval on completion. The interactive document-to-manifest build flow is
+                CLI-only and not exposed here.
+            operationId: answerBatch
+            parameters:
+                - in: body
+                  name: Body
+                  schema:
+                    $ref: '#/definitions/batchManifestRequest'
+            responses:
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Run a batch of questions.
+            tags:
+                - answer
+    /1.0/chat:
+        post:
+            description: |-
+                Starts a chat session as a websocket-class operation. The operation metadata
+                carries the websocket connect URL and one-time secret; the client dials it to
+                hold the interactive, multi-turn session.
+            operationId: chatStart
+            parameters:
+                - in: body
+                  name: Body
+                  schema:
+                    $ref: '#/definitions/chatStartRequest'
+            responses:
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Start a chat session.
+            tags:
+                - chat
+    /1.0/events:
+        get:
+            description: |-
+                Upgrades to a websocket and streams typed events. The type query filters the
+                event types (e.g. "operation,logging"). Clients should subscribe before
+                launching an operation to avoid a poll race.
+            operationId: events
+            parameters:
+                - description: Comma-separated event types to subscribe to (e.g. "operation,logging").
+                  in: query
+                  name: type
+                  type: string
+                  x-go-name: Type
+            responses:
+                "101":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+            summary: Stream events over a websocket.
+            tags:
+                - operations
+    /1.0/knowledge:
+        get:
+            operationId: knowledgeList
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: List knowledge bases.
+            tags:
+                - knowledge
+        post:
+            operationId: knowledgeCreate
+            parameters:
+                - in: body
+                  name: Body
+                  schema:
+                    $ref: '#/definitions/createKnowledgeRequest'
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "409":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Create a knowledge base.
+            tags:
+                - knowledge
+    /1.0/knowledge-engine:
+        post:
+            description: |-
+                Sets up models, pipelines, and indexes as an async operation. On success the
+                operation metadata reports the resolved model IDs.
+            operationId: engineInit
+            responses:
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Initialize the knowledge engine.
+            tags:
+                - knowledge
+    /1.0/knowledge/{name}:
+        delete:
+            description: |-
+                Deletes the base and its source metadata. No interactive confirmation at the
+                API layer.
+            operationId: knowledgeDelete
+            parameters:
+                - description: The knowledge base name.
+                  in: path
+                  name: name
+                  required: true
+                  type: string
+                  x-go-name: Name
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Delete a knowledge base.
+            tags:
+                - knowledge
+        get:
+            operationId: knowledgeGet
+            parameters:
+                - description: The knowledge base name.
+                  in: path
+                  name: name
+                  required: true
+                  type: string
+                  x-go-name: Name
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Return knowledge base detail.
+            tags:
+                - knowledge
+    /1.0/knowledge/{name}/export:
+        post:
+            description: Exports a base as an async operation, reusing the elasticdump-based exporter.
+            operationId: knowledgeExport
+            parameters:
+                - description: The knowledge base name.
+                  in: path
+                  name: name
+                  required: true
+                  type: string
+                  x-go-name: Name
+                - in: body
+                  name: Body
+                  schema:
+                    $ref: '#/definitions/exportRequest'
+            responses:
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Export a knowledge base.
+            tags:
+                - knowledge
+    /1.0/knowledge/{name}/sources:
+        get:
+            operationId: sourcesList
+            parameters:
+                - description: The knowledge base name.
+                  in: path
+                  name: name
+                  required: true
+                  type: string
+                  x-go-name: Name
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: List the sources in a knowledge base.
+            tags:
+                - knowledge
+        post:
+            consumes:
+                - application/json
+                - multipart/form-data
+            description: |-
+                Ingests one or more sources as an async operation. Accepts either a multipart
+                file upload or a JSON body describing a URL or a batch of URLs.
+            operationId: sourcesIngest
+            parameters:
+                - description: The knowledge base name.
+                  in: path
+                  name: name
+                  required: true
+                  type: string
+                  x-go-name: Name
+                - in: body
+                  name: Body
+                  schema:
+                    $ref: '#/definitions/ingestRequest'
+            responses:
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Ingest sources into a knowledge base.
+            tags:
+                - knowledge
+    /1.0/knowledge/{name}/sources/{id}:
+        delete:
+            description: Removes the source's chunks and metadata from the knowledge base.
+            operationId: sourceDelete
+            parameters:
+                - description: The knowledge base name.
+                  in: path
+                  name: name
+                  required: true
+                  type: string
+                  x-go-name: Name
+                - description: The source identifier.
+                  in: path
+                  name: id
+                  required: true
+                  type: string
+                  x-go-name: ID
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Forget a source.
+            tags:
+                - knowledge
+        get:
+            operationId: sourceGet
+            parameters:
+                - description: The knowledge base name.
+                  in: path
+                  name: name
+                  required: true
+                  type: string
+                  x-go-name: Name
+                - description: The source identifier.
+                  in: path
+                  name: id
+                  required: true
+                  type: string
+                  x-go-name: ID
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Return source metadata.
+            tags:
+                - knowledge
+    /1.0/knowledge/import:
+        post:
+            description: |-
+                Imports a base from a previously exported artifact as an async operation. The
+                interactive Google Drive auth flow is intentionally not exposed.
+            operationId: knowledgeImport
+            parameters:
+                - in: body
+                  name: Body
+                  schema:
+                    $ref: '#/definitions/importRequest'
+            responses:
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Import a knowledge base.
+            tags:
+                - knowledge
+    /1.0/operations:
+        get:
+            description: Returns a snapshot of all current operations.
+            operationId: operationsList
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+            summary: List operations.
+            tags:
+                - operations
+    /1.0/operations/{id}:
+        delete:
+            description: |-
+                Requests cooperative cancellation. Fails if the operation cannot be cancelled
+                or is already complete.
+            operationId: operationDelete
+            parameters:
+                - description: The operation UUID.
+                  in: path
+                  name: id
+                  required: true
+                  type: string
+                  x-go-name: ID
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+            summary: Cancel an operation.
+            tags:
+                - operations
+        get:
+            operationId: operationGet
+            parameters:
+                - description: The operation UUID.
+                  in: path
+                  name: id
+                  required: true
+                  type: string
+                  x-go-name: ID
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+            summary: Return an operation.
+            tags:
+                - operations
+    /1.0/operations/{id}/wait:
+        get:
+            description: |-
+                Blocks until the operation is terminal or the timeout (in seconds) elapses,
+                then returns the operation. A timeout that elapses returns the current state,
+                not an error.
+            operationId: operationWait
+            parameters:
+                - description: The operation UUID.
+                  in: path
+                  name: id
+                  required: true
+                  type: string
+                  x-go-name: ID
+                - description: |-
+                    Maximum seconds to block waiting for the operation to reach a terminal
+                    state. A timeout that elapses returns the current state, not an error.
+                  format: int64
+                  in: query
+                  name: timeout
+                  type: integer
+                  x-go-name: Timeout
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+            summary: Wait for an operation.
+            tags:
+                - operations
+    /1.0/operations/{id}/websocket:
+        get:
+            description: |-
+                Upgrades to the websocket for a websocket-class operation (e.g. a chat
+                session) after checking the one-time secret. The interaction runs until the
+                connection closes, an idle timeout fires, or the operation is cancelled.
+            operationId: chatConnect
+            parameters:
+                - description: The operation UUID.
+                  in: path
+                  name: id
+                  required: true
+                  type: string
+                  x-go-name: ID
+                - description: The one-time websocket secret from the chat operation metadata.
+                  in: query
+                  name: secret
+                  required: true
+                  type: string
+                  x-go-name: Secret
+            responses:
+                "101":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+            summary: Connect to an operation's websocket.
+            tags:
+                - operations
+    /1.0/search:
+        post:
+            description: |-
+                Runs hybrid (neural + lexical) retrieval over the named bases. Requires a
+                configured embedding model.
+            operationId: search
+            parameters:
+                - in: body
+                  name: Body
+                  schema:
+                    $ref: '#/definitions/searchRequest'
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Hybrid search over knowledge bases.
+            tags:
+                - search
+produces:
+    - application/json
+responses:
+    asyncResponse:
+        description: A reference to a background operation accepted for asynchronous processing.
+        headers:
+            Location:
+                description: The canonical operation URL (also echoed in the body).
+                type: string
+        schema:
+            $ref: '#/definitions/asyncResponse'
+    errorResponse:
+        description: An error response. error_code mirrors the HTTP status.
+        schema:
+            $ref: '#/definitions/errorResponse'
+    syncResponse:
+        description: A successful, immediately-completed response.
+        schema:
+            $ref: '#/definitions/syncResponse'
+schemes:
+    - http
+swagger: "2.0"

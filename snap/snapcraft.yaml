@@ -1,7 +1,7 @@
 name: rag-cli
 base: core24
 
-version: &snap-version "0.0.3"
+version: &snap-version "0.0.5"
 summary: RAG CLI application
 description: |
   This snap configures OpenSearch snap models, pipelines, and indexes
@@ -57,20 +57,40 @@ parts:
     plugin: go
     build-snaps:
       - go/1.24/stable
+      - node/20/stable
     source: .
     source-type: local
     override-build: |
+      # Build the browser UI (Next.js static export) and copy it into the
+      # go:embed directory BEFORE the Go build, so ragd embeds the real SPA
+      # rather than the committed placeholder. The project already vendors a
+      # Node tarball for elasticdump, so a Node toolchain in the build is
+      # precedented; here we use the node build-snap for the static export.
+      (
+        cd ui
+        npm ci
+        npm run build
+      )
+      rm -rf internal/webui/dist
+      mkdir -p internal/webui/dist
+      cp -r ui/out/. internal/webui/dist/
+
       CGO_ENABLED=0 go build -trimpath \
         -ldflags="-w -s" \
         -o "${CRAFT_PART_INSTALL}/bin/cli" ./cmd/cli
+      # ragd is the REST API daemon (opt-in service, see the `ragd` app below).
+      # It embeds the UI built above and serves it on the loopback listener.
+      CGO_ENABLED=0 go build -trimpath \
+        -ldflags="-w -s" \
+        -o "${CRAFT_PART_INSTALL}/bin/ragd" ./cmd/ragd
 
   common-runtime-dependencies:
     plugin: nil
     stage-packages:
-      - wget # model init
-      - jq # install hook
+      - wget
+      - jq
     stage-snaps:
-      - yq # install hook
+      - yq
 
   elasticdump:
     plugin: nil
@@ -85,8 +105,9 @@ parts:
       mkdir -p "${CRAFT_PART_INSTALL}/usr"
       curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
         | tar -xJ --strip-components=1 -C "${CRAFT_PART_INSTALL}/usr"
+      # npm's shebang is `#!/usr/bin/env node`, so `node` must be on PATH.
       export PATH="${CRAFT_PART_INSTALL}/usr/bin:${PATH}"
-      "${CRAFT_PART_INSTALL}/usr/bin/npm" install -g elasticdump@6.124.2 --prefix "${CRAFT_PART_INSTALL}/usr"
+      npm install -g elasticdump@6.124.2 --prefix "${CRAFT_PART_INSTALL}/usr"
 
   tika:
     plugin: nil
@@ -179,3 +200,45 @@ apps:
     environment:
       JAVA_OPTS: "-Xms512m -Xmx2g -XX:-UseContainerSupport"
       LD_LIBRARY_PATH: "${LD_LIBRARY_PATH}:${KNN_LIB_DIR}"
+
+  ragd:
+    # REST API daemon. Opt-in like tika-server: present but disabled on install,
+    # started explicitly with `snap start rag-cli.ragd`. Runs as root. The daemon
+    # creates the unix socket itself and chmods it world-connectable (0666); it
+    # does NOT chown it to api.socket.group, because the strict-confinement seccomp
+    # profile denies chowning to an arbitrary group (it would crash the daemon —
+    # see design Decision 1). Access is gated solely by the SO_PEERCRED check,
+    # which admits root and members of api.socket.group.
+    daemon: simple
+    install-mode: disable
+    command: bin/ragd
+    restart-condition: always
+    restart-delay: 5s
+    plugs:
+      # Reach the OpenSearch, inference, and Tika backends over the network.
+      - network
+      # network-bind also lets the opt-in loopback listener bind its port when
+      # api.loopback.enabled=true. The bind is loopback-only: the daemon refuses
+      # any non-loopback address (enforced in internal/api/loopback.go).
+      - network-bind
+    environment:
+      # Backend secrets live on the daemon service environment only, never in
+      # config and never on the `rag` CLI app (task 8.2). API clients talk to the
+      # daemon over the unix socket and never receive these values.
+      #
+      # IMPORTANT: values set here are applied by `snap run` *after* systemd and
+      # therefore OVERRIDE any systemd drop-in / EnvironmentFile. So only hardcode
+      # a key here when its baked-in value is the one you want; a key whose value
+      # the operator must supply at runtime must NOT appear here, or the empty
+      # default silently clobbers their drop-in.
+      #
+      # OPENSEARCH_USERNAME/PASSWORD keep the bundled-dev default (admin/admin).
+      # CHAT_API_KEY is intentionally absent: it has no usable default, and the
+      # operator injects it on the service environment, e.g.
+      #   sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
+      #   printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$KEY" | \
+      #     sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
+      #   sudo chmod 600 .../10-chat-key.conf && sudo systemctl daemon-reload
+      #   sudo snap restart rag-cli.ragd
+      OPENSEARCH_USERNAME: "admin"
+      OPENSEARCH_PASSWORD: "admin"

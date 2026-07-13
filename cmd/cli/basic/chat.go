@@ -36,6 +36,19 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 }
 
 func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
+	var llmModelName string
+	if len(args) > 0 {
+		llmModelName = args[0]
+	}
+	if llmModelName == "" {
+		llmModelName, _ = getConfigString(cmd.Context, confChatModel)
+	}
+
+	// Prefer a running daemon: it owns the session, backends, and secrets.
+	if dc := daemonClient(cmd.Context); dc != nil {
+		return chat.RemoteClient(dc, llmModelName, nil, cmd.temperature)
+	}
+
 	apiUrls, err := serverApiUrls(cmd.Context)
 	if err != nil {
 		return fmt.Errorf("error getting server api urls: %w", err)
@@ -52,14 +65,6 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 	embeddingModelID, _ := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
 
 	kapaClient := buildKapaClient(cmd.Context)
-
-	var llmModelName string
-	if len(args) > 0 {
-		llmModelName = args[0]
-	}
-	if llmModelName == "" {
-		llmModelName, _ = getConfigString(cmd.Context, confChatModel)
-	}
 
 	return chat.Client(apiUrls[openAi], knowledgeClient, kapaClient, embeddingModelID, llmModelName, chat.LoadPrompts(), cmd.temperature, cmd.Verbose)
 }
