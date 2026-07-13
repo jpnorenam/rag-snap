@@ -79,6 +79,12 @@ export async function postSync<T>(path: string, body?: unknown): Promise<T> {
   return env.metadata as T;
 }
 
+// deleteSync issues a DELETE expecting a sync response and returns its metadata.
+export async function deleteSync<T>(path: string): Promise<T> {
+  const env = await request<T>("DELETE", path);
+  return env.metadata as T;
+}
+
 // postAsync issues a request expecting an async response and returns the
 // operation object from metadata along with its canonical operation URL.
 export async function postAsync<T>(

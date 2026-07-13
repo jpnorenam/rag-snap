@@ -1,26 +1,46 @@
 "use client";
 
-// Sidebar is the Canonical-style dark navigation rail. Only "Chat" is wired up
-// today; the remaining entries are placeholders for features still to land and
-// render as disabled items. The dark-mode toggle lives in the footer.
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 
-type IconName = "chat" | "prompt" | "knowledge" | "search" | "rfp";
+// Sidebar is the Canonical-style dark navigation rail. Sections that have
+// shipped render as real next/link routes with an active state; sections still
+// to land render as non-focusable placeholders with a "Soon" badge (foundation
+// §9: non-navigable items are never links or buttons). The dark-mode toggle
+// lives in the footer, and Status is pinned just above it.
+
+type IconName = "chat" | "prompt" | "knowledge" | "search" | "rfp" | "status";
 
 interface NavItem {
   id: string;
   label: string;
   icon: IconName;
-  active?: boolean;
-  disabled?: boolean;
+  href: string;
+  // enabled sections are links; the rest stay "Soon" placeholders until their
+  // change lands.
+  enabled?: boolean;
 }
 
+// Primary navigation, top → bottom (docs/ux/01-app-shell.md). Only Chat is a
+// live route today; flip `enabled` on as each section's change ships.
 const NAV_ITEMS: NavItem[] = [
-  { id: "chat", label: "Chat", icon: "chat", active: true },
-  { id: "prompts", label: "Prompts", icon: "prompt", disabled: true },
-  { id: "knowledge", label: "Knowledge Bases", icon: "knowledge", disabled: true },
-  { id: "search", label: "Search", icon: "search", disabled: true },
-  { id: "rfp", label: "Answer RFPs", icon: "rfp", disabled: true },
+  { id: "chat", label: "Chat", icon: "chat", href: "/", enabled: true },
+  { id: "knowledge", label: "Knowledge bases", icon: "knowledge", href: "/knowledge/" },
+  { id: "search", label: "Search", icon: "search", href: "/search/" },
+  { id: "answer", label: "Answer RFPs", icon: "rfp", href: "/answer/" },
+  { id: "prompts", label: "Prompts", icon: "prompt", href: "/prompts/" },
 ];
+
+// Status is a utility entry pinned to the bottom of the rail (above the toggle).
+const STATUS_ITEM: NavItem = { id: "status", label: "Status", icon: "status", href: "/status/" };
+
+// normalizePath strips a trailing slash (but keeps root "/") so paths from
+// usePathname() compare equal regardless of the export's trailing-slash style.
+// basePath ("/ui") is already excluded from usePathname() values.
+function normalizePath(path: string): string {
+  if (path.length > 1 && path.endsWith("/")) return path.slice(0, -1);
+  return path;
+}
 
 interface Props {
   darkMode: boolean;
@@ -28,6 +48,9 @@ interface Props {
 }
 
 export default function Sidebar({ darkMode, onToggleDark }: Props) {
+  const pathname = usePathname();
+  const current = normalizePath(pathname ?? "/");
+
   return (
     <nav className="app-sidebar" aria-label="Main">
       <div className="app-sidebar__brand">
@@ -47,22 +70,13 @@ export default function Sidebar({ darkMode, onToggleDark }: Props) {
       <ul className="app-sidebar__nav">
         {NAV_ITEMS.map((item) => (
           <li key={item.id}>
-            <button
-              type="button"
-              className={`app-sidebar__item${item.active ? " is-active" : ""}`}
-              aria-current={item.active ? "page" : undefined}
-              disabled={item.disabled}
-              title={item.disabled ? "Coming soon" : undefined}
-            >
-              <NavIcon name={item.icon} />
-              <span className="app-sidebar__label">{item.label}</span>
-              {item.disabled && <span className="app-sidebar__soon">Soon</span>}
-            </button>
+            <NavEntry item={item} current={current} />
           </li>
         ))}
       </ul>
 
       <div className="app-sidebar__footer">
+        <NavEntry item={STATUS_ITEM} current={current} />
         <button
           type="button"
           onClick={onToggleDark}
@@ -86,6 +100,37 @@ export default function Sidebar({ darkMode, onToggleDark }: Props) {
         </button>
       </div>
     </nav>
+  );
+}
+
+// NavEntry renders a nav item as a link (shipped section) or a non-focusable
+// placeholder span (coming-soon section).
+function NavEntry({ item, current }: { item: NavItem; current: string }) {
+  if (!item.enabled) {
+    return (
+      <span
+        className="app-sidebar__item app-sidebar__item--soon"
+        aria-disabled="true"
+        title="Coming soon"
+      >
+        <NavIcon name={item.icon} />
+        <span className="app-sidebar__label">{item.label}</span>
+        <span className="app-sidebar__soon">Soon</span>
+      </span>
+    );
+  }
+
+  const active = normalizePath(item.href) === current;
+  return (
+    <Link
+      href={item.href}
+      className={`app-sidebar__item${active ? " is-active" : ""}`}
+      aria-current={active ? "page" : undefined}
+      title={item.label}
+    >
+      <NavIcon name={item.icon} />
+      <span className="app-sidebar__label">{item.label}</span>
+    </Link>
   );
 }
 
@@ -134,6 +179,12 @@ function NavIcon({ name }: { name: IconName }) {
         <svg {...common}>
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
           <path d="M14 2v6h6M9 15l2 2 4-4" />
+        </svg>
+      );
+    case "status":
+      return (
+        <svg {...common}>
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
         </svg>
       );
   }
