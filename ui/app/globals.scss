@@ -1,0 +1,310 @@
+@use "vanilla-framework";
+
+@include vanilla-framework.vanilla;
+
+// ---------------------------------------------------------------------------
+// App shell (ported from rag-snap-ui)
+// ---------------------------------------------------------------------------
+
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar — Canonical-style dark navigation rail
+// ---------------------------------------------------------------------------
+
+$sidebar-bg: #262626; // Vanilla inverted background (charcoal)
+$sidebar-accent: #e95420; // Ubuntu orange
+
+.app-sidebar {
+  flex: 0 0 15rem;
+  width: 15rem;
+  display: flex;
+  flex-direction: column;
+  background-color: $sidebar-bg;
+  color: rgba(255, 255, 255, 0.85);
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  height: 100vh;
+}
+
+.app-sidebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  min-height: 3.5rem;
+}
+
+.app-sidebar__logo {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  background-color: $sidebar-accent;
+
+  svg {
+    width: 1.25rem;
+    height: 1.25rem;
+    color: #fff;
+  }
+}
+
+.app-sidebar__title {
+  font-size: 1.5rem;
+  line-height: 1;
+  font-weight: 300;
+  color: #fff;
+  white-space: nowrap;
+}
+
+.app-sidebar__nav {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  flex: 1 1 auto;
+
+  li {
+    margin: 0;
+  }
+}
+
+.app-sidebar__item {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.65rem 1rem;
+  border: none;
+  border-left: 3px solid transparent;
+  background: none;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 0.9375rem;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 0.1s ease-in-out;
+
+  &:hover:not(:disabled) {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
+
+  &.is-active {
+    background-color: rgba(255, 255, 255, 0.12);
+    border-left-color: $sidebar-accent;
+    color: #fff;
+  }
+
+  &:disabled {
+    color: rgba(255, 255, 255, 0.4);
+    cursor: not-allowed;
+  }
+
+  &:focus-visible {
+    outline: 2px solid $sidebar-accent;
+    outline-offset: -2px;
+  }
+}
+
+.app-sidebar__icon {
+  flex-shrink: 0;
+}
+
+.app-sidebar__label {
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.app-sidebar__soon {
+  flex-shrink: 0;
+  font-size: 0.625rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.75rem;
+  background-color: rgba(255, 255, 255, 0.12);
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.app-sidebar__footer {
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0.25rem 0;
+}
+
+// ---------------------------------------------------------------------------
+// Content area
+// ---------------------------------------------------------------------------
+
+.app-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.app-topbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0 1.5rem;
+  min-height: 3.5rem;
+  background-color: var(--vf-color-background-alt);
+  border-bottom: 1px solid var(--vf-color-border-default);
+}
+
+.app-topbar__title {
+  font-size: 1.25rem;
+  font-weight: 400;
+  margin: 0;
+}
+
+.app-topbar__meta {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-left: auto;
+}
+
+.app-main {
+  flex: 1 1 auto;
+  max-width: 64rem;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 1.5rem;
+}
+
+// Collapse the sidebar to an icon rail on narrow viewports.
+@media (max-width: 620px) {
+  .app-sidebar {
+    flex-basis: 3.5rem;
+    width: 3.5rem;
+  }
+
+  .app-sidebar__title,
+  .app-sidebar__label,
+  .app-sidebar__soon {
+    display: none;
+  }
+
+  .app-sidebar__item {
+    justify-content: center;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Chat screen
+// ---------------------------------------------------------------------------
+
+.chat {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.chat__status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.chat__status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: var(--vf-color-border-low-contrast);
+
+  &.is-connected {
+    background-color: var(--vf-color-border-positive);
+  }
+
+  &.is-error {
+    background-color: var(--vf-color-border-negative);
+  }
+}
+
+.chat__messages {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.chat-message {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.chat-message__role {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vf-color-text-muted);
+}
+
+.chat-message__bubble {
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  background-color: var(--vf-color-background-alt);
+}
+
+.chat-message--user .chat-message__bubble {
+  background-color: var(--vf-color-background-information-default);
+}
+
+.chat-message__think {
+  margin-bottom: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 2px solid var(--vf-color-border-caution);
+  background-color: var(--vf-color-background-caution-default);
+  color: var(--vf-color-text-muted);
+  font-size: 0.875rem;
+  font-style: italic;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.chat__composer {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-end;
+  position: sticky;
+  bottom: 0;
+  padding-top: 0.5rem;
+  background-color: var(--vf-color-background);
+
+  textarea {
+    flex: 1 1 auto;
+    margin-bottom: 0;
+    resize: vertical;
+    min-height: 3rem;
+  }
+}
+
+.kb-selector {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.kb-selector__label {
+  font-size: 0.875rem;
+  color: var(--vf-color-text-muted);
+}

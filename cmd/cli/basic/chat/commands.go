@@ -14,10 +14,60 @@ import (
 
 const (
 	cmdUseKnowledge = "/use-knowledge"
+	cmdSearch       = "/search"
 )
 
-// slashCommands lists every registered slash command name.
-var slashCommands = []string{cmdUseKnowledge}
+// slashCommand describes a registered slash command and its argument syntax.
+type slashCommand struct {
+	name   string // e.g. "/search"
+	syntax string // e.g. "[-k N] <query>"; empty when the command takes no args
+}
+
+// slashCommands lists every registered slash command.
+var slashCommands = []slashCommand{
+	{name: cmdUseKnowledge},
+	{name: cmdSearch, syntax: "[-k N] <query>"},
+}
+
+// syntaxHint returns the argument syntax to show as dimmed ghost text when
+// input is a recognized command still awaiting its arguments. The second
+// return value is false when nothing should be shown (unknown command, a
+// command without args, or once the user has started typing the arguments).
+func syntaxHint(input string) (string, bool) {
+	trimmed := strings.TrimRight(input, " ")
+	for _, c := range slashCommands {
+		if c.syntax != "" && trimmed == c.name {
+			return c.syntax, true
+		}
+	}
+	return "", false
+}
+
+// syntaxPainter is a readline Painter that renders a command's argument syntax
+// as dimmed inline ghost text after the cursor, shell-autosuggest style.
+type syntaxPainter struct{}
+
+// Paint appends dimmed ghost text after the input, then moves the cursor back
+// to sit right after the user's text. readline's own cursor-position logic only
+// walks back over the real buffer length (ignoring runes Paint appends), so with
+// the cursor at end-of-line the trailing CSI-D is what restores the cursor.
+func (syntaxPainter) Paint(line []rune, pos int) []rune {
+	if pos != len(line) {
+		// Only ghost when the cursor is at end-of-line; gating here avoids
+		// tangling with readline's mid-line backspace sequence.
+		return line
+	}
+	suffix, ok := syntaxHint(string(line))
+	if !ok {
+		return line
+	}
+	ghost := " " + suffix
+	w := len([]rune(ghost)) // syntax is ASCII, so rune count == display width
+	out := append([]rune{}, line...)
+	out = append(out, []rune("\033[90m"+ghost+"\033[0m")...)
+	out = append(out, []rune(fmt.Sprintf("\033[%dD", w))...)
+	return out
+}
 
 // slashHinter returns a readline listener that displays matching slash
 // commands below the input line as the user types, filtering the list
@@ -32,9 +82,9 @@ func slashHinter() readline.Listener {
 			fmt.Fprint(os.Stderr, "\033[s\n\033[J\033[u")
 
 			var matches []string
-			for _, cmd := range slashCommands {
-				if strings.HasPrefix(cmd, input) && cmd != input {
-					matches = append(matches, cmd)
+			for _, c := range slashCommands {
+				if strings.HasPrefix(c.name, input) && c.name != input {
+					matches = append(matches, c.name)
 				}
 			}
 			if len(matches) > 0 {
@@ -73,16 +123,23 @@ type Session struct {
 // handleSlashCommand processes slash commands entered in the chat REPL.
 // Returns true if the command was recognized.
 func handleSlashCommand(input string, session *Session) bool {
-	cmd := strings.TrimSpace(input)
+	verb, args, _ := strings.Cut(strings.TrimSpace(input), " ")
 
-	switch {
-	case cmd == cmdUseKnowledge:
+	switch verb {
+	case cmdUseKnowledge:
 		if err := selectActiveContext(session); err != nil {
 			fmt.Printf("Error: %v\n", err)
 		}
 		return true
+	case cmdSearch:
+		handleSearch(args, session)
+		return true
 	default:
-		fmt.Printf("Unknown command: %s\nAvailable commands: %s\n", cmd, cmdUseKnowledge)
+		names := make([]string, len(slashCommands))
+		for i, c := range slashCommands {
+			names[i] = c.name
+		}
+		fmt.Printf("Unknown command: %s\nAvailable commands: %s\n", verb, strings.Join(names, ", "))
 		return false
 	}
 }

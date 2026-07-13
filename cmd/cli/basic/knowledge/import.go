@@ -3,14 +3,17 @@ package knowledge
 import (
 	"archive/tar"
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // ImportOptions configures a knowledge base import.
@@ -164,6 +167,76 @@ func importSources(ctx context.Context, client *OpenSearchClient, sourcesPath, t
 	return count, nil
 }
 
+// synthesizeSourcesFromIndex reconstructs SourceMetadata records by running a
+// terms aggregation on the source_id keyword field of the target index. This
+// is used as a fallback when sources.json is empty (e.g. archives exported
+// before the metadata index was populated). Each bucket becomes one source
+// record with ChunkCount equal to the number of chunks found in the index.
+func synthesizeSourcesFromIndex(ctx context.Context, client *OpenSearchClient, targetIndex string) (int, error) {
+	body, err := json.Marshal(map[string]any{
+		"size": 0,
+		"aggs": map[string]any{
+			"sources": map[string]any{
+				"terms": map[string]any{
+					"field": "source_id",
+					"size":  10000,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return 0, fmt.Errorf("building aggregation query: %w", err)
+	}
+
+	path := fmt.Sprintf("/%s/_search", targetIndex)
+	req, err := client.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(body))
+	if err != nil {
+		return 0, fmt.Errorf("building aggregation request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.client.Client.Perform(req.WithContext(ctx))
+	if err != nil {
+		return 0, fmt.Errorf("running aggregation: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		raw, _ := io.ReadAll(resp.Body)
+		return 0, fmt.Errorf("aggregation returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
+	}
+
+	var result struct {
+		Aggregations struct {
+			Sources struct {
+				Buckets []struct {
+					Key      string `json:"key"`
+					DocCount int    `json:"doc_count"`
+				} `json:"buckets"`
+			} `json:"sources"`
+		} `json:"aggregations"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return 0, fmt.Errorf("decoding aggregation response: %w", err)
+	}
+
+	now := time.Now().UTC().Format(DateFormat)
+	for _, bucket := range result.Aggregations.Sources.Buckets {
+		meta := SourceMetadata{
+			SourceID:   bucket.Key,
+			IndexName:  targetIndex,
+			ChunkCount: bucket.DocCount,
+			Status:     StatusCompleted,
+			IngestedAt: now,
+			UpdatedAt:  now,
+		}
+		if err := client.IndexSourceMetadata(ctx, meta); err != nil {
+			return 0, fmt.Errorf("indexing synthesized source %q: %w", bucket.Key, err)
+		}
+	}
+	return len(result.Aggregations.Sources.Buckets), nil
+}
+
 // ImportKnowledgeBase restores a knowledge base from an export directory or
 // a .tar.gz archive produced by ExportKnowledgeBase.
 func ImportKnowledgeBase(ctx context.Context, client *OpenSearchClient, kbName string, opts ImportOptions) error {
@@ -263,8 +336,25 @@ func ImportKnowledgeBase(ctx context.Context, client *OpenSearchClient, kbName s
 		return fmt.Errorf("importing sources: %w", err)
 	}
 
+	// When sources.json is empty (e.g. older exports), synthesize metadata from
+	// the chunk index so the sources index is always populated after import.
+	if sourcesImported == 0 {
+		fmt.Println("No source metadata in archive; synthesizing from imported chunks...")
+		sourcesImported, err = synthesizeSourcesFromIndex(ctx, client, targetIndex)
+		if err != nil {
+			fmt.Printf("  warning: could not synthesize source metadata: %v\n", err)
+		}
+	}
+
+	// Report the actual chunk count from OpenSearch rather than the (possibly
+	// stale) value recorded in the manifest at export time.
+	chunkCount, countErr := client.CountDocuments(ctx, targetIndex)
+	if countErr != nil {
+		chunkCount = manifest.ChunkCount
+	}
+
 	fmt.Printf("\nImport complete.\n")
 	fmt.Printf("  Sources imported: %d\n", sourcesImported)
-	fmt.Printf("  Chunks expected:  %d (from manifest)\n", manifest.ChunkCount)
+	fmt.Printf("  Chunks imported:  %d\n", chunkCount)
 	return nil
 }

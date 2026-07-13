@@ -111,6 +111,17 @@ export OPENSEARCH_USERNAME="admin"
 export OPENSEARCH_PASSWORD="admin"
 ```
 
+#### (Optional) Google Drive import
+
+To use `knowledge import --url <google-drive-url>`, configure your Google Drive OAuth2 credentials (a "Desktop app" client from [Google Cloud Console](https://console.cloud.google.com/apis/credentials)):
+
+```bash
+sudo rag-cli.rag set gdrive.client.id=<your-oauth2-client-id>
+sudo rag-cli.rag set gdrive.client.secret=<your-oauth2-client-secret>
+```
+
+On first use, `knowledge import --url` will open a browser for a one-time Google account sign-in. The token is cached and refreshed automatically for subsequent runs.
+
 The snap manages the tika-server service. To start it run:
 ```bash
 sudo snap start rag-cli.tika-server

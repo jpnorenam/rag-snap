@@ -11,6 +11,7 @@ import (
 
 type chatCommand struct {
 	*common.Context
+	temperature float64
 }
 
 func ChatCommand(ctx *common.Context) *cobra.Command {
@@ -28,12 +29,26 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 		RunE:              cmd.run,
 	}
 
+	cobraCmd.Flags().Float64Var(&cmd.temperature, "temperature", 0.3, "Sampling temperature (0.0–1.0); lower = more deterministic")
 	addDebugFlags(cobraCmd, ctx)
 
 	return cobraCmd
 }
 
 func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
+	var llmModelName string
+	if len(args) > 0 {
+		llmModelName = args[0]
+	}
+	if llmModelName == "" {
+		llmModelName, _ = getConfigString(cmd.Context, confChatModel)
+	}
+
+	// Prefer a running daemon: it owns the session, backends, and secrets.
+	if dc := daemonClient(cmd.Context); dc != nil {
+		return chat.RemoteClient(dc, llmModelName, nil, cmd.temperature)
+	}
+
 	apiUrls, err := serverApiUrls(cmd.Context)
 	if err != nil {
 		return fmt.Errorf("error getting server api urls: %w", err)
@@ -49,13 +64,5 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 
 	embeddingModelID, _ := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
 
-	var llmModelName string
-	if len(args) > 0 {
-		llmModelName = args[0]
-	}
-	if llmModelName == "" {
-		llmModelName, _ = getConfigString(cmd.Context, confChatModel)
-	}
-
-	return chat.Client(apiUrls[openAi], knowledgeClient, embeddingModelID, llmModelName, cmd.Verbose)
+	return chat.Client(apiUrls[openAi], knowledgeClient, embeddingModelID, llmModelName, chat.LoadPrompts(), cmd.temperature, cmd.Verbose)
 }

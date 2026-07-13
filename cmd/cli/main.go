@@ -60,8 +60,10 @@ func main() {
 	rootCmd.AddCommand(
 		basic.StatusCommand(ctx),
 		basic.ChatCommand(ctx),
+		basic.UICommand(ctx),
 		basic.AnswerCommand(ctx),
 		basic.KnowledgeCommand(ctx),
+		basic.PromptCommand(ctx),
 	)
 
 	rootCmd.AddGroup(config.Group("Configuration Commands:"))

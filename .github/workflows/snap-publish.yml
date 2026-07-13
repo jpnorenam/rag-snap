@@ -1,0 +1,66 @@
+name: Build and publish snap
+
+# Triggers:
+#   - push to main        → build + publish to "edge" channel
+#   - GitHub release      → build + publish to "stable" channel
+#   - manual dispatch     → build only (useful to test the workflow or get an artifact)
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  # ── Build ────────────────────────────────────────────────────────────────────
+  build:
+    runs-on: ubuntu-24.04
+    outputs:
+      snap: ${{ steps.build.outputs.snap }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build snap
+        uses: snapcore/action-build@v1
+        id: build
+
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rag-cli-snap
+          path: ${{ steps.build.outputs.snap }}
+          retention-days: 7
+
+  # ── Publish ──────────────────────────────────────────────────────────────────
+  # Requires the SNAP_STORE_CREDENTIALS secret.
+  # A snap store maintainer can generate it with:
+  #   snapcraft export-login --snaps rag-cli --acls package_upload snap-store-token.txt
+  # then add the file contents as a repository secret named SNAP_STORE_CREDENTIALS.
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    if: github.event_name == 'push' || github.event_name == 'release'
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: rag-cli-snap
+
+      - name: Publish to Snap Store (edge)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAP_STORE_CREDENTIALS }}
+        with:
+          snap: "*.snap"
+          release: edge
+
+      - name: Publish to Snap Store (stable)
+        if: github.event_name == 'release' && github.event.action == 'published'
+        uses: snapcore/action-publish@v1
+        env:
+          SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAP_STORE_CREDENTIALS }}
+        with:
+          snap: "*.snap"
+          release: stable
