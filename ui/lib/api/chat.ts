@@ -1,5 +1,4 @@
-import { postAsync } from "./envelope";
-import { ROOT_PATH } from "./rootPath";
+import { postAsync, wsUrl } from "./envelope";
 import { getToken } from "./token";
 
 // chatStartMetadata is the operation's own metadata: the resolved model plus
@@ -45,15 +44,10 @@ export async function startChat(opts: ChatStartOptions = {}): Promise<ChatSessio
 }
 
 // buildWsUrl turns the operation's websocket path + secret into an absolute
-// ws(s):// URL on the current origin. The daemon returns a same-origin path
-// like /1.0/operations/<id>/websocket; we resolve it against the page origin so
-// the socket is reachable directly (no CORS), then append the secret.
+// ws(s):// URL on the current origin, then appends the one-time secret that
+// authorizes the connect.
 function buildWsUrl(opPath: string, secret: string): string {
-  // opPath may already be absolute (http/ws) or a root-relative path.
-  const origin = window.location.origin.replace(/^http/, "ws");
-  const base = /^(wss?|https?):/.test(opPath)
-    ? opPath.replace(/^http/, "ws")
-    : `${origin}${ROOT_PATH}${opPath.startsWith("/") ? opPath : `/${opPath}`}`;
+  const base = wsUrl(opPath);
   const sep = base.includes("?") ? "&" : "?";
   return `${base}${sep}secret=${encodeURIComponent(secret)}`;
 }

@@ -45,7 +45,7 @@ Flex row `.app-shell` = dark `<Sidebar>` rail (15rem, sticky) + `.app-content` c
 - Paths are runtime-relative via `apiUrl()`; never bake a host/port. Auth is the loopback cookie + `authHeaders()` fallback — call `captureTokenFromUrl()` once on mount before any API call.
 - `ApiError.code === 0` = daemon unreachable → show the standard connection message ("Cannot reach the RAG daemon. Check that the service is running (`snap services rag-cli`)."), not the raw error.
 - One feature module per resource exporting typed interfaces mirroring daemon views + thin verb functions; normalize `null` arrays to `[]`.
-- Long-running work is a daemon **operation**: `postAsync`, then track it through the shared operations mechanism if one exists in `ui/components/common/` — don't hand-roll polling loops inside screens.
+- Long-running work is a daemon **operation**: `postAsync`, then hand the returned operation to `useOperations().track(op)` (`ui/lib/useOperations.ts`, backed by `components/common/OperationsProvider.tsx`). The provider owns the `/1.0/events` socket, the polling fallback, and the header indicator/panel — never hand-roll a polling loop inside a screen, and never add a toast system.
 
 ## Sanctioned component vocabulary
 
@@ -60,7 +60,11 @@ Flex row `.app-shell` = dark `<Sidebar>` rail (15rem, sticky) + `.app-content` c
 | Forms | `p-form p-form--stacked`, `p-form__group` + `<label>`; errors via `p-form-validation is-error` + `__message` |
 | Modals | `p-modal` + `p-modal__dialog`, `role="dialog" aria-modal="true" aria-labelledby`; Escape + overlay close; focus trapped, restored on close |
 | Code / IDs | `p-code-snippet` + `p-code-snippet__block` |
-| Spinner | `<i className="p-icon--spinner u-animation--spin" aria-hidden="true" />` + visible text |
+| Spinner | `components/common/Spinner.tsx` (`p-icon--spinner u-animation--spin` + visible text) |
+| Empty state | `components/common/EmptyState.tsx` |
+| Confirm / type-to-confirm | `components/common/ConfirmModal.tsx` |
+| Status dot | `.app-status-dot` + `is-*` (`is-connected`/`is-error`, `is-running`/`is-succeeded`/`is-failed`/`is-cancelled`) |
+| Anchored panel (popover) | the `.app-ops-panel` recipe: card anchored to its toggle, `--vf-color-background-alt` on `--vf-color-border-default`, toggle with `aria-expanded`/`aria-controls`, closes on Escape + outside click. Vanilla has no popover — do not invent a second one |
 | Muted text | `u-text--muted`, `p-text--small` |
 
 New visual patterns require updating this skill in the same PR.

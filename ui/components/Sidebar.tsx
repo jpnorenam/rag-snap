@@ -1,26 +1,33 @@
 "use client";
 
-// Sidebar is the Canonical-style dark navigation rail. Only "Chat" is wired up
-// today; the remaining entries are placeholders for features still to land and
-// render as disabled items. The dark-mode toggle lives in the footer.
+import Link from "next/link";
+import { usePathname } from "next/navigation";
 
-type IconName = "chat" | "prompt" | "knowledge" | "search" | "rfp";
+// Sidebar is the Canonical-style dark navigation rail. Sections whose screens
+// exist are real links; the rest stay as non-focusable placeholders with a
+// "Soon" badge — a nav item that navigates nowhere is not a link or a button.
+// Status is pinned to the footer as a utility item, above the dark-mode toggle.
+
+type IconName = "chat" | "knowledge" | "search" | "rfp" | "prompt" | "status";
 
 interface NavItem {
   id: string;
   label: string;
   icon: IconName;
-  active?: boolean;
-  disabled?: boolean;
+  href: string;
+  // Set once the section's screen exists; until then the entry is a placeholder.
+  enabled?: boolean;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "chat", label: "Chat", icon: "chat", active: true },
-  { id: "prompts", label: "Prompts", icon: "prompt", disabled: true },
-  { id: "knowledge", label: "Knowledge Bases", icon: "knowledge", disabled: true },
-  { id: "search", label: "Search", icon: "search", disabled: true },
-  { id: "rfp", label: "Answer RFPs", icon: "rfp", disabled: true },
+  { id: "chat", label: "Chat", icon: "chat", href: "/", enabled: true },
+  { id: "knowledge", label: "Knowledge bases", icon: "knowledge", href: "/knowledge/" },
+  { id: "search", label: "Search", icon: "search", href: "/search/" },
+  { id: "answer", label: "Answer RFPs", icon: "rfp", href: "/answer/" },
+  { id: "prompts", label: "Prompts", icon: "prompt", href: "/prompts/" },
 ];
+
+const STATUS_ITEM: NavItem = { id: "status", label: "Status", icon: "status", href: "/status/" };
 
 interface Props {
   darkMode: boolean;
@@ -28,6 +35,8 @@ interface Props {
 }
 
 export default function Sidebar({ darkMode, onToggleDark }: Props) {
+  const pathname = usePathname();
+
   return (
     <nav className="app-sidebar" aria-label="Main">
       <div className="app-sidebar__brand">
@@ -47,27 +56,19 @@ export default function Sidebar({ darkMode, onToggleDark }: Props) {
       <ul className="app-sidebar__nav">
         {NAV_ITEMS.map((item) => (
           <li key={item.id}>
-            <button
-              type="button"
-              className={`app-sidebar__item${item.active ? " is-active" : ""}`}
-              aria-current={item.active ? "page" : undefined}
-              disabled={item.disabled}
-              title={item.disabled ? "Coming soon" : undefined}
-            >
-              <NavIcon name={item.icon} />
-              <span className="app-sidebar__label">{item.label}</span>
-              {item.disabled && <span className="app-sidebar__soon">Soon</span>}
-            </button>
+            <NavEntry item={item} pathname={pathname} />
           </li>
         ))}
       </ul>
 
       <div className="app-sidebar__footer">
+        <NavEntry item={STATUS_ITEM} pathname={pathname} />
         <button
           type="button"
           onClick={onToggleDark}
           className="app-sidebar__item app-sidebar__toggle"
           aria-label="Toggle dark mode"
+          title="Toggle dark mode"
         >
           {darkMode ? (
             <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
@@ -87,6 +88,43 @@ export default function Sidebar({ darkMode, onToggleDark }: Props) {
       </div>
     </nav>
   );
+}
+
+// NavEntry renders one rail entry: a link when its screen exists, an inert span
+// otherwise. The label doubles as the tooltip for the collapsed icon rail.
+function NavEntry({ item, pathname }: { item: NavItem; pathname: string }) {
+  if (!item.enabled) {
+    return (
+      <span className="app-sidebar__item app-sidebar__item--pending" title="Coming soon">
+        <NavIcon name={item.icon} />
+        <span className="app-sidebar__label">{item.label}</span>
+        <span className="app-sidebar__soon">Soon</span>
+      </span>
+    );
+  }
+
+  const active = isActive(pathname, item.href);
+  const classes = ["app-sidebar__item", active ? "is-active" : ""].filter(Boolean).join(" ");
+
+  return (
+    <Link
+      href={item.href}
+      className={classes}
+      aria-current={active ? "page" : undefined}
+      title={item.label}
+    >
+      <NavIcon name={item.icon} />
+      <span className="app-sidebar__label">{item.label}</span>
+    </Link>
+  );
+}
+
+// isActive matches the current route against an entry. Chat lives at the root,
+// which every path is a prefix of, so it only matches exactly.
+function isActive(pathname: string, href: string): boolean {
+  const path = pathname.endsWith("/") ? pathname : `${pathname}/`;
+  if (href === "/") return path === "/";
+  return path === href || path.startsWith(href);
 }
 
 // NavIcon renders a small line icon for each navigation entry.
@@ -134,6 +172,12 @@ function NavIcon({ name }: { name: IconName }) {
         <svg {...common}>
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
           <path d="M14 2v6h6M9 15l2 2 4-4" />
+        </svg>
+      );
+    case "status":
+      return (
+        <svg {...common}>
+          <path d="M3 12h4l3 8 4-16 3 8h4" />
         </svg>
       );
   }
