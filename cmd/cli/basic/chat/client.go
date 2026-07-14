@@ -116,10 +116,10 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 	//rl.CaptureExitSignal() // Should readline capture and handle the exit signal? - Can be used to interrupt the chat response stream.
 	log.SetOutput(rl.Stderr())
 
-	initialSystemPrompt := "You are a helpful assistant."
-	if knowledgeClient != nil || kapaClient != nil {
-		initialSystemPrompt = prompts.ChatSystemPrompt
-	}
+	// The configured prompt is sent unconditionally — retrieval availability
+	// never swaps in a hidden substitute, so what `prompt init` shows is what
+	// runs.
+	initialSystemPrompt := prompts.ChatSystemPrompt
 
 	params := openai.ChatCompletionNewParams{
 		Messages: []openai.ChatCompletionMessageParamUnion{

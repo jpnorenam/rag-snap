@@ -88,10 +88,11 @@ $sidebar-accent: #e95420; // Ubuntu orange
   color: rgba(255, 255, 255, 0.85);
   font-size: 0.9375rem;
   text-align: left;
+  text-decoration: none;
   cursor: pointer;
   transition: background-color 0.1s ease-in-out;
 
-  &:hover:not(:disabled) {
+  &:not(.app-sidebar__item--soon):hover {
     background-color: rgba(255, 255, 255, 0.1);
     color: #fff;
   }
@@ -102,7 +103,8 @@ $sidebar-accent: #e95420; // Ubuntu orange
     color: #fff;
   }
 
-  &:disabled {
+  // Coming-soon placeholders: inert, muted, non-focusable spans.
+  &--soon {
     color: rgba(255, 255, 255, 0.4);
     cursor: not-allowed;
   }
@@ -219,19 +221,41 @@ $sidebar-accent: #e95420; // Ubuntu orange
   font-size: 0.875rem;
 }
 
-.chat__status-dot {
+// Generalized status dot: shared by the chat connection status and the
+// operations panel rows. State modifiers map to Vanilla border tokens so the
+// colors track the theme.
+.app-status-dot {
   width: 0.5rem;
   height: 0.5rem;
   border-radius: 50%;
   flex-shrink: 0;
   background-color: var(--vf-color-border-low-contrast);
 
+  // Chat connection states.
   &.is-connected {
     background-color: var(--vf-color-border-positive);
   }
 
   &.is-error {
     background-color: var(--vf-color-border-negative);
+  }
+
+  // Operation states (caution=running, positive=succeeded, negative=failed,
+  // muted=cancelled).
+  &.is-running {
+    background-color: var(--vf-color-border-caution);
+  }
+
+  &.is-succeeded {
+    background-color: var(--vf-color-border-positive);
+  }
+
+  &.is-failed {
+    background-color: var(--vf-color-border-negative);
+  }
+
+  &.is-cancelled {
+    background-color: var(--vf-color-text-muted);
   }
 }
 
@@ -305,6 +329,271 @@ $sidebar-accent: #e95420; // Ubuntu orange
 }
 
 .kb-selector__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 0.875rem;
   color: var(--vf-color-text-muted);
+}
+
+// ---------------------------------------------------------------------------
+// Shared primitives (components/common)
+// ---------------------------------------------------------------------------
+
+.app-spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.5rem;
+  padding: 1.5rem 1rem;
+}
+
+.app-empty__icon {
+  color: var(--vf-color-text-muted);
+  line-height: 0;
+}
+
+.app-empty__headline {
+  font-weight: 400;
+}
+
+.app-empty__guidance {
+  max-width: 28rem;
+}
+
+// The CLI-equivalent command: full width of the empty state, left-aligned so the
+// command reads as a command rather than as prose.
+.app-empty__command {
+  width: 100%;
+  max-width: 28rem;
+  margin: 0.5rem 0 0;
+  text-align: left;
+}
+
+.app-empty__action {
+  margin-top: 0.5rem;
+}
+
+// Confirm modal footer: right-aligned actions.
+.app-modal {
+  .p-modal__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Operations indicator & panel  --- ops ---
+// ---------------------------------------------------------------------------
+
+.app-ops {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.app-ops__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+
+  i {
+    display: inline-flex;
+    line-height: 0;
+  }
+}
+
+.app-ops__count {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.875rem;
+}
+
+.app-ops-panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 20;
+  width: 22rem;
+  max-width: 90vw;
+  max-height: 70vh;
+  overflow-y: auto;
+  background-color: var(--vf-color-background-alt);
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.25rem;
+  // Vanilla's own elevation, so the card lifts correctly in both themes.
+  box-shadow: vanilla-framework.$box-shadow;
+}
+
+.app-ops-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.app-ops-panel__empty {
+  padding: 0.5rem;
+}
+
+.app-ops-row {
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--vf-color-border-default);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.app-ops-row__main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app-ops-row__desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+}
+
+.app-ops-row__time {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.app-ops-row__actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.app-ops-row__dismiss {
+  padding: 0 0.4rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.app-ops-row__note {
+  margin-top: 0.25rem;
+  padding-left: 1rem;
+}
+
+.app-ops-row__error {
+  margin-top: 0.25rem;
+  padding-left: 1rem;
+  color: var(--vf-color-border-negative);
+}
+
+.app-ops-row__progress {
+  margin-top: 0.4rem;
+  height: 0.25rem;
+  border-radius: 0.125rem;
+  background-color: var(--vf-color-border-low-contrast);
+  overflow: hidden;
+}
+
+.app-ops-row__progress-bar {
+  height: 100%;
+  background-color: var(--vf-color-border-caution);
+  transition: width 0.2s ease-in-out;
+}
+
+// ---------------------------------------------------------------------------
+// Prompts page  --- prompts ---
+// ---------------------------------------------------------------------------
+
+.prompts__intro {
+  margin-bottom: 1rem;
+}
+
+.prompts__skeletons {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.prompt-card {
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background-color: var(--vf-color-background-alt);
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.25rem;
+}
+
+// Skeleton: the same height a collapsed card occupies, so nothing shifts when
+// the real prompts land.
+.prompt-card--skeleton {
+  height: 14rem;
+}
+
+.prompt-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.prompt-card__title {
+  margin-bottom: 0.25rem;
+}
+
+.prompt-card__description {
+  margin-bottom: 0;
+}
+
+// Collapsed preview: the first lines of the effective prompt, faded out at the
+// bottom. The fade is a mask (not a colour gradient) so it needs no token and
+// works unchanged in both themes.
+.prompt-card__preview {
+  margin: 0.75rem 0 0;
+  max-height: 7rem;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 100%) 55%, rgb(0 0 0 / 0%) 100%);
+
+  .p-code-snippet__block {
+    margin-bottom: 0;
+  }
+}
+
+.prompt-card__editor {
+  width: 100%;
+  min-height: 24rem;
+  // Match the read-only snippet the editor replaces (Vanilla's own code stack).
+  font-family: unquote(vanilla-framework.$font-monospace);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.prompt-card__default {
+  margin-bottom: 1rem;
+
+  summary {
+    cursor: pointer;
+  }
+
+  .p-code-snippet {
+    margin-top: 0.5rem;
+  }
+}
+
+.prompt-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+// Reset is a quiet, right-aligned action: it is not the point of the card, and
+// it is guarded by a confirm dialog.
+.prompt-card__reset {
+  margin-left: auto;
 }

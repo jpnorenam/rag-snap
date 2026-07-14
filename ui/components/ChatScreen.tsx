@@ -2,10 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Header from "@/components/Header";
-import Sidebar from "@/components/Sidebar";
-import { useDarkMode } from "@/lib/useDarkMode";
-import { captureTokenFromUrl } from "@/lib/api/token";
-import { ApiError } from "@/lib/api/envelope";
+import { ApiError, errorMessage } from "@/lib/api/envelope";
 import { startChat, ChatConnection, type ChatFrame } from "@/lib/api/chat";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
 
@@ -21,12 +18,12 @@ interface Message {
 }
 
 export default function ChatScreen() {
-  const [darkMode, toggleDark] = useDarkMode();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [connState, setConnState] = useState<ConnState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
+  const [kbState, setKbState] = useState<"loading" | "connected" | "unavailable">("loading");
   const [activeBases, setActiveBases] = useState<string[]>([]);
   const [model, setModel] = useState<string>("");
 
@@ -35,18 +32,21 @@ export default function ChatScreen() {
   // Whether the current assistant turn is still streaming (awaiting `done`).
   const awaitingDone = useRef(false);
 
-  // Capture a fragment token (if the launch flow used one) before any API call.
-  useEffect(() => {
-    captureTokenFromUrl();
-  }, []);
-
-  // Load the available knowledge bases for the selector.
+  // Load the available knowledge bases for the selector. A successful call means
+  // OpenSearch is reachable; a non-zero-code error means the daemon is up but the
+  // knowledge store is not, which we surface as an "Unavailable" indicator rather
+  // than a fatal error.
   useEffect(() => {
     listKnowledge()
-      .then(setBases)
+      .then((b) => {
+        setBases(b);
+        setKbState("connected");
+      })
       .catch((e) => {
-        // A missing knowledge backend is not fatal to chat; surface softly.
-        if (e instanceof ApiError && e.code === 0) setError(e.message);
+        // An unreachable daemon is fatal, so it gets the standard connection
+        // error. An unreachable knowledge store is not — chat still works.
+        if (e instanceof ApiError && e.code === 0) setError(errorMessage(e));
+        setKbState("unavailable");
       });
   }, []);
 
@@ -147,7 +147,7 @@ export default function ChatScreen() {
       conn.prompt(text);
     } catch (e) {
       awaitingDone.current = false;
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setMessages((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];
@@ -183,48 +183,64 @@ export default function ChatScreen() {
   }
 
   return (
-    <div className="app-shell">
-      <Sidebar darkMode={darkMode} onToggleDark={toggleDark} />
+    <>
+      <Header title="Chat">
+        <div className="chat__status">
+          <span
+            className={`app-status-dot ${
+              connState === "connected" ? "is-connected" : connState === "error" ? "is-error" : ""
+            }`}
+          />
+          <span className="u-text--muted p-text--small u-no-margin--bottom">
+            {connState === "connected"
+              ? model
+                ? `Connected · ${model}`
+                : "Connected"
+              : connState === "connecting"
+                ? "Connecting…"
+                : connState === "error"
+                  ? "Connection error"
+                  : "Ready"}
+          </span>
+        </div>
+      </Header>
 
-      <div className="app-content">
-        <Header title="Chat">
-          <div className="chat__status">
+      <main className="app-main chat">
+        <div className="kb-selector">
+          <span className="kb-selector__label">
             <span
-              className={`chat__status-dot ${
-                connState === "connected" ? "is-connected" : connState === "error" ? "is-error" : ""
+              className={`app-status-dot ${
+                kbState === "connected" ? "is-connected" : kbState === "unavailable" ? "is-error" : ""
               }`}
             />
+            {kbState === "connected"
+              ? "Connected · Knowledge bases:"
+              : kbState === "unavailable"
+                ? "Unavailable · Knowledge bases:"
+                : "Knowledge bases:"}
+          </span>
+          {kbState === "connected" && bases.length === 0 && (
             <span className="u-text--muted p-text--small u-no-margin--bottom">
-              {connState === "connected"
-                ? model
-                  ? `Connected · ${model}`
-                  : "Connected"
-                : connState === "connecting"
-                  ? "Connecting…"
-                  : connState === "error"
-                    ? "Connection error"
-                    : "Ready"}
+              None yet — create one with <code>rag-cli.rag k create &lt;name&gt;</code>
             </span>
-          </div>
-        </Header>
-
-        <main className="app-main chat">
-        {bases.length > 0 && (
-          <div className="kb-selector">
-            <span className="kb-selector__label">Knowledge bases:</span>
-            {bases.map((b) => (
-              <button
-                key={b.name}
-                onClick={() => toggleBase(b.name)}
-                className={`p-chip u-no-margin--bottom ${
-                  activeBases.includes(b.name) ? "p-chip--positive" : ""
-                }`}
-              >
-                <span className="p-chip__value">{b.name}</span>
-              </button>
-            ))}
-          </div>
-        )}
+          )}
+          {kbState === "unavailable" && (
+            <span className="u-text--muted p-text--small u-no-margin--bottom">
+              OpenSearch is not reachable. Check that the knowledge store is running.
+            </span>
+          )}
+          {bases.map((b) => (
+            <button
+              key={b.name}
+              onClick={() => toggleBase(b.name)}
+              className={`p-chip u-no-margin--bottom ${
+                activeBases.includes(b.name) ? "p-chip--positive" : ""
+              }`}
+            >
+              <span className="p-chip__value">{b.name}</span>
+            </button>
+          ))}
+        </div>
 
         {error && (
           <div className="p-notification--negative" role="alert">
@@ -269,8 +285,7 @@ export default function ChatScreen() {
             Send
           </button>
         </div>
-        </main>
-      </div>
-    </div>
+      </main>
+    </>
   );
 }

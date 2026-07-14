@@ -39,6 +39,11 @@ ui/node_modules/
 ui/.next/
 ui/out/
 ui/next-env.d.ts
+ui/tsconfig.tsbuildinfo
+
+# UX planning docs are working notes, not shipped documentation — keep them
+# local (mirrors the PLAN.md convention).
+docs/ux/
 
 # The embedded UI dist holds only a committed placeholder index.html; the real
 # SPA is copied in by `make ui` / the snapcraft build and must not be committed.

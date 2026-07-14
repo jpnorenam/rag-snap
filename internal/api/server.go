@@ -32,6 +32,7 @@ var apiExtensions = []string{
 	"search",
 	"chat_websocket",
 	"batch_answer",
+	"prompts",
 }
 
 // Server is the ragd HTTP API server. It owns the configuration snapshot, the
@@ -45,6 +46,10 @@ type Server struct {
 	clients  *clientCache
 	events   *eventsHub
 	ops      *operations
+	// prompts is the daemon-owned store of prompt-template overrides. Chat
+	// sessions and batch operations are seeded from it at start, so a
+	// customization applies to work started after it was saved.
+	prompts  *promptStore
 	httpSrv  *http.Server
 	listener net.Listener
 	// token is the localhost bearer token authenticating loopback requests. It
@@ -79,6 +84,7 @@ func New(opts Options) *Server {
 		backends: newBackendState(opts.BackendURLs),
 		clients:  newClientCache(opts.Context, opts.BackendURLs),
 		events:   newEventsHub(),
+		prompts:  newPromptStore(),
 	}
 	s.httpSrv = &http.Server{
 		Handler:           s.routes(),
@@ -292,6 +298,12 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 
 	// Batch answering (prepared manifest, async operation).
 	mux.HandleFunc("POST /1.0/answer/batch", s.requireAuth(s.handleAnswerBatch))
+
+	// Prompt templates (daemon-owned; seed chat sessions and batch runs).
+	mux.HandleFunc("GET /1.0/prompts", s.requireAuth(s.handlePromptsList))
+	mux.HandleFunc("GET /1.0/prompts/{name}", s.requireAuth(s.handlePromptGet))
+	mux.HandleFunc("PUT /1.0/prompts/{name}", s.requireAuth(s.handlePromptUpdate))
+	mux.HandleFunc("DELETE /1.0/prompts/{name}", s.requireAuth(s.handlePromptReset))
 }
 
 // swagger:route GET / server apiRoot

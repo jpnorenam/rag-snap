@@ -306,6 +306,52 @@ websocket URL to dial for streamed tokens and `<think>` blocks.
 | `POST /1.0/search` | sync | Hybrid search |
 | `POST /1.0/chat` | async (ws) | Start an interactive chat session |
 | `POST /1.0/answer/batch` | async | Run a prepared batch manifest |
+| `GET /1.0/prompts`, `GET /1.0/prompts/{name}` | sync | Read the prompt templates |
+| `PUT /1.0/prompts/{name}` | sync | Customize a prompt template |
+| `DELETE /1.0/prompts/{name}` | sync | Reset a prompt to its built-in default |
 
 The full, authoritative contract is the generated [`rest-api.yaml`](../rest-api.yaml)
 OpenAPI specification at the repository root.
+
+---
+
+## Prompt templates
+
+Three templates drive generation: `chat_system_prompt` (interactive chat),
+`answer_system_prompt` (batch answering), and `source_rules` (the grounding block appended to a
+batch manifest's custom prompt). The daemon owns them, stores customizations in
+`$SNAP_COMMON/ragd/prompts.json`, and seeds every chat session and batch run it starts from that
+store — so a prompt saved here is what `rag-cli.rag chat`, `answer batch`, and the web UI all use.
+
+Each prompt is returned with its effective `value`, the built-in `default` it falls back to, and a
+`customized` flag, so a client can show the default for comparison and offer a meaningful reset
+without a second request.
+
+```bash
+# Read all three (in the order the CLI presents them).
+sudo curl -s --unix-socket /var/snap/rag-cli/common/ragd/unix.socket \
+  http://localhost/1.0/prompts | jq '.metadata[] | {name, customized}'
+
+# Customize one.
+sudo curl -s --unix-socket /var/snap/rag-cli/common/ragd/unix.socket -X PUT \
+  -H 'Content-Type: application/json' \
+  -d '{"value": "You are a terse assistant. Answer in one sentence."}' \
+  http://localhost/1.0/prompts/chat_system_prompt
+
+# Reset it to the built-in default (idempotent).
+sudo curl -s --unix-socket /var/snap/rag-cli/common/ragd/unix.socket -X DELETE \
+  http://localhost/1.0/prompts/chat_system_prompt
+```
+
+Semantics worth knowing:
+
+- **Prompts are resolved when work starts.** A chat session or batch operation keeps the prompts
+  it began with; an edit applies to the *next* session or run, never to one already in flight.
+- **Empty values are rejected** (400). Resetting is an explicit `DELETE`, so clearing an editor
+  cannot silently discard a customization.
+- **A value equal to the default clears the override**, so `customized` never lies and a future
+  release's improved default is not shadowed by a stale identical copy.
+- **Only overrides are stored.** A prompt you never customized always resolves to the built-in
+  default of the installed release.
+- Prompts are machine-global, like knowledge bases: any caller authorized to reach the API can
+  change them.

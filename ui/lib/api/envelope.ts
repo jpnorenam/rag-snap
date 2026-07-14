@@ -1,5 +1,5 @@
 import { ROOT_PATH } from "./rootPath";
-import { authHeaders } from "./token";
+import { authHeaders, captureTokenFromUrl } from "./token";
 
 // The daemon's uniform response envelope (LXD-style): every JSON response is a
 // "sync", "async", or "error" object. This is the browser analogue of lxd-ui's
@@ -25,6 +25,23 @@ export class ApiError extends Error {
   }
 }
 
+// DAEMON_UNREACHABLE is the standard copy for a dead daemon (foundation §7).
+// `ApiError.code === 0` means the request never reached ragd, so the raw
+// transport message ("network error contacting the API: TypeError…") tells the
+// user nothing actionable — this says what happened and what to do next.
+export const DAEMON_UNREACHABLE =
+  "Cannot reach the RAG daemon. Check that the service is running (`snap services rag-cli`).";
+
+// errorMessage turns any thrown value into the sentence to show the user: the
+// standard connection error when the daemon is unreachable, the daemon's own
+// message otherwise. Every screen should render errors through this.
+export function errorMessage(e: unknown): string {
+  if (e instanceof ApiError) {
+    return e.code === 0 ? DAEMON_UNREACHABLE : e.message;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
 // apiUrl builds an absolute-from-origin API path: `${ROOT_PATH}/1.0/...`.
 export function apiUrl(path: string): string {
   const suffix = path.startsWith("/") ? path : `/${path}`;
@@ -39,6 +56,10 @@ async function request<T>(
   path: string,
   body?: unknown
 ): Promise<ApiEnvelope<T>> {
+  // Idempotent, and a no-op on the usual cookie path. It guarantees a fragment
+  // token is picked up even when a caller fires before AppShell's mount-time
+  // capture: child effects (OperationsProvider's seed) run before the parent's.
+  captureTokenFromUrl();
   const headers: Record<string, string> = { ...authHeaders() };
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
@@ -76,6 +97,18 @@ export async function getSync<T>(path: string): Promise<T> {
 // postSync issues a request expecting a sync response and returns its metadata.
 export async function postSync<T>(path: string, body?: unknown): Promise<T> {
   const env = await request<T>("POST", path, body);
+  return env.metadata as T;
+}
+
+// putSync issues a PUT expecting a sync response and returns its metadata.
+export async function putSync<T>(path: string, body?: unknown): Promise<T> {
+  const env = await request<T>("PUT", path, body);
+  return env.metadata as T;
+}
+
+// deleteSync issues a DELETE expecting a sync response and returns its metadata.
+export async function deleteSync<T>(path: string): Promise<T> {
+  const env = await request<T>("DELETE", path);
   return env.metadata as T;
 }
 

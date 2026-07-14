@@ -207,3 +207,52 @@ func (c *Client) Import(ctx context.Context, name, inputDir string, force bool) 
 func (c *Client) AnswerBatch(ctx context.Context, manifest any) (string, error) {
 	return c.Async(ctx, "POST", "/1.0/answer/batch", manifest)
 }
+
+// Prompt is the client view of one prompt template: its effective value, the
+// built-in default it falls back to, and whether an override is stored in the
+// daemon. The daemon store is what chat sessions and batch runs are seeded from.
+type Prompt struct {
+	Name       string `json:"name"`
+	Value      string `json:"value"`
+	Default    string `json:"default"`
+	Customized bool   `json:"customized"`
+}
+
+// ListPrompts returns the prompt templates in the daemon's canonical order.
+func (c *Client) ListPrompts(ctx context.Context) ([]Prompt, error) {
+	var prompts []Prompt
+	if err := c.Sync(ctx, "GET", "/1.0/prompts", nil, &prompts); err != nil {
+		return nil, err
+	}
+	return prompts, nil
+}
+
+// GetPrompt returns a single prompt template.
+func (c *Client) GetPrompt(ctx context.Context, name string) (*Prompt, error) {
+	var prompt Prompt
+	if err := c.Sync(ctx, "GET", "/1.0/prompts/"+name, nil, &prompt); err != nil {
+		return nil, err
+	}
+	return &prompt, nil
+}
+
+// SetPrompt stores a customization for a prompt template. An empty value is
+// rejected by the daemon: reset a prompt with ResetPrompt instead.
+func (c *Client) SetPrompt(ctx context.Context, name, value string) (*Prompt, error) {
+	var prompt Prompt
+	body := map[string]string{"value": value}
+	if err := c.Sync(ctx, "PUT", "/1.0/prompts/"+name, body, &prompt); err != nil {
+		return nil, err
+	}
+	return &prompt, nil
+}
+
+// ResetPrompt drops a prompt's customization so it resolves to the built-in
+// default again. Resetting an uncustomized prompt succeeds as a no-op.
+func (c *Client) ResetPrompt(ctx context.Context, name string) (*Prompt, error) {
+	var prompt Prompt
+	if err := c.Sync(ctx, "DELETE", "/1.0/prompts/"+name, nil, &prompt); err != nil {
+		return nil, err
+	}
+	return &prompt, nil
+}

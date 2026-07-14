@@ -10,6 +10,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -49,14 +50,32 @@ func currentUserGroup(t *testing.T) string {
 // Server so tests can reach its operations registry.
 func startTestServer(t *testing.T, urls map[string]string) (string, *Server) {
 	t.Helper()
+	return startTestServerWithConfig(t, urls, nil)
+}
+
+// startTestServerWithConfig is startTestServer with seeded config keys, given as
+// "key=value" lines (the file-config format). Use it for handlers whose behaviour
+// depends on config — e.g. retrieval is enabled only when the embedding model key
+// is set, which in turn is what makes a chat session apply its system prompt.
+func startTestServerWithConfig(t *testing.T, urls map[string]string, configLines []string) (string, *Server) {
+	t.Helper()
 	dir := t.TempDir()
 	sock := filepath.Join(dir, "ragd", "unix.socket")
 
-	// Back the server with an empty, read-only file config so handlers that read
-	// config keys (e.g. the chat model) operate without panicking on a nil
-	// Context. Production always supplies a snapctl-backed Context.
+	// Route daemon state ($SNAP_COMMON-rooted: the prompt store, the token) under
+	// this test's temp dir, so tests neither pollute a shared /tmp path nor see
+	// each other's prompt customizations.
+	t.Setenv("SNAP_COMMON", dir)
+
+	// Back the server with a read-only file config so handlers that read config
+	// keys (e.g. the chat model) operate without panicking on a nil Context.
+	// Production always supplies a snapctl-backed Context.
 	cfgPath := filepath.Join(dir, "config")
-	if err := os.WriteFile(cfgPath, nil, 0o600); err != nil {
+	var content []byte
+	if len(configLines) > 0 {
+		content = []byte(strings.Join(configLines, "\n") + "\n")
+	}
+	if err := os.WriteFile(cfgPath, content, 0o600); err != nil {
 		t.Fatalf("writing test config: %v", err)
 	}
 	cfg, err := storage.NewFileConfig(cfgPath)
