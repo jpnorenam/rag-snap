@@ -329,6 +329,9 @@ $sidebar-accent: #e95420; // Ubuntu orange
 }
 
 .kb-selector__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
   font-size: 0.875rem;
   color: var(--vf-color-text-muted);
 }
@@ -501,4 +504,96 @@ $sidebar-accent: #e95420; // Ubuntu orange
   height: 100%;
   background-color: var(--vf-color-border-caution);
   transition: width 0.2s ease-in-out;
+}
+
+// ---------------------------------------------------------------------------
+// Prompts page  --- prompts ---
+// ---------------------------------------------------------------------------
+
+.prompts__intro {
+  margin-bottom: 1rem;
+}
+
+.prompts__skeletons {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.prompt-card {
+  padding: 1rem;
+  margin-bottom: 1rem;
+  background-color: var(--vf-color-background-alt);
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.25rem;
+}
+
+// Skeleton: the same height a collapsed card occupies, so nothing shifts when
+// the real prompts land.
+.prompt-card--skeleton {
+  height: 14rem;
+}
+
+.prompt-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.prompt-card__title {
+  margin-bottom: 0.25rem;
+}
+
+.prompt-card__description {
+  margin-bottom: 0;
+}
+
+// Collapsed preview: the first lines of the effective prompt, faded out at the
+// bottom. The fade is a mask (not a colour gradient) so it needs no token and
+// works unchanged in both themes.
+.prompt-card__preview {
+  margin: 0.75rem 0 0;
+  max-height: 7rem;
+  overflow: hidden;
+  mask-image: linear-gradient(to bottom, rgb(0 0 0 / 100%) 55%, rgb(0 0 0 / 0%) 100%);
+
+  .p-code-snippet__block {
+    margin-bottom: 0;
+  }
+}
+
+.prompt-card__editor {
+  width: 100%;
+  min-height: 24rem;
+  // Match the read-only snippet the editor replaces (Vanilla's own code stack).
+  font-family: unquote(vanilla-framework.$font-monospace);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.prompt-card__default {
+  margin-bottom: 1rem;
+
+  summary {
+    cursor: pointer;
+  }
+
+  .p-code-snippet {
+    margin-top: 0.5rem;
+  }
+}
+
+.prompt-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+// Reset is a quiet, right-aligned action: it is not the point of the card, and
+// it is guarded by a confirm dialog.
+.prompt-card__reset {
+  margin-left: auto;
 }

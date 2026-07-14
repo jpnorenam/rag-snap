@@ -1,13 +1,6 @@
-# rest-api-answer Specification
+# rest-api-answer Specification (delta)
 
-## Purpose
-
-Expose structured batch question-answering over the API. A client submits a manifest of
-questions (and the knowledge bases to ground them in); the daemon runs each question through the
-RAG+LLM pipeline as a background operation and makes the JSON results retrievable. This covers
-the `rag-cli.rag answer batch` run path.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Batch answering runs as an operation
 
@@ -55,31 +48,3 @@ cancellable.
 - **WHEN** a stored prompt is updated while a batch operation is running
 - **THEN** the running operation continues with the prompts it started with
 - **AND** the next batch operation started uses the updated prompts
-
-### Requirement: Batch results are retrievable
-
-On completion, the operation SHALL make the batch results available in a structured form that
-includes, per question, the question and its generated answer, along with the model used and a
-generation timestamp — equivalent to the JSON output the CLI writes today.
-
-#### Scenario: Retrieving completed results
-
-- **WHEN** a batch operation completes successfully
-- **THEN** the client can retrieve the structured results, including each question, its answer, the model used, and a generation timestamp
-
-### Requirement: Manifest is supplied prepared, not built interactively
-
-The API SHALL accept an already-prepared batch manifest. The interactive document-to-manifest
-"build" flow (extracting questions from PDF/DOCX/XLSX/CSV with interactive review and refinement)
-is a CLI-client concern and is NOT part of this API capability. If document-derived manifests are
-needed over the API in future, they SHALL be added as a separate, explicit capability.
-
-#### Scenario: Prepared manifest is accepted
-
-- **WHEN** a client posts a complete batch manifest
-- **THEN** the daemon runs it without requiring any interactive question-extraction or review step
-
-#### Scenario: Interactive build is not exposed
-
-- **WHEN** a client looks for an endpoint that extracts questions from a document with interactive review
-- **THEN** no such endpoint exists in this capability

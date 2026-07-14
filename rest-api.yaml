@@ -693,6 +693,73 @@ paths:
             summary: Connect to an operation's websocket.
             tags:
                 - operations
+    /1.0/prompts:
+        get:
+            description: |-
+                Returns the three RAG prompt templates in the order the CLI presents them,
+                each with its effective value, its built-in default, and whether an override
+                is stored. Chat sessions and batch runs started by the daemon are seeded from
+                these values.
+            operationId: promptsList
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+            summary: List the prompt templates.
+            tags:
+                - prompts
+    /1.0/prompts/{name}:
+        delete:
+            description: |-
+                Drops the stored override so the prompt resolves to the built-in default of
+                the running release. Resetting an uncustomized prompt succeeds as a no-op.
+            operationId: promptReset
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Reset a prompt template to its default.
+            tags:
+                - prompts
+        get:
+            operationId: promptGet
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+            summary: Return one prompt template.
+            tags:
+                - prompts
+        put:
+            description: |-
+                Stores an override for the named prompt. An empty value is rejected — reset a
+                prompt to its default with DELETE, so clearing an editor can never silently
+                discard a customization. A value equal to the built-in default clears the
+                override rather than storing a copy of it.
+            operationId: promptUpdate
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Customize a prompt template.
+            tags:
+                - prompts
     /1.0/search:
         post:
             description: |-

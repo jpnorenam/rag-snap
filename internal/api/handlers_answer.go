@@ -113,7 +113,9 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 	if req.Temperature != nil {
 		temperature = *req.Temperature
 	}
-	prompts := chat.LoadPrompts()
+	// Resolved before the operation starts, so a customization saved while a
+	// batch is running does not change the run in flight.
+	prompts := s.prompts.resolve()
 
 	resources := map[string][]string{}
 	if len(manifest.KnowledgeBases) > 0 {

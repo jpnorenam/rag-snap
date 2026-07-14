@@ -97,11 +97,12 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		temperature = *req.Temperature
 	}
 
-	prompts := chat.LoadPrompts()
-	systemPrompt := "You are a helpful assistant."
-	if knowledgeClient != nil {
-		systemPrompt = prompts.ChatSystemPrompt
-	}
+	// Resolved once, here: the session keeps the prompts it started with, so a
+	// customization saved mid-conversation applies to the *next* session rather
+	// than shifting this one's behaviour under the user. The configured prompt
+	// is sent unconditionally — retrieval availability never swaps in a hidden
+	// substitute, so what the prompts API shows is what runs.
+	systemPrompt := s.prompts.resolve().ChatSystemPrompt
 
 	live, err := chat.NewLiveSession(baseURL, model, knowledgeClient, embeddingModelID, req.Bases, systemPrompt, temperature, s.ctx.Verbose)
 	if err != nil {
