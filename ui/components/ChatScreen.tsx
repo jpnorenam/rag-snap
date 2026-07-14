@@ -23,6 +23,7 @@ export default function ChatScreen() {
   const [connState, setConnState] = useState<ConnState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
+  const [kbState, setKbState] = useState<"loading" | "connected" | "unavailable">("loading");
   const [activeBases, setActiveBases] = useState<string[]>([]);
   const [model, setModel] = useState<string>("");
 
@@ -31,14 +32,21 @@ export default function ChatScreen() {
   // Whether the current assistant turn is still streaming (awaiting `done`).
   const awaitingDone = useRef(false);
 
-  // Load the available knowledge bases for the selector.
+  // Load the available knowledge bases for the selector. A successful call means
+  // OpenSearch is reachable; a non-zero-code error means the daemon is up but the
+  // knowledge store is not, which we surface as an "Unavailable" indicator rather
+  // than a fatal error.
   useEffect(() => {
     listKnowledge()
-      .then(setBases)
+      .then((b) => {
+        setBases(b);
+        setKbState("connected");
+      })
       .catch((e) => {
-        // A missing knowledge backend is not fatal to chat; surface softly. An
-        // unreachable daemon is, so it gets the standard connection error.
+        // An unreachable daemon is fatal, so it gets the standard connection
+        // error. An unreachable knowledge store is not — chat still works.
         if (e instanceof ApiError && e.code === 0) setError(errorMessage(e));
+        setKbState("unavailable");
       });
   }, []);
 
@@ -198,22 +206,41 @@ export default function ChatScreen() {
       </Header>
 
       <main className="app-main chat">
-        {bases.length > 0 && (
-          <div className="kb-selector">
-            <span className="kb-selector__label">Knowledge bases:</span>
-            {bases.map((b) => (
-              <button
-                key={b.name}
-                onClick={() => toggleBase(b.name)}
-                className={`p-chip u-no-margin--bottom ${
-                  activeBases.includes(b.name) ? "p-chip--positive" : ""
-                }`}
-              >
-                <span className="p-chip__value">{b.name}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        <div className="kb-selector">
+          <span className="kb-selector__label">
+            <span
+              className={`app-status-dot ${
+                kbState === "connected" ? "is-connected" : kbState === "unavailable" ? "is-error" : ""
+              }`}
+            />
+            {kbState === "connected"
+              ? "Connected · Knowledge bases:"
+              : kbState === "unavailable"
+                ? "Unavailable · Knowledge bases:"
+                : "Knowledge bases:"}
+          </span>
+          {kbState === "connected" && bases.length === 0 && (
+            <span className="u-text--muted p-text--small u-no-margin--bottom">
+              None yet — create one with <code>rag-cli.rag k create &lt;name&gt;</code>
+            </span>
+          )}
+          {kbState === "unavailable" && (
+            <span className="u-text--muted p-text--small u-no-margin--bottom">
+              OpenSearch is not reachable. Check that the knowledge store is running.
+            </span>
+          )}
+          {bases.map((b) => (
+            <button
+              key={b.name}
+              onClick={() => toggleBase(b.name)}
+              className={`p-chip u-no-margin--bottom ${
+                activeBases.includes(b.name) ? "p-chip--positive" : ""
+              }`}
+            >
+              <span className="p-chip__value">{b.name}</span>
+            </button>
+          ))}
+        </div>
 
         {error && (
           <div className="p-notification--negative" role="alert">
