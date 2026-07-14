@@ -1,76 +1,192 @@
 # Design: add-ui-app-shell
 
+UX authority: [`docs/ux/00-foundation.md`](../../../docs/ux/00-foundation.md) (read first) and
+[`docs/ux/01-app-shell.md`](../../../docs/ux/01-app-shell.md) (this change's doc). Where this
+design and those docs overlap, the UX docs win; conventions are also codified in the
+`ui-conventions` skill.
+
 ## Context
 
-The browser UI (`ui/`, Next.js static export embedded in `ragd`, served under `/ui/`) has one working screen: Chat at `/`. `Sidebar.tsx` renders a hardcoded `NAV_ITEMS` array of disabled `<button>` placeholders ("Soon"); there is no routing beyond the root page and no UI surface for the daemon's background operations, even though the API side is complete: `GET /1.0/operations`, `GET/DELETE /1.0/operations/{id}`, `GET /1.0/operations/{id}/wait`, and the `GET /1.0/events` websocket are all implemented in `internal/api/` (LXD-style operation objects with `id`, `description`, `status_code`, `may_cancel`, `err`, `metadata`; events are `{type: "operation"|"logging", timestamp, metadata}` with type filtering).
+The UI (`ui/`) is a Next.js static export embedded into `ragd` and served under `/ui/`. Today the
+entire app shell — `<Sidebar>`, `<Header>`, dark mode, `captureTokenFromUrl()` — is rendered
+*inside* `ChatScreen.tsx` ([ChatScreen.tsx:186-211](../../../ui/components/ChatScreen.tsx#L186)),
+and `ui/app/page.tsx` is the only route. Sidebar entries other than Chat are disabled
+`<button>` placeholders. The daemon already ships the full operations surface
+(`rest-api-operations`): `GET /1.0/operations`, `GET/DELETE /1.0/operations/{id}`, and the
+`GET /1.0/events?type=operation` websocket (`internal/api/handlers_operations.go`,
+`internal/api/events.go`). Nothing in the UI consumes it.
 
-Five more screens are planned (knowledge, search, answer, prompts, status), each per its own `docs/ux/0N-*.md`. This change implements `docs/ux/01-app-shell.md` on top of `docs/ux/00-foundation.md`: real navigation plus the global operations UX and the shared primitives all later changes consume. It is UI-only — no Go, no snapcraft.yaml, no new snap interfaces, no config keys (snapctl or otherwise), and no new secrets.
+Constraints that shape everything below:
 
-All UI work follows the `ui-conventions` skill (Vanilla 4 classes hand-written in JSX, `--vf-*` tokens only, feature-prefixed BEM in `globals.scss`, static-export constraints: `basePath /ui`, `trailingSlash: true`, links like `/knowledge/`).
+- Static export (`output: 'export'`, `basePath: '/ui'`, `trailingSlash: true`): no server
+  components with state, no route handlers, no dynamic path segments. Pages are
+  `ui/app/<route>/page.tsx`, client-side only.
+- Browser `WebSocket` cannot set an `Authorization` header; the loopback cookie set by the
+  `/ui/login` handoff travels with same-origin websocket upgrades (the chat socket already relies
+  on this, [chat.ts:85-90](../../../ui/lib/api/chat.ts#L85)).
+- No UI dependencies may be added (no component library, no icon library, no ws client lib).
 
 ## Goals / Non-Goals
 
 **Goals:**
-- Sidebar entries become real `next/link` navigation with `aria-current="page"` active state; a new bottom-pinned **Status** utility entry (new `"status"` icon in the `NavIcon` union); still-unbuilt routes stay disabled `<span>` + "Soon".
-- Per-section `<Header>` title and `document.title` (`"<Section> — RAG"`).
-- Global operations indicator in the header status slot + anchored operations panel (list, status dots, relative timestamps, error detail, progress bar, cancel with confirm, dismiss).
-- `OperationsProvider` context + `useOperations` hook: `track()` API, `/1.0/events` websocket subscription with reconnect/backoff, per-operation polling fallback, seed from `GET /1.0/operations` on mount.
-- Shared primitives in `ui/components/common/`: `EmptyState`, `Spinner`, `ConfirmModal` (plain + type-to-confirm), generalized `.app-status-dot`.
-- `deleteSync` verb in `ui/lib/api/envelope.ts` and a typed `ui/lib/api/operations.ts` module.
+
+- Multi-page navigation: sidebar entries become real routes as changes land; shell state
+  (operations, dark mode) survives route changes.
+- Global operations indicator + panel: any screen can start an async operation and the user can
+  watch/cancel it from anywhere in the app.
+- Shared primitives (`EmptyState`, `Spinner`, `ConfirmModal`, `.app-status-dot`) that Changes 2–7
+  import instead of re-implementing.
 
 **Non-Goals:**
-- No actual feature screens (knowledge/search/answer/prompts/status content land in later changes). This change only enables a route when its page exists; if no screen ships here, its nav item stays "Soon".
-- No toast/notification system — completion feedback lives in the indicator.
-- No daemon changes (e.g. operation persistence across restarts stays out of scope, per `rest-api-operations`).
-- No changes to the chat screen beyond adopting shared context/primitives where trivially compatible.
+
+- No new screens beyond Chat (Knowledge/Search/Answer/Prompts/Status pages belong to Changes 2–6;
+  their nav entries stay disabled "Soon" placeholders here).
+- No REST API or daemon changes; no toast/notification system (completion feedback lives in the
+  indicator, per UX doc).
+- No persistence of the operations list beyond what the daemon returns (daemon restarts drop
+  in-flight ops by spec).
 
 ## Decisions
 
-### D1. Navigation via `usePathname()` in `Sidebar.tsx`, keeping the `NAV_ITEMS` array
-Keep the existing data-driven `NAV_ITEMS` structure, adding `href` per item. Enabled items render `<Link href>`, disabled ones render the current non-focusable `<span>` + "Soon" badge (foundation §9: non-navigable items are never links or buttons — note this *changes* the current disabled `<button>` markup to `<span>`, aligning with the UX doc). Active = `usePathname()` prefix-match against `href` (exact for `/`), setting `is-active` + `aria-current="page"`. Alternative — per-page hardcoded active flags — rejected: duplicates state and breaks as routes are added.
+### D1: Hoist the shell into a client `AppShell` rendered by the root layout
 
-Sidebar order per the UX doc: Chat, Knowledge bases, Search, Answer RFPs, Prompts (note: this reorders the current array, which has Prompts second), then Status pinned to the footer above the dark-mode toggle.
+Move `.app-shell` / `<Sidebar>` / dark-mode / `captureTokenFromUrl()` out of `ChatScreen` into a
+new `ui/components/AppShell.tsx` (`"use client"`), rendered by `ui/app/layout.tsx` around
+`{children}`. `AppShell` also mounts `OperationsProvider` so operations state lives above all
+routes. Screens shrink to `<Header title="…">…</Header> + <main className="app-main …">`.
 
-### D2. Titles owned by each page, not centralized routing config
-Each `ui/app/<route>/page.tsx` renders `<Header title="…">` and sets `document.title = "<Section> — RAG"` in a `useEffect`. With static export there is no server metadata for client navigations; a tiny shared helper (e.g. `usePageTitle(section)` in `ui/lib/`) keeps it one line per page. Alternative — a central route→title map consumed by the layout — rejected: pages already own their `<Header>`, and a map is a second source of truth.
+*Why:* the App Router layout persists across client-side navigations, so the events websocket,
+dark-mode state, and the sidebar never remount when switching sections. The alternative — each
+screen rendering its own shell (status quo) — duplicates markup per screen and would tear down the
+operations socket on every navigation. `layout.tsx` stays a server component for the `metadata`
+export; the client boundary starts at `AppShell`.
 
-### D3. Operations state in a single React Context, screens push via `track()`
-`OperationsProvider` (in `ui/components/common/`, mounted once in `ui/app/layout.tsx` inside the shell) holds a `Map<id, TrackedOperation>` in state. Screens call `track({ operationPath, description })` right after `postAsync`. This is the one sanctioned Context (foundation §4). The provider is the *only* consumer of the events socket and polling — screens never hand-roll polling. Screens that need completion side effects (refresh a list) register a callback with `track()` or read the op status from the hook.
+### D2: Sidebar items are data-driven links; disabled items are `<span>`s
 
-Session-scoped, in-memory only (plus a mount-time seed from `GET /1.0/operations` so reloads recover *running* ops); finished ops dismissed by the user are dropped. No `localStorage` persistence — the daemon itself doesn't persist operations across restarts, so the UI shouldn't pretend to.
+`NAV_ITEMS` gains `href` (`/`, `/knowledge/`, `/search/`, `/answer/`, `/prompts/`, `/status/`) and
+loses the hardcoded `active` flag. Enabled items render `<Link href>` with
+`aria-current="page"` + the 3px orange left-border active recipe, derived from `usePathname()`
+(normalizing the trailing slash and `basePath`). Disabled items render non-focusable
+`<span>`s keeping the "Soon" badge — replacing today's `<button disabled>`, per foundation §9
+(non-navigable items are never links or buttons). **Status** is added to the rail bottom (above
+the dark-mode toggle) with a new `"status"` member in the `IconName` union (pulse/heartbeat line
+icon, same inline-SVG pattern). In this change only Chat (`/`) is enabled; later changes flip
+entries to links as their pages land.
 
-### D4. Events websocket primary, polling fallback, silent degradation
-On mount the provider opens `wss?/ws` to `apiUrl("/1.0/events?type=operation")` (same-origin; token/cookie auth rides along as it does for the chat websocket). Operation events carry the full operation view in `metadata` — update the map by `id`. On socket error/close: schedule reconnect with exponential backoff (e.g. 1s → 30s cap), and while disconnected poll `GET /1.0/operations/{id}` every ~3s for each tracked *running* op only. No error banner for socket loss (UX doc: degradation is silent); daemon-unreachable errors surface on screens, not in the indicator.
+### D3: `Header` owns `document.title` and the operations indicator
 
-Alternative — `GET /1.0/operations/{id}/wait` long-poll per op — rejected: one hanging request per operation, no progress updates mid-flight, and the events socket already exists.
+`Header` gets a `useEffect` that sets `document.title = "<title> — RAG"` from its `title` prop,
+and renders the operations indicator in `.app-topbar__meta` *alongside* screen-provided children
+(chat's connection dot coexists). *Why:* every screen already renders `<Header title>`, so this
+gives per-route titles and a globally present indicator with zero per-screen wiring; a
+pathname→title map in the layout would duplicate what screens already declare.
 
-### D5. Indicator + panel as header children, popover hand-rolled
-`OperationsIndicator` renders in the `<Header>` right-hand `children` slot (coexists with chat's connection dot). Hidden until the first `track()` of the session; spinner icon variant + count while anything runs; `aria-label="N operations running"`, `aria-expanded`/`aria-controls` on the toggle. The panel is a right-aligned absolutely-positioned card (`.app-ops-panel`, surface `--vf-color-background-alt`, border `--vf-color-border-default`), list `aria-live="polite"`, closes on Escape and outside click (document listener + ref containment). Vanilla has no popover pattern in the sanctioned set, so this is a custom `.app-*` component — its styles go in `globals.scss` under `// --- operations ---` and the pattern gets added to `docs/ux/00-foundation.md` §6.
+### D4: Operations state is one React Context fed by events-ws with polling fallback
 
-Row anatomy per the UX doc: `.app-status-dot` (caution=running, positive=succeeded, negative=failed; cancelled rendered distinctly from failed — muted/neutral dot + "Cancelled" text, distinguished via `status_code`), description, relative timestamp (absolute in `title`), Cancel (`p-button--base`, only while `may_cancel && running`) or dismiss ×; failed rows show `err` underneath in `p-text--small` + negative color; progress metadata renders a thin token-colored bar (inline `width: N%` is the allowed inline style).
+`ui/components/common/OperationsProvider.tsx` + `ui/lib/useOperations.ts` expose:
 
-### D6. Cancel flows through the shared `ConfirmModal`
-Cancel = plain confirm variant (object named in body) → `deleteSync("/1.0/operations/{id}")`. `ConfirmModal` is a focus-trapped `p-modal` (`role="dialog"`, `aria-modal`, `aria-labelledby`, Escape + overlay close, focus moved on open and restored on close) with two variants: plain, and type-to-confirm (input must match the object name exactly before the `p-button--negative` enables) for later destructive flows like KB deletion. Never `window.confirm`.
+```ts
+interface OperationsContextValue {
+  operations: UiOperation[];        // newest first, session-scoped
+  running: number;                  // derived count
+  track(op: OperationView): void;   // called by screens after postAsync
+  cancel(id: string): Promise<void>;    // DELETE /1.0/operations/{id}
+  dismiss(id: string): void;            // local removal of a terminal row
+}
+```
 
-### D7. API client additions follow the existing envelope pattern
-`deleteSync` is a sibling of `getSync`/`postSync` reusing `request()`. `ui/lib/api/operations.ts` exports the `OperationView` interface mirroring `internal/api/operations.go`'s `operationView` JSON (id, class, description, created_at, updated_at, status, status_code, resources, metadata, may_cancel, err) plus `listOperations`, `getOperation`, `cancelOperation`; `null` arrays/maps normalized.
+- **Seeding:** on mount, `GET /1.0/operations` populates the list so a reload doesn't lose
+  running ops.
+- **Live updates:** one `WebSocket` to `apiUrl("/1.0/events?type=operation")` (URL built with the
+  same origin-rewrite logic as `buildWsUrl` in `chat.ts`; cookie auth rides the upgrade). Each
+  `operation` event's `metadata` is a full operation view — upsert by `id`. Reconnect with
+  capped exponential backoff (~1s → ~30s); on every (re)connect, re-fetch the list to close the
+  gap, honoring the spec's "subscribe before launching" advice.
+- **Fallback:** while the socket is down and any tracked operation is running, poll
+  `GET /1.0/operations/{id}` every few seconds. Degradation is silent — no error banner (UX doc
+  §States).
+- **Status mapping** uses `status_code` (running / succeeded / failed / cancelled distinguishable
+  by code), never the status text, per `rest-api-operations`.
 
-### D8. Status-code mapping constant
-Running/succeeded/failed/cancelled are distinguished by the numeric `status_code` (per `rest-api-operations`), mirrored once as a constant in `ui/lib/api/operations.ts` — copy the exact values from `internal/api/operations.go` at implementation time rather than trusting text status.
+*Why a context and not a hook per screen:* the indicator lives in the header on every route, and
+Changes 2/4/7 all feed it; one subscription shared app-wide avoids N sockets and is the pattern
+the foundation doc explicitly reserves Context for. Why not poll `GET /1.0/operations` on an
+interval only: the events socket is push-based, cheaper, and already spec'd for exactly this.
+
+### D5: API client additions stay inside the envelope pattern
+
+- `deleteSync<T>(path)` added to `ui/lib/api/envelope.ts` as a sibling of `getSync`/`postSync`
+  (same `request()` core) — needed for cancel; Change 2 reuses it for KB/source deletion.
+- New `ui/lib/api/operations.ts` module: `OperationView` interface mirroring the daemon view
+  (`id`, `class`, `description`, `created_at`, `updated_at`, `status`, `status_code`,
+  `resources`, `metadata`, `may_cancel`, `err`), plus `listOperations()`, `getOperation(id)`,
+  `cancelOperation(id)`, and the events-socket connector. `null` arrays normalize to `[]`.
+
+### D6: Indicator/panel anatomy per the UX doc; no new visual language
+
+Compact `<button>` in the header meta slot: activity line-icon + running count
+(`aria-label="N operations running"`, `aria-expanded`, `aria-controls`); hidden until the session
+has seen at least one operation; spinner variant while anything runs. Clicking toggles
+`.app-ops-panel`, a right-anchored dropdown card (surface `--vf-color-background-alt`, border
+`--vf-color-border-default`) listing operations newest-first. Row = `.app-status-dot`
+(caution=running, positive=succeeded, negative=failed; cancelled rendered distinctly via a muted
+dot + "Cancelled" text) · description · relative timestamp (absolute in `title`) · right side
+Cancel (`p-button--base`, only while running **and** `may_cancel`, routed through `ConfirmModal`)
+or dismiss ×. Failed rows show `err` underneath in `p-text--small` + negative token. Progress
+metadata renders a thin token-colored bar (inline `width` % is the sanctioned inline style). The
+list is `aria-live="polite"`; the panel closes on Escape and outside click. All styles go in
+`globals.scss` under `// --- ops ---` with `.app-ops-*` BEM names.
+
+### D7: Shared primitives in `ui/components/common/`
+
+- `EmptyState.tsx` — muted icon, one-line headline, one sentence of guidance including the CLI
+  equivalent, optional primary action (foundation §7).
+- `Spinner.tsx` — `p-icon--spinner u-animation--spin` + visible label.
+- `ConfirmModal.tsx` — `p-modal` + `p-modal__dialog`, `role="dialog" aria-modal="true"
+  aria-labelledby`; plain variant and type-to-confirm variant (negative button `[disabled]` until
+  the typed name matches exactly); focus moved in on open, trapped (hand-rolled Tab-cycling over
+  the dialog's focusable elements — no dependency), restored on close; Escape + overlay click
+  close.
+- `.app-status-dot` — generalized from `.chat__status-dot`; the chat dot switches to it (keep the
+  old class as an alias only if needed mid-change, delete before done).
+
+This change ships `ConfirmModal`'s only consumer (cancel-operation), and `EmptyState`'s only
+consumer is the ops panel's "No operations yet" body; both exist here primarily so Changes 2–7
+import rather than re-invent them.
 
 ## Risks / Trade-offs
 
-- [Events socket auth differs from fetch: browsers can't set an Authorization header on websockets] → Same situation as the existing chat websocket — the loopback cookie travels on same-origin WS upgrades; reuse whatever token-in-URL mechanism `ChatScreen.tsx` uses if the cookie is absent. Verify against a real snap install, not just `next dev`.
-- [Slow-consumer event drops: the hub drops events for full buffers, so a terminal event could be missed] → Polling fallback also runs a low-frequency sweep (`GET /1.0/operations/{id}`) for any op still marked running with a stale `updated_at`, so a dropped completion event self-heals.
-- [Reordering nav + swapping disabled `<button>`→`<span>` touches existing tested-by-eye UI] → Small, isolated diff in `Sidebar.tsx`; verify in light/dark and at 620px collapsed rail per the shared checklist.
-- [Panel/indicator introduces a new visual pattern outside Vanilla's stock set] → Scoped `.app-ops-panel` styles with sanctioned tokens only; documented in foundation §6 so later changes don't invent competing popovers.
-- [No automated UI tests exist; regressions are manual] → Keep the definition-of-done checklist in tasks.md (both themes, 620px, keyboard-only walkthrough) as the acceptance gate; `make all` still gates the Go side (unchanged).
+- **[Shell refactor touches the only working screen]** Moving Sidebar/Header out of `ChatScreen`
+  can regress chat (ws lifecycle, KB chips, connection dot). → Keep `ChatScreen`'s internals
+  untouched except deleting the shell wrapper; verify chat end-to-end in the installed snap
+  before merging.
+- **[Events socket message loss]** Best-effort delivery (slow subscribers drop events) or a
+  reconnect gap can miss a terminal transition. → Re-fetch `GET /1.0/operations` on every
+  (re)connect and poll tracked running ops while disconnected; the daemon list is the source of
+  truth, events are only a change signal.
+- **[Cookie-only ws auth]** If the UI was opened without the `/ui/login` cookie handoff (fragment
+  token only), the events upgrade is refused. → Same failure mode as chat today; the indicator
+  degrades to polling (which carries the Authorization header) — no user-facing error.
+- **[Static-export active-state edge]** `usePathname()` values include `basePath` and trailing
+  slashes inconsistently across dev/export. → Normalize both sides before comparing; verify in
+  the exported build, not just `next dev`.
+- **[Session-scoped panel]** Dismissed rows reappear after reload if the daemon still lists the
+  op. Accepted: the daemon list is truth; dismiss is a cosmetic de-clutter.
 
 ## Migration Plan
 
-Pure addition; ships with the next snap build (UI is embedded via `go:embed`). Rollback = revert the commit. No data, config, or API migrations. Later screen changes depend on this one landing first (they import the primitives and the operations context).
+1. Land `AppShell` + Sidebar/Header changes with Chat as the only route (pure refactor, no
+   behavior change) — then the operations context/indicator on top.
+2. `make all`, `cd ui && npm run build`, `snapcraft -v`, `sudo snap install --dangerous`, and
+   exercise: navigation, chat regression, then a real ingest via
+   `rag-cli.rag k ingest …` (or the API) to watch the indicator live, including cancel.
+3. Rollback is `git revert` — no API, config, schema, or snap-packaging changes; the embedded UI
+   is rebuilt from source on the next snap build.
+
+No snapcraft.yaml, snap interface, hook, config-key, or secret changes. Nothing touches
+OpenSearch, the inference server, or Tika.
 
 ## Open Questions
 
-- ~~Which routes ship enabled in *this* change?~~ **Resolved during implementation: none.** No screen for knowledge/search/answer/prompts/status exists yet, and the UX doc forbids pre-enabling a route that renders nothing, so Chat (`/`) remains the only link and the other six entries stay non-focusable "Soon" placeholders. Each later change flips its own `enabled` flag in `NAV_ITEMS` when its page lands.
-- Consequence to keep in mind: `track()` therefore has no caller yet — the indicator only appears when the provider *seeds* a running operation from `GET /1.0/operations` (e.g. one started from the CLI). The first screen to call `postAsync` (knowledge ingest) is what exercises the tracking path from inside the UI.
+- None blocking. (Whether later changes need `putSync` is deferred to the change that first needs
+  it, per foundation §5.)

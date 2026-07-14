@@ -3,22 +3,26 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-// Sidebar is the Canonical-style dark navigation rail. Sections whose screens
-// exist are real links; the rest stay as non-focusable placeholders with a
-// "Soon" badge — a nav item that navigates nowhere is not a link or a button.
-// Status is pinned to the footer as a utility item, above the dark-mode toggle.
+// Sidebar is the Canonical-style dark navigation rail. Sections that have
+// shipped render as real next/link routes with an active state; sections still
+// to land render as non-focusable placeholders with a "Soon" badge (foundation
+// §9: non-navigable items are never links or buttons). The dark-mode toggle
+// lives in the footer, and Status is pinned just above it.
 
-type IconName = "chat" | "knowledge" | "search" | "rfp" | "prompt" | "status";
+type IconName = "chat" | "prompt" | "knowledge" | "search" | "rfp" | "status";
 
 interface NavItem {
   id: string;
   label: string;
   icon: IconName;
   href: string;
-  // Set once the section's screen exists; until then the entry is a placeholder.
+  // enabled sections are links; the rest stay "Soon" placeholders until their
+  // change lands.
   enabled?: boolean;
 }
 
+// Primary navigation, top → bottom (docs/ux/01-app-shell.md). Only Chat is a
+// live route today; flip `enabled` on as each section's change ships.
 const NAV_ITEMS: NavItem[] = [
   { id: "chat", label: "Chat", icon: "chat", href: "/", enabled: true },
   { id: "knowledge", label: "Knowledge bases", icon: "knowledge", href: "/knowledge/" },
@@ -27,7 +31,16 @@ const NAV_ITEMS: NavItem[] = [
   { id: "prompts", label: "Prompts", icon: "prompt", href: "/prompts/" },
 ];
 
+// Status is a utility entry pinned to the bottom of the rail (above the toggle).
 const STATUS_ITEM: NavItem = { id: "status", label: "Status", icon: "status", href: "/status/" };
+
+// normalizePath strips a trailing slash (but keeps root "/") so paths from
+// usePathname() compare equal regardless of the export's trailing-slash style.
+// basePath ("/ui") is already excluded from usePathname() values.
+function normalizePath(path: string): string {
+  if (path.length > 1 && path.endsWith("/")) return path.slice(0, -1);
+  return path;
+}
 
 interface Props {
   darkMode: boolean;
@@ -36,6 +49,7 @@ interface Props {
 
 export default function Sidebar({ darkMode, onToggleDark }: Props) {
   const pathname = usePathname();
+  const current = normalizePath(pathname ?? "/");
 
   return (
     <nav className="app-sidebar" aria-label="Main">
@@ -56,19 +70,18 @@ export default function Sidebar({ darkMode, onToggleDark }: Props) {
       <ul className="app-sidebar__nav">
         {NAV_ITEMS.map((item) => (
           <li key={item.id}>
-            <NavEntry item={item} pathname={pathname} />
+            <NavEntry item={item} current={current} />
           </li>
         ))}
       </ul>
 
       <div className="app-sidebar__footer">
-        <NavEntry item={STATUS_ITEM} pathname={pathname} />
+        <NavEntry item={STATUS_ITEM} current={current} />
         <button
           type="button"
           onClick={onToggleDark}
           className="app-sidebar__item app-sidebar__toggle"
           aria-label="Toggle dark mode"
-          title="Toggle dark mode"
         >
           {darkMode ? (
             <svg width="20" height="20" fill="currentColor" viewBox="0 0 20 20" aria-hidden="true">
@@ -90,12 +103,16 @@ export default function Sidebar({ darkMode, onToggleDark }: Props) {
   );
 }
 
-// NavEntry renders one rail entry: a link when its screen exists, an inert span
-// otherwise. The label doubles as the tooltip for the collapsed icon rail.
-function NavEntry({ item, pathname }: { item: NavItem; pathname: string }) {
+// NavEntry renders a nav item as a link (shipped section) or a non-focusable
+// placeholder span (coming-soon section).
+function NavEntry({ item, current }: { item: NavItem; current: string }) {
   if (!item.enabled) {
     return (
-      <span className="app-sidebar__item app-sidebar__item--pending" title="Coming soon">
+      <span
+        className="app-sidebar__item app-sidebar__item--soon"
+        aria-disabled="true"
+        title="Coming soon"
+      >
         <NavIcon name={item.icon} />
         <span className="app-sidebar__label">{item.label}</span>
         <span className="app-sidebar__soon">Soon</span>
@@ -103,13 +120,11 @@ function NavEntry({ item, pathname }: { item: NavItem; pathname: string }) {
     );
   }
 
-  const active = isActive(pathname, item.href);
-  const classes = ["app-sidebar__item", active ? "is-active" : ""].filter(Boolean).join(" ");
-
+  const active = normalizePath(item.href) === current;
   return (
     <Link
       href={item.href}
-      className={classes}
+      className={`app-sidebar__item${active ? " is-active" : ""}`}
       aria-current={active ? "page" : undefined}
       title={item.label}
     >
@@ -117,14 +132,6 @@ function NavEntry({ item, pathname }: { item: NavItem; pathname: string }) {
       <span className="app-sidebar__label">{item.label}</span>
     </Link>
   );
-}
-
-// isActive matches the current route against an entry. Chat lives at the root,
-// which every path is a prefix of, so it only matches exactly.
-function isActive(pathname: string, href: string): boolean {
-  const path = pathname.endsWith("/") ? pathname : `${pathname}/`;
-  if (href === "/") return path === "/";
-  return path === href || path.startsWith(href);
 }
 
 // NavIcon renders a small line icon for each navigation entry.
@@ -177,7 +184,7 @@ function NavIcon({ name }: { name: IconName }) {
     case "status":
       return (
         <svg {...common}>
-          <path d="M3 12h4l3 8 4-16 3 8h4" />
+          <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
         </svg>
       );
   }

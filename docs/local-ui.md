@@ -9,6 +9,7 @@ Remote/HTTPS exposure is intentionally **not** part of this surface: the listene
 `127.0.0.1` only and refuses any non-loopback address.
 
 - [Quick start: from install to a first answer](#quick-start-from-install-to-a-first-answer)
+- [Navigating the UI](#navigating-the-ui)
 - [Enabling the listener](#enabling-the-listener)
 - [Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key)
 - [Launching with `rag ui`](#launching-with-rag-ui)
@@ -55,6 +56,43 @@ which streams the model's answer back token by token. If you keep knowledge base
 from the chips at the top of the page to ground answers in your documents.
 
 > For obtaining a Bedrock API key step by step, see the [Bedrock guide](bedrock_guide.md).
+
+---
+
+## Navigating the UI
+
+The UI is a multi-page application with a persistent dark navigation rail on the left. The
+rail lists the app's sections; **Chat** is the only one shipped today, and the remaining
+entries (Knowledge bases, Search, Answer RFPs, Prompts, Status) show a **Soon** badge until
+their features land. The active section is marked with an orange left-border indicator, and the
+browser tab title tracks the section you are on. On narrow windows the rail collapses to an
+icon-only strip; hover a icon for its label.
+
+### Background operations
+
+Long-running work the daemon performs on your behalf — ingesting documents, running an answer
+batch, exporting a knowledge base — runs as an **operation**. An **operations indicator** in
+the top bar (right-hand side, next to the chat connection status) makes these visible from any
+page:
+
+- The indicator appears once the session has seen at least one operation and shows a **count of
+  running operations**, with a spinner while anything is in flight.
+- Clicking it opens a panel listing the session's operations, newest first. Each row shows a
+  status dot (running, succeeded, failed, or cancelled), the operation's description, and a
+  relative timestamp (hover for the exact time). Operations that report progress render a thin
+  progress bar; failed operations show their error message inline.
+- While an operation is running and cancellable, the row offers a **Cancel** action. Cancelling
+  asks for confirmation, then requests cooperative cancellation from the daemon
+  (`DELETE /1.0/operations/{id}`); the row moves to the cancelled state once the daemon reports
+  it. A cancelled operation is shown distinctly from a failed one.
+- Terminal rows can be dismissed with the × to de-clutter the list. Dismissal is local — if the
+  daemon still lists the operation, it reappears after a reload.
+
+The panel is seeded from `GET /1.0/operations` on load, so **reloading the page does not lose a
+running operation**. Live updates arrive over the `GET /1.0/events` websocket; if that socket is
+unavailable the indicator silently falls back to polling, so it keeps working with no error
+banner as long as the REST API is reachable. This mirrors the CLI, where the same operations are
+driven from commands like `rag-cli.rag k ingest …`.
 
 ---
 

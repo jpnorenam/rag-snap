@@ -3,83 +3,100 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
 interface Props {
-  // Dialog title, sentence case ("Cancel operation?").
+  // Modal title (also the accessible name via aria-labelledby).
   title: string;
-  // What confirming does and what it costs, with the object named.
+  // Body content: a sentence naming the object and stating consequences.
   children: React.ReactNode;
-  // Verb-first label for the destructive button ("Cancel operation", "Delete").
+  // Confirm button label; verb-first and specific ("Cancel operation").
   confirmLabel: string;
-  // When set, the user must type this exact string before confirming — used for
-  // the heavyweight deletions (a knowledge base name).
-  confirmText?: string;
-  // Label above the type-to-confirm input.
-  confirmTextLabel?: string;
+  // When set, the confirm button stays disabled until the user types this exact
+  // string (type-to-confirm variant, foundation §8). The input is labelled with
+  // this name. When omitted, a plain confirm modal is rendered.
+  confirmPhrase?: string;
+  // Whether the confirm action is destructive (negative button styling).
+  destructive?: boolean;
+  // In-flight flag: disables the confirm button and swaps its label.
+  busy?: boolean;
   onConfirm: () => void;
   onClose: () => void;
 }
 
-// ConfirmModal is the only confirmation surface in the app (never
-// window.confirm). It has two variants: a plain confirm, and a type-to-confirm
-// whose destructive action stays disabled until the input matches `confirmText`
-// exactly. Focus moves into the dialog on open, is trapped while it is open,
-// and returns to the triggering element on close.
+// ConfirmModal is the shared confirmation dialog (foundation §6/§8): a
+// focus-trapped p-modal with plain and type-to-confirm variants. It moves focus
+// into the dialog on open, cycles Tab within it, restores focus on close, and
+// closes on Escape or overlay click. Never use window.confirm.
 export default function ConfirmModal({
   title,
   children,
   confirmLabel,
-  confirmText,
-  confirmTextLabel,
+  confirmPhrase,
+  destructive,
+  busy,
   onConfirm,
   onClose,
 }: Props) {
   const titleId = useId();
   const inputId = useId();
   const dialogRef = useRef<HTMLDivElement>(null);
-  const openerRef = useRef<Element | null>(null);
   const [typed, setTyped] = useState("");
 
-  const confirmable = !confirmText || typed === confirmText;
+  // Restore focus to whatever was focused before the modal opened.
+  const openerRef = useRef<HTMLElement | null>(null);
 
-  // Move focus into the dialog on open and restore it to the opener on close.
-  useEffect(() => {
-    openerRef.current = document.activeElement;
-    const first = dialogRef.current?.querySelector<HTMLElement>(FOCUSABLE);
-    first?.focus();
-    return () => {
-      if (openerRef.current instanceof HTMLElement) openerRef.current.focus();
-    };
+  const focusable = useCallback((): HTMLElement[] => {
+    if (!dialogRef.current) return [];
+    return Array.from(
+      dialogRef.current.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), textarea, input, select, [tabindex]:not([tabindex="-1"])'
+      )
+    );
   }, []);
 
-  // Escape closes the dialog wherever focus happens to be.
+  // Move focus into the dialog on open; restore it on close.
   useEffect(() => {
-    const onEscape = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onEscape);
-    return () => document.removeEventListener("keydown", onEscape);
-  }, [onClose]);
+    openerRef.current = document.activeElement as HTMLElement | null;
+    const first = focusable()[0] ?? dialogRef.current;
+    first?.focus();
+    return () => openerRef.current?.focus();
+  }, [focusable]);
 
-  // Tab cycles within the dialog: focus never leaves an open modal.
+  // Escape closes; Tab cycles focus within the dialog (hand-rolled trap).
   const onKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+        return;
+      }
       if (e.key !== "Tab") return;
-      const items = dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE);
-      if (!items || items.length === 0) return;
+      const items = focusable();
+      if (items.length === 0) {
+        e.preventDefault();
+        return;
+      }
       const first = items[0];
       const last = items[items.length - 1];
-      if (e.shiftKey && document.activeElement === first) {
+      const active = document.activeElement;
+      if (e.shiftKey && active === first) {
         e.preventDefault();
         last.focus();
-      } else if (!e.shiftKey && document.activeElement === last) {
+      } else if (!e.shiftKey && active === last) {
         e.preventDefault();
         first.focus();
       }
     },
-    []
+    [focusable, onClose]
   );
 
+  const gated = confirmPhrase !== undefined && typed !== confirmPhrase;
+  const confirmDisabled = busy || gated;
+
   return (
-    <div className="p-modal" onClick={onClose} onKeyDown={onKeyDown}>
+    <div
+      className="p-modal app-modal"
+      onClick={onClose}
+      onKeyDown={onKeyDown}
+    >
       <div
         className="p-modal__dialog"
         role="dialog"
@@ -92,23 +109,15 @@ export default function ConfirmModal({
           <h2 className="p-modal__title" id={titleId}>
             {title}
           </h2>
-          <button
-            className="p-modal__close"
-            aria-label="Close active modal"
-            onClick={onClose}
-            type="button"
-          >
-            Close
-          </button>
         </header>
 
-        {children}
+        <div className="p-modal__body">{children}</div>
 
-        {confirmText && (
+        {confirmPhrase !== undefined && (
           <div className="p-form p-form--stacked">
             <div className="p-form__group">
               <label htmlFor={inputId}>
-                {confirmTextLabel ?? `Type ${confirmText} to confirm`}
+                Type <strong>{confirmPhrase}</strong> to confirm
               </label>
               <input
                 id={inputId}
@@ -122,21 +131,19 @@ export default function ConfirmModal({
         )}
 
         <footer className="p-modal__footer">
-          <button className="p-button u-no-margin--bottom" type="button" onClick={onClose}>
-            Go back
+          <button type="button" className="p-button u-no-margin--bottom" onClick={onClose}>
+            Cancel
           </button>
           <button
-            className="p-button--negative u-no-margin--bottom"
             type="button"
-            disabled={!confirmable}
+            className={`u-no-margin--bottom ${destructive ? "p-button--negative" : "p-button--positive"}`}
             onClick={onConfirm}
+            disabled={confirmDisabled}
           >
-            {confirmLabel}
+            {busy ? "Working…" : confirmLabel}
           </button>
         </footer>
       </div>
     </div>
   );
 }
-
-const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])';

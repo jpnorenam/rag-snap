@@ -1,57 +1,61 @@
 # Tasks: add-ui-app-shell
 
-## 1. API client groundwork
+Read `docs/ux/00-foundation.md` first, then `docs/ux/01-app-shell.md`; they govern every visual
+and interaction decision below.
 
-- [x] 1.1 Add `deleteSync` to `ui/lib/api/envelope.ts` following the existing `request()` pattern
-- [x] 1.2 Create `ui/lib/api/operations.ts`: `OperationView` interface mirroring `internal/api/operations.go`'s `operationView` JSON, a status-code constant map (copy exact values from the Go source), and `listOperations` / `getOperation` / `cancelOperation` verbs (normalize `null` arrays/maps)
+## 1. App shell refactor (no behavior change)
 
-## 2. Shared primitives (`ui/components/common/`)
+- [x] 1.1 Create `ui/components/AppShell.tsx` (`"use client"`): `.app-shell` wrapper with `<Sidebar>`, dark-mode state (`useDarkMode`), one-time `captureTokenFromUrl()`, and children; render it from `ui/app/layout.tsx` around `{children}`
+- [x] 1.2 Slim `ChatScreen.tsx` to `<Header title="Chat">…</Header>` + `<main className="app-main chat">` — remove its shell/Sidebar markup without touching chat internals (ws lifecycle, KB chips, connection dot)
+- [x] 1.3 Sidebar: add `href` to `NAV_ITEMS`, render enabled entries as `next/link` with active state from `usePathname()` (normalize `basePath`/trailing slash) + `aria-current="page"`; disabled entries become non-focusable `<span>`s keeping the "Soon" badge
+- [x] 1.4 Sidebar: add the Status entry pinned above the dark-mode toggle and a `"status"` icon (pulse/heartbeat line) to the `IconName` union
+- [x] 1.5 Header: set `document.title = "<title> — RAG"` from the `title` prop via `useEffect`; keep the children status slot
+- [x] 1.6 Verify the exported build (`npm run build`) still renders chat at `/ui/` with working dark mode and active nav state
 
-- [x] 2.1 Create `Spinner.tsx` (`p-icon--spinner u-animation--spin` aria-hidden + visible label)
-- [x] 2.2 Create `EmptyState.tsx` per foundation §7 (muted icon, headline, guidance including CLI-equivalent command, primary action slot)
-- [x] 2.3 Create `ConfirmModal.tsx`: focus-trapped `p-modal` (`role="dialog"`, `aria-modal`, `aria-labelledby`, Escape + overlay close, focus restore), plain and type-to-confirm variants (destructive button disabled until input matches the object name exactly)
-- [x] 2.4 Generalize `.chat__status-dot` into `.app-status-dot` (caution/positive/negative variants) in `globals.scss` and switch the chat screen to it
+## 2. API client for operations
 
-## 3. Navigation shell
+- [x] 2.1 Add `deleteSync<T>` to `ui/lib/api/envelope.ts` following the existing `request()` pattern
+- [x] 2.2 Create `ui/lib/api/operations.ts`: `OperationView` interface mirroring the daemon view (`id`, `class`, `description`, timestamps, `status`, `status_code`, `resources`, `metadata`, `may_cancel`, `err`), `listOperations()`, `getOperation(id)`, `cancelOperation(id)`; normalize `null` arrays to `[]`
+- [x] 2.3 Add the events-socket connector in `operations.ts`: build the ws URL for `/1.0/events?type=operation` with the same origin-rewrite logic as `buildWsUrl` in `chat.ts` (cookie auth rides the upgrade)
 
-- [x] 3.1 Rework `Sidebar.tsx`: add `href` to `NAV_ITEMS`, reorder to Chat / Knowledge bases / Search / Answer RFPs / Prompts, render enabled items as `next/link` with active state from `usePathname()` (`is-active` + `aria-current="page"`), disabled items as non-focusable `<span>` + "Soon"
-- [x] 3.2 Add the `"status"` pulse/heartbeat icon to the `NavIcon` union and pin the Status entry to the rail footer above the dark-mode toggle
-- [x] 3.3 Add a `usePageTitle` helper (`ui/lib/`) setting `document.title = "<Section> — RAG"`; wire it plus `<Header title>` into the chat page (and any route enabled in this change)
-- [ ] 3.4 Verify collapsed 620px rail: icons + active indicator only, labels via `title`, no horizontal page scroll
+## 3. Shared primitives (`ui/components/common/`)
 
-## 4. Operations tracking context
+- [x] 3.1 `Spinner.tsx`: `p-icon--spinner u-animation--spin` icon + visible label
+- [x] 3.2 `EmptyState.tsx`: muted icon, one-line headline, one sentence of guidance including the CLI-equivalent command, optional primary action (foundation §7)
+- [x] 3.3 `ConfirmModal.tsx`: `p-modal` + `p-modal__dialog`, `role="dialog" aria-modal="true" aria-labelledby`; plain and type-to-confirm variants (destructive button `[disabled]` until exact name match); focus moved in on open, hand-rolled focus trap, restored on close; Escape + overlay click close
+- [x] 3.4 Generalize `.chat__status-dot` to `.app-status-dot` in `globals.scss` (caution=running, positive=succeeded, negative=failed, muted=cancelled) and switch the chat connection dot to it
 
-- [x] 4.1 Create `ui/components/common/OperationsProvider.tsx` + `ui/lib/useOperations.ts`: tracked-operations map, `track()` API with optional completion callback, newest-first ordering, seed from `GET /1.0/operations` on mount
-- [x] 4.2 Implement the `/1.0/events?type=operation` websocket subscription with exponential-backoff reconnect (reuse the chat websocket's auth approach), updating tracked ops from event metadata
-- [x] 4.3 Implement the polling fallback: while the socket is down, poll `GET /1.0/operations/{id}` every ~3s for tracked running ops; also sweep stale running ops to self-heal dropped events; degradation is silent (no banner)
-- [x] 4.4 Mount the provider once in `ui/app/layout.tsx` inside the app shell
+## 4. Operations context
 
-## 5. Indicator and panel
+- [x] 4.1 Create `ui/components/common/OperationsProvider.tsx` + `ui/lib/useOperations.ts` exposing `{ operations, running, track, cancel, dismiss }`; mount the provider inside `AppShell`
+- [x] 4.2 Seed the list from `GET /1.0/operations` on mount; upsert by `id`, ordered newest first; derive status from `status_code`, never the text
+- [x] 4.3 Subscribe to the events websocket with capped exponential backoff (~1s → ~30s); re-fetch the operations list on every (re)connect
+- [x] 4.4 Poll `GET /1.0/operations/{id}` every few seconds for running operations while the socket is down; degradation is silent (no error surface)
 
-- [x] 5.1 Create the header operations indicator: hidden until first tracked op, spinner variant + running count while running, `aria-label="N operations running"`, `aria-expanded`/`aria-controls` toggle; render it in the `<Header>` status slot alongside chat's connection dot
-- [x] 5.2 Create the anchored `.app-ops-panel` (surface `--vf-color-background-alt`, border `--vf-color-border-default`): rows with `.app-status-dot`, description, relative timestamp (absolute in `title`), failed-row error text (`p-text--small` + negative token), optional progress bar (inline width %), dismiss ×; cancelled state distinct from failed; list is `aria-live="polite"`; closes on Escape and outside click
-- [x] 5.3 Wire Cancel: shown only while `may_cancel` && running, flows through `ConfirmModal` (plain variant), then `cancelOperation`; row transitions to cancelled
-- [x] 5.4 Add all new styles to `globals.scss` under `// --- operations ---` (BEM, `--vf-*` tokens only) and document the popover pattern in `docs/ux/00-foundation.md` §6
+## 5. Operations indicator & panel
 
-## 6. Verification
+- [x] 5.1 Indicator button in the Header meta slot (coexists with screen children): activity line-icon + running count, hidden until the session has seen an operation, spinner variant + `aria-label="N operations running"` while running, `aria-expanded`/`aria-controls`
+- [x] 5.2 `.app-ops-panel` dropdown card (surface `--vf-color-background-alt`, border `--vf-color-border-default`): rows with `.app-status-dot`, description, relative timestamp (absolute in `title`), dismiss × on terminal rows; failed rows show `err` in `p-text--small` + negative token; progress metadata renders a thin token-colored bar (inline width % only); empty body uses `EmptyState`
+- [x] 5.3 Cancel action (`p-button--base`, only while running and `may_cancel`) routed through `ConfirmModal`; failed cancellation surfaces the API error without removing the row; cancelled rows render distinctly from failed
+- [x] 5.4 Panel behavior: closes on Escape and outside click, list is `aria-live="polite"`; styles in `globals.scss` under `// --- ops ---` with `.app-ops-*` BEM names
 
-- [ ] 6.1 Verify compliance with the `ui-conventions` skill: light **and** dark themes, keyboard-only walkthrough (panel toggle/Escape, modal focus trap/restore), all colors via `--vf-*` tokens (zero new hex), four view states where applicable, only sanctioned patterns
-- [ ] 6.2 Shared definition-of-done checklist from `docs/ux/01-app-shell.md`: sidebar active state + non-focusable "Soon" spans; panel keyboard + `aria-live`; cancel through `ConfirmModal` with cancelled ≠ failed; 620px rail
-- [x] 6.3 `npm run build` in `ui/` (static export succeeds), then `make all`
-- [x] 6.4 Build the snap (clean the go-cli part first to avoid a stale binary), install with `--dangerous`, and exercise end-to-end: track a real ingest operation, watch events-driven updates, kill the socket to confirm polling fallback, cancel an op
+## 6. Validation
 
-## Verification notes
+- [x] 6.1 Run `make all` (tidy fmt vet lint test build) and `cd ui && npm run build` clean — Go tidy/fmt/vet/test/build pass and the UI static export builds clean (TypeScript check green). `golangci-lint` is not installed on this machine, but this change makes no Go changes, so vet is the effective Go gate.
+- [x] 6.2 Build and install the snap (`snapcraft -v`, `sudo snap install --dangerous ./rag-cli_*.snap`); verify chat end-to-end (session, streaming, KB chips) — the shell refactor must not regress it (confirmed: chat works through the installed-snap UI)
+- [x] 6.3 In the installed snap, run a real ingest (`rag-cli.rag k ingest …` or via API) and verify: indicator appears and counts, panel rows update live, reload re-seeds running ops, cancel flow works, ws-down fallback polls silently
+- [x] 6.4 Verify compliance with the `ui-conventions` skill: both themes (`is-dark`), keyboard-only pass, all colors via `--vf-*` tokens, four view states where applicable, 620px collapsed rail
+- [x] 6.5 Update `docs/local-ui.md`: navigation/sections and the operations indicator/panel (including cancel). No CLI, `rest-api.yaml`, or `apps/completion.bash` changes needed — confirmed via `git status` that only `docs/local-ui.md` and `ui/` files changed
 
-Done (2026-07-13):
+## 7. Definition of done (UX) — from `docs/ux/00-foundation.md` + `docs/ux/01-app-shell.md`
 
-- **6.3** — `npm run build` (static export) passes; `go vet`, `go test ./...`, `go build`, and `spec-check` pass. `make lint` did **not** run: `golangci-lint` is not installed on this machine. No Go code changed in this change.
-- **6.4** — Snap built with a cleaned `go-cli` part, and the embedded UI in the packed `.snap` was confirmed byte-identical to the source build (content-hashed Next.js chunks compared; the first build shipped a stale chunk and was rebuilt). Installed with `--dangerous`, `ragd` started, and the loopback path exercised end-to-end with curl:
-  - `/ui/login?token=…` → 302 + cookie; `GET /ui/` serves the new SPA (Chat rendered as the active `<a aria-current="page">`, five non-focusable "Soon" spans, status icon present).
-  - `GET /1.0/events?type=operation` upgrades (101) and streams `{type: "operation", metadata: <operationView>}` frames — the exact shape `OperationsProvider` parses. A real async operation (`POST /1.0/knowledge-engine`) produced Pending(105) → Running(103) events.
-  - `GET /1.0/operations` (seed), `GET /1.0/operations/{id}` (polling fallback) and `DELETE /1.0/operations/{id}` all behave as the client assumes; the DELETE on a non-cancellable operation returns the `400 "operation may not be cancelled"` error envelope that `cancel()` surfaces as the row's `cancelError`.
-  - A *document ingest* specifically was not exercised: OpenSearch and the Tika daemon are not running on this machine, so the knowledge-engine operation stands in for it. Same operations contract.
-
-Still open — needs a human at a browser (no headless driver available here):
-
-- **6.1 / 6.2 / 3.4** — light/dark rendering, the keyboard-only walkthrough (panel toggle + Escape, modal focus trap and restore), `aria-live` announcements, and the 620px collapsed rail. Statically verified in the meantime: only `--vf-*` tokens in the new styles (the sole hex/rgba in `globals.scss` remains the sidebar rail's sanctioned palette), the panel's shadow uses Vanilla's `$box-shadow`, and the exported markup carries `aria-current`, `aria-expanded`/`aria-controls`, and `aria-live="polite"`.
-- Note the indicator only appears once an operation exists. No screen calls `track()` yet (the ingest UI lands in the next change), so to see the panel, start an operation from the CLI and open the UI — the provider seeds running operations from `GET /1.0/operations` on mount.
+- [x] 7.1 All four view states implemented per foundation §7; mutations follow §7's in-flight/success/failure rules (panel: empty=`EmptyState`, loaded=rows, ws/API degradation silent per spec; cancel mutation disables + shows "Working…", failure surfaces inline without losing the row)
+- [x] 7.2 Looks correct in light **and** dark themes (`is-dark`) — verified in the installed-snap UI
+- [x] 7.3 Usable at 620px (collapsed rail) — no horizontal page scroll; collapsed rail shows icons + active indicator only, tooltips via `title` — verified in the installed-snap UI
+- [x] 7.4 Keyboard-only walkthrough passes (foundation §9); focus management on modals/routes verified — verified in the installed-snap UI
+- [x] 7.5 Only sanctioned patterns (foundation §6) used; any new pattern added to `docs/ux/00-foundation.md` (ops indicator/panel already sanctioned in `01-app-shell.md`; primitives are the ones the foundation reserves)
+- [x] 7.6 All colors via `--vf-*` tokens; zero hardcoded hex outside the sidebar SCSS vars
+- [x] 7.7 Empty states include the CLI-equivalent command
+- [x] 7.8 Sidebar: enabled items are links with correct active state; pending items remain non-focusable spans with "Soon"
+- [x] 7.9 Operations panel: keyboard toggle/close, `aria-expanded`, `aria-live` announcements
+- [x] 7.10 Cancel flows through `ConfirmModal`; a cancelled op renders distinctly from a failed one

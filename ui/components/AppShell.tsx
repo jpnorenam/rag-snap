@@ -1,20 +1,19 @@
 "use client";
 
 import { useEffect } from "react";
-import OperationsProvider from "@/components/common/OperationsProvider";
 import Sidebar from "@/components/Sidebar";
-import { captureTokenFromUrl } from "@/lib/api/token";
+import OperationsProvider from "@/components/common/OperationsProvider";
 import { useDarkMode } from "@/lib/useDarkMode";
+import { captureTokenFromUrl } from "@/lib/api/token";
 
-// AppShell is the frame every screen plugs into: the dark navigation rail plus
-// the content column, with the operations tracker mounted once around them so a
-// background operation stays visible across navigations. Pages render their own
-// <Header> and <main> as children.
+// AppShell is the persistent application chrome rendered by the root layout so
+// it survives client-side route changes: the dark navigation rail, the
+// app-wide operations tracker, and dark-mode state. Screens render only their
+// <Header> + <main>; the shell wraps them. (Design D1.)
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [darkMode, toggleDark] = useDarkMode();
 
-  // Capture a fragment token (if the launch flow used one) before any API call,
-  // including the operations tracker's first fetch.
+  // Capture a fragment token (if the launch flow used one) before any API call.
   useEffect(() => {
     captureTokenFromUrl();
   }, []);

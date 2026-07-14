@@ -1,238 +1,163 @@
 "use client";
 
-import { createContext, useCallback, useEffect, useRef, useState } from "react";
-import { wsUrl } from "@/lib/api/envelope";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   cancelOperation,
+  connectOperationEvents,
   getOperation,
-  isRunning,
   isTerminal,
   listOperations,
   type OperationView,
 } from "@/lib/api/operations";
+import { OperationsContext, type OperationsContextValue } from "@/lib/useOperations";
 
-// TrackedOperation is an operation view plus the local-only state the panel
-// needs: a cancel request that the daemon refused (shown on the row).
-export interface TrackedOperation extends OperationView {
-  cancelError?: string;
-}
-
-export interface OperationsContextValue {
-  // The session's operations, newest first.
-  operations: TrackedOperation[];
-  // How many of them are still running.
-  runningCount: number;
-  // Register an operation returned by postAsync. onDone, if given, fires once
-  // when the operation reaches a terminal state (e.g. to refresh a list).
-  track: (op: OperationView, onDone?: (op: OperationView) => void) => void;
-  // Request cancellation, then let events/polling move the row to cancelled.
-  cancel: (id: string) => Promise<void>;
-  // Drop a finished operation from the panel.
-  dismiss: (id: string) => void;
-}
-
-export const OperationsContext = createContext<OperationsContextValue | null>(null);
-
-// How often the fallback poller runs, and how stale a running operation may get
-// (no event, no update) before we re-fetch it even while the socket looks fine.
-const POLL_INTERVAL_MS = 3000;
-const STALE_AFTER_MS = 15000;
-
-// Reconnect backoff for the events socket.
+// Reconnect backoff bounds and the polling cadence used while the socket is down.
 const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 30000;
+const POLL_INTERVAL_MS = 4000;
 
-// OperationsProvider owns every long-running operation the session knows about.
-// It is the only place that talks to /1.0/events and the operations endpoints:
-// screens hand it an operation via track() and read state through useOperations,
-// so no screen ever hand-rolls a polling loop.
-//
-// Updates arrive over the events websocket; if that socket drops we reconnect
-// with backoff and poll the tracked running operations meanwhile. The
-// degradation is silent by design — a missing events socket is not an error the
-// user can act on, and screens surface real API failures themselves.
+// byCreatedDesc orders operations newest first (created_at is an RFC3339 string,
+// so lexical compare matches chronological order).
+function byCreatedDesc(a: OperationView, b: OperationView): number {
+  return b.created_at.localeCompare(a.created_at);
+}
+
+// OperationsProvider owns the single app-wide operations tracker: it seeds from
+// GET /1.0/operations, subscribes to the operation events websocket (reconnect
+// with capped backoff, re-seeding on every connect), and silently falls back to
+// polling running operations while the socket is unavailable.
 export default function OperationsProvider({ children }: { children: React.ReactNode }) {
-  const [operations, setOperations] = useState<TrackedOperation[]>([]);
+  const [operations, setOperations] = useState<OperationView[]>([]);
+  const [seen, setSeen] = useState(false);
 
-  // Mirrors of state read inside socket/timer callbacks.
-  const operationsRef = useRef<TrackedOperation[]>([]);
-  operationsRef.current = operations;
+  // Refs read inside async callbacks/timers (see foundation §4).
+  const opsRef = useRef<OperationView[]>([]);
+  const dismissedRef = useRef<Set<string>>(new Set());
+  const wsRef = useRef<WebSocket | null>(null);
+  const backoffRef = useRef<number>(BACKOFF_MIN_MS);
+  const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const mountedRef = useRef(true);
 
-  // Latest view seen per operation id, including views for operations that are
-  // not tracked yet: an operation can complete between postAsync resolving and
-  // the screen calling track(), and this buffer lets track() catch up.
-  const latestRef = useRef<Map<string, OperationView>>(new Map());
-  // Which operations are in the panel. Kept outside state so that socket and
-  // timer callbacks can test membership without a stale closure, and so state
-  // updaters stay pure.
-  const trackedIdsRef = useRef<Set<string>>(new Set());
-  // Completion callbacks, cleared once fired.
-  const doneHandlersRef = useRef<Map<string, (op: OperationView) => void>>(new Map());
-  const connectedRef = useRef(false);
+  useEffect(() => {
+    opsRef.current = operations;
+  }, [operations]);
 
-  // apply merges a fresh view into the tracked list, firing the completion
-  // handler once, on the transition into a terminal state.
-  const apply = useCallback((view: OperationView) => {
-    const previous = latestRef.current.get(view.id);
-    latestRef.current.set(view.id, view);
-    if (!trackedIdsRef.current.has(view.id)) return; // Buffered for a later track().
-
-    setOperations((prev) =>
-      prev.map((o) => (o.id === view.id ? { ...view, cancelError: o.cancelError } : o))
-    );
-
-    if (isTerminal(view) && (!previous || !isTerminal(previous))) {
-      const onDone = doneHandlersRef.current.get(view.id);
-      if (onDone) {
-        doneHandlersRef.current.delete(view.id);
-        onDone(view);
-      }
-    }
+  // upsert inserts or updates a single operation, keeping the list newest-first
+  // and honoring locally dismissed rows.
+  const upsert = useCallback((op: OperationView) => {
+    if (dismissedRef.current.has(op.id)) return;
+    setSeen(true);
+    setOperations((prev) => {
+      const idx = prev.findIndex((o) => o.id === op.id);
+      const next = idx === -1 ? [op, ...prev] : prev.map((o) => (o.id === op.id ? op : o));
+      return next.sort(byCreatedDesc);
+    });
   }, []);
 
-  const track = useCallback((op: OperationView, onDone?: (op: OperationView) => void) => {
-    // A newer view may already have arrived over the socket: an operation can
-    // finish before the screen that launched it gets a chance to track it.
-    const latest = latestRef.current.get(op.id) ?? op;
-    latestRef.current.set(op.id, latest);
-
-    if (!trackedIdsRef.current.has(op.id)) {
-      trackedIdsRef.current.add(op.id);
-      setOperations((prev) => [latest, ...prev]);
-    }
-
-    if (!onDone) return;
-    if (isTerminal(latest)) onDone(latest);
-    else doneHandlersRef.current.set(op.id, onDone);
-  }, []);
-
-  const dismiss = useCallback((id: string) => {
-    doneHandlersRef.current.delete(id);
-    trackedIdsRef.current.delete(id);
-    setOperations((prev) => prev.filter((o) => o.id !== id));
-  }, []);
-
-  const cancel = useCallback(async (id: string) => {
+  // seed (re)loads the authoritative list; upserts so a just-tracked op is not
+  // dropped by a race. Silent on failure — the screen owns connection errors.
+  const seed = useCallback(async () => {
     try {
-      await cancelOperation(id);
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setOperations((prev) =>
-        prev.map((o) => (o.id === id ? { ...o, cancelError: message } : o))
-      );
+      const ops = await listOperations();
+      if (!mountedRef.current) return;
+      if (ops.length) setSeen(true);
+      setOperations((prev) => {
+        const known = new Map(prev.map((o) => [o.id, o]));
+        for (const op of ops) {
+          if (!dismissedRef.current.has(op.id)) known.set(op.id, op);
+        }
+        return Array.from(known.values()).sort(byCreatedDesc);
+      });
+    } catch {
+      // Silent: websocket/API degradation must not surface an error banner.
     }
   }, []);
 
-  // Seed from the daemon so a page reload does not lose operations that are
-  // still running. Finished operations are left behind: they belong to whatever
-  // page view started them, not to this one.
-  useEffect(() => {
-    listOperations()
-      .then((ops) => {
-        const seeded = ops.filter(
-          (op) => isRunning(op) && !trackedIdsRef.current.has(op.id)
-        );
-        if (seeded.length === 0) return;
-        seeded.forEach((op) => {
-          latestRef.current.set(op.id, latestRef.current.get(op.id) ?? op);
-          trackedIdsRef.current.add(op.id);
-        });
-        setOperations((prev) =>
-          [...prev, ...seeded].sort((a, b) => b.created_at.localeCompare(a.created_at))
-        );
-      })
-      .catch(() => {
-        // The daemon being unreachable is the screen's story to tell, not ours.
-      });
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
   }, []);
 
-  // Events websocket: the primary source of progress and completion updates.
-  useEffect(() => {
-    let closed = false;
-    let socket: WebSocket | null = null;
-    let retry: ReturnType<typeof setTimeout> | undefined;
-    let backoff = BACKOFF_MIN_MS;
-
-    const connect = () => {
-      if (closed) return;
-      let ws: WebSocket;
-      try {
-        ws = new WebSocket(wsUrl("/1.0/events?type=operation"));
-      } catch {
-        schedule();
-        return;
-      }
-      socket = ws;
-
-      ws.onopen = () => {
-        connectedRef.current = true;
-        backoff = BACKOFF_MIN_MS;
-      };
-      ws.onmessage = (ev) => {
-        try {
-          const event = JSON.parse(ev.data) as { type: string; metadata: OperationView };
-          if (event.type === "operation" && event.metadata?.id) apply(event.metadata);
-        } catch {
-          // A malformed frame is not worth surfacing; polling covers us.
-        }
-      };
-      ws.onclose = () => {
-        connectedRef.current = false;
-        if (socket === ws) socket = null;
-        schedule();
-      };
-      ws.onerror = () => {
-        connectedRef.current = false;
-      };
-    };
-
-    const schedule = () => {
-      if (closed || retry) return;
-      retry = setTimeout(() => {
-        retry = undefined;
-        connect();
-      }, backoff);
-      backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
-    };
-
-    connect();
-    return () => {
-      closed = true;
-      if (retry) clearTimeout(retry);
-      socket?.close();
-    };
-  }, [apply]);
-
-  // Fallback poller. While the socket is down it refreshes every running
-  // operation; while it is up it only re-fetches operations that have gone
-  // suspiciously quiet, which self-heals the events hub's best-effort delivery
-  // (it drops messages for a slow consumer rather than blocking).
-  useEffect(() => {
-    const timer = setInterval(() => {
-      const now = Date.now();
-      const stale = operationsRef.current.filter((op) => {
-        if (isTerminal(op)) return false;
-        if (!connectedRef.current) return true;
-        return now - new Date(op.updated_at).getTime() > STALE_AFTER_MS;
-      });
-      stale.forEach((op) => {
+  // startPolling refreshes running operations every few seconds while the
+  // socket is down. Degradation is silent.
+  const startPolling = useCallback(() => {
+    if (pollRef.current) return;
+    pollRef.current = setInterval(() => {
+      const running = opsRef.current.filter((o) => !isTerminal(o));
+      running.forEach((op) => {
         getOperation(op.id)
-          .then(apply)
+          .then((fresh) => mountedRef.current && upsert(fresh))
           .catch(() => {
-            // Unreachable daemon or a dropped operation: keep the row as-is.
+            // Silent: the operation may have been reaped; leave the last view.
           });
       });
     }, POLL_INTERVAL_MS);
-    return () => clearInterval(timer);
-  }, [apply]);
+  }, [upsert]);
 
-  const runningCount = operations.filter(isRunning).length;
+  // connect opens the events socket; on close it schedules a backoff reconnect
+  // and starts polling; on (re)open it re-seeds and stops polling.
+  const connect = useCallback(() => {
+    const ws = connectOperationEvents({
+      onOperation: upsert,
+      onOpen: () => {
+        backoffRef.current = BACKOFF_MIN_MS;
+        stopPolling();
+        void seed();
+      },
+      onClose: () => {
+        if (wsRef.current === ws) wsRef.current = null;
+        if (!mountedRef.current) return;
+        startPolling();
+        const delay = backoffRef.current;
+        backoffRef.current = Math.min(delay * 2, BACKOFF_MAX_MS);
+        reconnectRef.current = setTimeout(connect, delay);
+      },
+      onError: () => {
+        // onClose fires next and drives the reconnect/poll fallback.
+      },
+    });
+    wsRef.current = ws;
+  }, [upsert, seed, startPolling, stopPolling]);
 
-  return (
-    <OperationsContext.Provider
-      value={{ operations, runningCount, track, cancel, dismiss }}
-    >
-      {children}
-    </OperationsContext.Provider>
+  // Lifecycle: seed immediately, then open the socket; tear everything down on
+  // unmount.
+  useEffect(() => {
+    mountedRef.current = true;
+    void seed();
+    connect();
+    return () => {
+      mountedRef.current = false;
+      if (reconnectRef.current) clearTimeout(reconnectRef.current);
+      stopPolling();
+      wsRef.current?.close();
+      wsRef.current = null;
+    };
+  }, [seed, connect, stopPolling]);
+
+  const track = useCallback((op: OperationView) => upsert(op), [upsert]);
+
+  const cancel = useCallback(
+    async (id: string) => {
+      const op = await cancelOperation(id);
+      upsert(op);
+    },
+    [upsert]
   );
+
+  const dismiss = useCallback((id: string) => {
+    dismissedRef.current.add(id);
+    setOperations((prev) => prev.filter((o) => o.id !== id));
+  }, []);
+
+  const running = useMemo(() => operations.filter((o) => !isTerminal(o)).length, [operations]);
+
+  const value = useMemo<OperationsContextValue>(
+    () => ({ operations, running, seen, track, cancel, dismiss }),
+    [operations, running, seen, track, cancel, dismiss]
+  );
+
+  return <OperationsContext.Provider value={value}>{children}</OperationsContext.Provider>;
 }

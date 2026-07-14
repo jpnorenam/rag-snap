@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Header from "@/components/Header";
-import { usePageTitle } from "@/lib/usePageTitle";
 import { ApiError } from "@/lib/api/envelope";
 import { startChat, ChatConnection, type ChatFrame } from "@/lib/api/chat";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
@@ -19,7 +18,6 @@ interface Message {
 }
 
 export default function ChatScreen() {
-  usePageTitle("Chat");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [connState, setConnState] = useState<ConnState>("idle");
@@ -175,19 +173,15 @@ export default function ChatScreen() {
     }
   }
 
-  const statusDotClasses = [
-    "app-status-dot",
-    connState === "connected" ? "is-connected" : "",
-    connState === "error" ? "is-error" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
-
   return (
     <>
       <Header title="Chat">
         <div className="chat__status">
-          <span className={statusDotClasses} />
+          <span
+            className={`app-status-dot ${
+              connState === "connected" ? "is-connected" : connState === "error" ? "is-error" : ""
+            }`}
+          />
           <span className="u-text--muted p-text--small u-no-margin--bottom">
             {connState === "connected"
               ? model

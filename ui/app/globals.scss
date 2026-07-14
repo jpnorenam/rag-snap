@@ -88,24 +88,23 @@ $sidebar-accent: #e95420; // Ubuntu orange
   color: rgba(255, 255, 255, 0.85);
   font-size: 0.9375rem;
   text-align: left;
-  cursor: pointer;
   text-decoration: none;
+  cursor: pointer;
   transition: background-color 0.1s ease-in-out;
 
-  &:hover:not(:disabled):not(.app-sidebar__item--pending) {
+  &:not(.app-sidebar__item--soon):hover {
     background-color: rgba(255, 255, 255, 0.1);
     color: #fff;
-    text-decoration: none;
   }
 
-  &.is-active,
-  &[aria-current="page"] {
+  &.is-active {
     background-color: rgba(255, 255, 255, 0.12);
     border-left-color: $sidebar-accent;
     color: #fff;
   }
 
-  &:disabled {
+  // Coming-soon placeholders: inert, muted, non-focusable spans.
+  &--soon {
     color: rgba(255, 255, 255, 0.4);
     cursor: not-allowed;
   }
@@ -114,12 +113,6 @@ $sidebar-accent: #e95420; // Ubuntu orange
     outline: 2px solid $sidebar-accent;
     outline-offset: -2px;
   }
-}
-
-// Sections whose screens do not exist yet: inert, not focusable, not a link.
-.app-sidebar__item--pending {
-  color: rgba(255, 255, 255, 0.4);
-  cursor: default;
 }
 
 .app-sidebar__icon {
@@ -211,175 +204,6 @@ $sidebar-accent: #e95420; // Ubuntu orange
 }
 
 // ---------------------------------------------------------------------------
-// Shared primitives (components/common)
-// ---------------------------------------------------------------------------
-
-// The app-wide state dot: chat connection state and operation state both use it.
-.app-status-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  flex-shrink: 0;
-  background-color: var(--vf-color-border-low-contrast);
-
-  &.is-connected,
-  &.is-succeeded {
-    background-color: var(--vf-color-border-positive);
-  }
-
-  &.is-error,
-  &.is-failed {
-    background-color: var(--vf-color-border-negative);
-  }
-
-  &.is-running {
-    background-color: var(--vf-color-border-caution);
-  }
-
-  &.is-cancelled {
-    background-color: var(--vf-color-text-muted);
-  }
-}
-
-.app-spinner {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  justify-content: center;
-  color: var(--vf-color-text-muted);
-}
-
-.app-empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 3rem 1.5rem;
-  text-align: center;
-}
-
-.app-empty__icon {
-  color: var(--vf-color-text-muted);
-}
-
-.app-empty__headline {
-  margin: 0;
-  font-size: 1.125rem;
-  font-weight: 400;
-}
-
-.app-empty__guidance {
-  margin: 0;
-  max-width: 32rem;
-}
-
-.app-empty__command {
-  width: 100%;
-  max-width: 32rem;
-  margin: 0.5rem 0;
-  text-align: left;
-}
-
-// ---------------------------------------------------------------------------
-// Operations indicator and panel
-// ---------------------------------------------------------------------------
-
-.app-ops {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.app-ops__toggle {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.25rem 0.5rem;
-}
-
-.app-ops-panel {
-  position: absolute;
-  top: calc(100% + 0.5rem);
-  right: 0;
-  z-index: 10;
-  width: 24rem;
-  max-width: calc(100vw - 2rem);
-  max-height: 60vh;
-  overflow-y: auto;
-  padding: 0.75rem 1rem;
-  background-color: var(--vf-color-background-alt);
-  border: 1px solid var(--vf-color-border-default);
-  box-shadow: vanilla-framework.$box-shadow;
-}
-
-.app-ops-panel__title {
-  margin: 0 0 0.5rem;
-  font-size: 0.75rem;
-  font-weight: 400;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--vf-color-text-muted);
-}
-
-.app-ops-panel__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-}
-
-.app-ops-row {
-  padding: 0.5rem 0;
-  border-top: 1px solid var(--vf-color-border-default);
-
-  &:first-child {
-    border-top: 0;
-  }
-}
-
-.app-ops-row--finished .app-ops-row__description {
-  color: var(--vf-color-text-muted);
-}
-
-.app-ops-row__main {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.app-ops-row__body {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.app-ops-row__description {
-  word-break: break-word;
-}
-
-.app-ops-row__meta {
-  margin: 0;
-}
-
-// Vanilla colours its own validation-message text with the negative border
-// token; reuse it so a failed row reads the same in both themes.
-.app-ops-row__error {
-  margin: 0.25rem 0 0 1rem;
-  color: var(--vf-color-border-negative);
-}
-
-.app-ops-row__progress {
-  height: 0.25rem;
-  margin: 0.4rem 0 0.1rem 1rem;
-  background-color: var(--vf-color-border-low-contrast);
-}
-
-.app-ops-row__progress-bar {
-  height: 100%;
-  background-color: var(--vf-color-border-caution);
-}
-
-// ---------------------------------------------------------------------------
 // Chat screen
 // ---------------------------------------------------------------------------
 
@@ -395,6 +219,44 @@ $sidebar-accent: #e95420; // Ubuntu orange
   align-items: center;
   gap: 0.5rem;
   font-size: 0.875rem;
+}
+
+// Generalized status dot: shared by the chat connection status and the
+// operations panel rows. State modifiers map to Vanilla border tokens so the
+// colors track the theme.
+.app-status-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background-color: var(--vf-color-border-low-contrast);
+
+  // Chat connection states.
+  &.is-connected {
+    background-color: var(--vf-color-border-positive);
+  }
+
+  &.is-error {
+    background-color: var(--vf-color-border-negative);
+  }
+
+  // Operation states (caution=running, positive=succeeded, negative=failed,
+  // muted=cancelled).
+  &.is-running {
+    background-color: var(--vf-color-border-caution);
+  }
+
+  &.is-succeeded {
+    background-color: var(--vf-color-border-positive);
+  }
+
+  &.is-failed {
+    background-color: var(--vf-color-border-negative);
+  }
+
+  &.is-cancelled {
+    background-color: var(--vf-color-text-muted);
+  }
 }
 
 .chat__messages {
@@ -469,4 +331,168 @@ $sidebar-accent: #e95420; // Ubuntu orange
 .kb-selector__label {
   font-size: 0.875rem;
   color: var(--vf-color-text-muted);
+}
+
+// ---------------------------------------------------------------------------
+// Shared primitives (components/common)
+// ---------------------------------------------------------------------------
+
+.app-spinner {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 0.5rem;
+  padding: 1.5rem 1rem;
+}
+
+.app-empty__icon {
+  color: var(--vf-color-text-muted);
+  line-height: 0;
+}
+
+.app-empty__headline {
+  font-weight: 400;
+}
+
+.app-empty__guidance {
+  max-width: 28rem;
+
+  code {
+    white-space: nowrap;
+  }
+}
+
+.app-empty__action {
+  margin-top: 0.5rem;
+}
+
+// Confirm modal footer: right-aligned actions.
+.app-modal {
+  .p-modal__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Operations indicator & panel  --- ops ---
+// ---------------------------------------------------------------------------
+
+.app-ops {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.app-ops__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+
+  i {
+    display: inline-flex;
+    line-height: 0;
+  }
+}
+
+.app-ops__count {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.875rem;
+}
+
+.app-ops-panel {
+  position: absolute;
+  top: calc(100% + 0.5rem);
+  right: 0;
+  z-index: 20;
+  width: 22rem;
+  max-width: 90vw;
+  max-height: 70vh;
+  overflow-y: auto;
+  background-color: var(--vf-color-background-alt);
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.25rem;
+  box-shadow: 0 0.5rem 1.25rem rgba(0, 0, 0, 0.2);
+}
+
+.app-ops-panel__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.app-ops-panel__empty {
+  padding: 0.5rem;
+}
+
+.app-ops-row {
+  padding: 0.65rem 0.85rem;
+  border-bottom: 1px solid var(--vf-color-border-default);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.app-ops-row__main {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.app-ops-row__desc {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.875rem;
+}
+
+.app-ops-row__time {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.app-ops-row__actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+}
+
+.app-ops-row__dismiss {
+  padding: 0 0.4rem;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.app-ops-row__note {
+  margin-top: 0.25rem;
+  padding-left: 1rem;
+}
+
+.app-ops-row__error {
+  margin-top: 0.25rem;
+  padding-left: 1rem;
+  color: var(--vf-color-border-negative);
+}
+
+.app-ops-row__progress {
+  margin-top: 0.4rem;
+  height: 0.25rem;
+  border-radius: 0.125rem;
+  background-color: var(--vf-color-border-low-contrast);
+  overflow: hidden;
+}
+
+.app-ops-row__progress-bar {
+  height: 100%;
+  background-color: var(--vf-color-border-caution);
+  transition: width 0.2s ease-in-out;
 }

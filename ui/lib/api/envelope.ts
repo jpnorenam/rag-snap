@@ -1,5 +1,5 @@
 import { ROOT_PATH } from "./rootPath";
-import { authHeaders, captureTokenFromUrl } from "./token";
+import { authHeaders } from "./token";
 
 // The daemon's uniform response envelope (LXD-style): every JSON response is a
 // "sync", "async", or "error" object. This is the browser analogue of lxd-ui's
@@ -31,16 +31,6 @@ export function apiUrl(path: string): string {
   return `${ROOT_PATH}${suffix}`;
 }
 
-// wsUrl resolves an API path (or an already-absolute URL returned by the
-// daemon) into an absolute ws(s):// URL on the page's origin, so websockets are
-// reached same-origin (no CORS, and the loopback auth cookie travels with the
-// upgrade).
-export function wsUrl(path: string): string {
-  const origin = window.location.origin.replace(/^http/, "ws");
-  if (/^(wss?|https?):/.test(path)) return path.replace(/^http/, "ws");
-  return `${origin}${apiUrl(path)}`;
-}
-
 // request performs a fetch against the API and parses the envelope. The token
 // is injected at runtime (Authorization header when present; the loopback
 // cookie travels automatically via credentials: "include").
@@ -49,10 +39,6 @@ async function request<T>(
   path: string,
   body?: unknown
 ): Promise<ApiEnvelope<T>> {
-  // Idempotent, and a no-op in the common (cookie) case: it guarantees a
-  // fragment token is picked up even if a caller fires before the mount-time
-  // capture in AppShell (child effects run before their parent's).
-  captureTokenFromUrl();
   const headers: Record<string, string> = { ...authHeaders() };
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
@@ -93,7 +79,7 @@ export async function postSync<T>(path: string, body?: unknown): Promise<T> {
   return env.metadata as T;
 }
 
-// deleteSync issues a request expecting a sync response and returns its metadata.
+// deleteSync issues a DELETE expecting a sync response and returns its metadata.
 export async function deleteSync<T>(path: string): Promise<T> {
   const env = await request<T>("DELETE", path);
   return env.metadata as T;
