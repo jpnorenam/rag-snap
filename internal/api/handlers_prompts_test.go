@@ -274,6 +274,54 @@ func TestCustomChatPromptReachesInference(t *testing.T) {
 	}
 }
 
+// TestChatPromptWithoutRetrieval pins the fallback rule at the wire, on a
+// server with no embedding model configured (retrieval unavailable): the
+// uncustomized RAG-specific default is swapped for the generic assistant
+// prompt, but a *customized* prompt is honoured — user configuration is never
+// silently overridden (the bug behind the original "prompt ignored without
+// retrieval" behaviour).
+func TestChatPromptWithoutRetrieval(t *testing.T) {
+	systemPrompts := make(chan string, 4)
+	inference := capturingInference(t, systemPrompts)
+
+	// Dead OpenSearch and no knowledge.model.embedding key: retrieval is off.
+	sock, _ := startTestServer(t, map[string]string{
+		backendOpenSearch: "http://127.0.0.1:1",
+		backendOpenAI:     inference,
+		backendTika:       "http://127.0.0.1:1",
+	})
+
+	askOnce := func(label, want string) {
+		t.Helper()
+		conn, ctx, cancel := startChatSession(t, sock)
+		defer cancel()
+		defer conn.Close(websocket.StatusNormalClosure, "")
+
+		if err := wsjson.Write(ctx, conn, map[string]any{"type": "prompt", "content": "hi"}); err != nil {
+			t.Fatalf("%s: writing prompt: %v", label, err)
+		}
+		select {
+		case got := <-systemPrompts:
+			if got != want {
+				t.Errorf("%s: system prompt = %q, want %q", label, got, want)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("%s: inference server never received a chat completion request", label)
+		}
+	}
+
+	// Uncustomized: the RAG-specific default gives way to the generic prompt.
+	askOnce("default", "You are a helpful assistant.")
+
+	// Customized: the user's prompt runs even though retrieval is unavailable.
+	const custom = "You are a laconic assistant. Answer in one sentence."
+	if status, _ := promptRequest(t, sock, http.MethodPut, "/1.0/prompts/chat_system_prompt",
+		map[string]string{"value": custom}); status != http.StatusOK {
+		t.Fatalf("PUT chat_system_prompt: status = %d, want 200", status)
+	}
+	askOnce("customized", custom)
+}
+
 // stubOpenSearch is the minimum OpenSearch a knowledge client will accept: a
 // reachable port and a healthy cluster. It exists only so handleChatStart's
 // retrieval guard passes (which is what makes a session apply its system

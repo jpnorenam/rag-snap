@@ -25,6 +25,29 @@ func DefaultPrompts() PromptConfig {
 	}
 }
 
+// fallbackChatSystemPrompt seeds a chat session when retrieval is unavailable
+// and the user has not customized the chat prompt. The built-in default is
+// written for RAG — it instructs the model to answer only from retrieved
+// context, which without retrieval never exists — so left in place it would
+// make the model refuse every question.
+const fallbackChatSystemPrompt = "You are a helpful assistant."
+
+// SystemPromptFor returns the system prompt seeding a chat session. A
+// customized prompt is always honoured — configuration the user wrote is never
+// silently overridden. Only the built-in default is swapped for a generic
+// assistant prompt when retrieval is unavailable (see fallbackChatSystemPrompt).
+//
+// Customization is detected by comparing against the built-in default, which
+// holds for both stores: the daemon store never persists an override equal to
+// the default, and the client-local file loader fills unset fields from the
+// defaults.
+func SystemPromptFor(cfg PromptConfig, retrievalAvailable bool) string {
+	if retrievalAvailable || cfg.ChatSystemPrompt != DefaultPrompts().ChatSystemPrompt {
+		return cfg.ChatSystemPrompt
+	}
+	return fallbackChatSystemPrompt
+}
+
 // promptsConfigPath returns the path to the prompts config JSON file.
 func promptsConfigPath() (string, error) {
 	dir, err := os.UserConfigDir()

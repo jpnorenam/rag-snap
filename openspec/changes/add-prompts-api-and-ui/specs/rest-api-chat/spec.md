@@ -17,6 +17,12 @@ with a custom manifest prompt, not chat — chat's grounding rules live inside
 changes to stored prompts SHALL apply to sessions started afterwards and SHALL NOT alter a
 session already in progress.
 
+A **customized** `chat_system_prompt` SHALL be honoured whether or not retrieval is available —
+user configuration is never silently overridden. When retrieval is unavailable and the prompt is
+**not** customized, the session SHALL fall back to a generic assistant prompt instead of the
+built-in default, because the default is written for RAG (it instructs the model to answer only
+from retrieved context, which would make it refuse every question).
+
 #### Scenario: Grounded answer over the API
 
 - **WHEN** a client asks a question with knowledge bases active
@@ -32,6 +38,19 @@ session already in progress.
 
 - **WHEN** the stored `chat_system_prompt` is customized and a client starts a chat session
 - **THEN** the session's system prompt is the customized template instead of the built-in default
+
+#### Scenario: Customized prompt honoured without retrieval
+
+- **WHEN** the stored `chat_system_prompt` is customized and a client starts a chat session while
+  retrieval is unavailable
+- **THEN** the session's system prompt is the customized template
+
+#### Scenario: Uncustomized default falls back without retrieval
+
+- **WHEN** the `chat_system_prompt` is not customized and a client starts a chat session while
+  retrieval is unavailable
+- **THEN** the session's system prompt is a generic assistant prompt rather than the RAG-specific
+  built-in default
 
 #### Scenario: Mid-session prompt edits do not affect the running session
 

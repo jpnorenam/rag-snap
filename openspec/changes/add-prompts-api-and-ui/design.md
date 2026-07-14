@@ -117,6 +117,17 @@ and `source_rules` is appended *only* when the manifest carries a custom `prompt
 ([batch.go:218-223](../../../cmd/cli/basic/chat/batch.go#L218)). Injecting `source_rules` into
 chat would be a behavior change beyond this change's remit and would diverge from the CLI REPL.
 
+**Amendment (in-snap validation finding):** both chat paths carried a guard that replaced the
+system prompt with `"You are a helpful assistant."` whenever retrieval was unavailable — which
+silently discarded a *customized* prompt and falsified the UI's "new chats will use it" promise on
+retrieval-less machines. The guard's only legitimate job is protecting the *built-in default*,
+which is RAG-specific (it instructs the model to answer solely from retrieved context) and would
+otherwise make the model refuse everything. The rule is now: a customized prompt is always
+honoured; only the uncustomized default falls back. It lives in one helper,
+`chat.SystemPromptFor`, used by both the daemon handler and the direct REPL. Customization is
+detected by comparing against the default — sound because the daemon store clears overrides equal
+to the default (D2) and the local-file loader fills unset fields from the defaults.
+
 *Why not re-resolve per turn:* it would make the UI's post-save message ("new chats and batch
 runs will use it") wrong, create mid-conversation behavior shifts the user didn't ask for, and
 complicate the session state the spec says the daemon owns. The UX doc explicitly calls the
