@@ -20,34 +20,17 @@ Remote/HTTPS exposure is intentionally **not** part of this surface: the listene
 
 ## Quick start: from install to a first answer
 
-This is the full path for a fresh install of the latest snap: enable the loopback listener,
-give the daemon a chat API key, open the UI, and ask a question.
+For the full path from a fresh install to a working UI — installing the snap, configuring
+backends, secrets, and enabling the loopback listener — see
+**[INSTALL.md](../INSTALL.md#enable-the-browser-ui)**. That doc also covers a known limitation
+where `ragd` cannot be given non-default OpenSearch credentials the way it can for
+`CHAT_API_KEY`; see
+[INSTALL.md's callout](../INSTALL.md#known-limitation-ragdthe-ui-and-non-default-opensearch-credentials)
+if a knowledge base fails to load in the UI.
+
+Once configured, opening the UI is just:
 
 ```bash
-# 1. Install the snap (use the exact filename, not a glob — an older snap in the
-#    same directory will otherwise be matched).
-sudo snap install --dangerous ./rag-cli_0.0.4_amd64.snap
-
-# 2. Enable the loopback listener and configure the chat backend.
-sudo rag-cli.rag set api.loopback.enabled=true
-sudo rag-cli.rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
-sudo rag-cli.rag set --package chat.http.port="443"
-sudo rag-cli.rag set --package chat.http.tls="true"
-sudo rag-cli.rag set --package chat.http.path="openai/v1"
-
-# 3. Give the *daemon* the chat API key (see the section below for why a shell
-#    `export` is not enough). The drop-in is root-only (0600) so the key is
-#    never world-readable. Replace $YOUR_KEY with a real key.
-sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$YOUR_KEY" | \
-  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf >/dev/null
-sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
-
-# 4. Reload systemd and (re)start the daemon so it picks up both the listener and the key.
-sudo systemctl daemon-reload
-sudo snap restart rag-cli.ragd
-
-# 5. Open the UI. This fetches the current loopback URL + token and opens your browser.
 rag-cli.rag ui
 ```
 
@@ -192,6 +175,15 @@ build. A full `snap remove` clears it, so re-apply the drop-in after a clean rei
 > Declaring it (even as an empty string) would make snapd apply that value over whatever the
 > systemd unit provides, so the drop-in could never take effect.
 
+> **Known limitation:** `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD` are declared in
+> `snap/snapcraft.yaml`'s `ragd` app metadata (hardcoded to `admin`/`admin`), so — unlike
+> `CHAT_API_KEY` — they **cannot** be overridden with a drop-in the same way; snapd applies the
+> hardcoded value after systemd and silently wins. If your OpenSearch cluster doesn't use the
+> `admin`/`admin` default, knowledge-base features in the UI (search, ingest) will fail with an
+> `opensearch not available` error even though the CLI works fine against the same cluster (the
+> CLI reads your shell's environment directly). See
+> [INSTALL.md](../INSTALL.md#known-limitation-ragdthe-ui-and-non-default-opensearch-credentials).
+
 ---
 
 ## Launching with `rag ui`
@@ -247,8 +239,9 @@ credentials do not exist for TCP connections, so the loopback listener authentic
 
 **`unknown command "ui"` from `rag-cli.rag ui`.** The installed snap predates the UI command.
 Confirm the version with `snap list rag-cli` and reinstall the latest build, naming the file
-explicitly (`sudo snap install --dangerous ./rag-cli_0.0.4_amd64.snap`) — a `rag-cli_*.snap`
-glob can match an older snap left in the directory.
+explicitly (e.g. `sudo snap install --dangerous ./rag-cli_<version>_amd64.snap`, using the exact
+filename from `ls rag-cli_*.snap`) — a `rag-cli_*.snap` glob can match an older snap left in the
+directory.
 
 **The old UI URL no longer loads after a restart.** Expected. With the default
 `api.loopback.address=127.0.0.1:0` the OS assigns a fresh port on every start, so a bookmarked
@@ -262,3 +255,8 @@ via the systemd drop-in, not a shell `export`.
 **`chat operation did not return a websocket URL/secret`.** The UI bundle is older than the
 daemon. Rebuild the snap so the embedded UI matches (`make ui` then `snapcraft`), reinstall,
 restart the daemon, and hard-reload the browser (Ctrl+Shift+R) to bypass the cached bundle.
+
+**A knowledge base fails to load, or search/ingest errors with `opensearch not available`, even
+though the CLI works fine against the same cluster.** You're hitting the known
+`ragd`/OpenSearch-credentials limitation — see the callout above under
+[Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key).

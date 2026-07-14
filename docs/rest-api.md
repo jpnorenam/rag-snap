@@ -79,6 +79,14 @@ sudo snap restart rag-cli.ragd
 The drop-in file is `root:root 0600`, so the secret is never world-readable and never passes
 through the `snapctl` config store or the `GET /1.0` config summary.
 
+> **Known limitation:** unlike `CHAT_API_KEY`, `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD`
+> currently **cannot** be overridden for the daemon via a drop-in the same way —
+> `snap/snapcraft.yaml`'s `ragd` app hardcodes both to `admin`/`admin`, and snapd applies that
+> environment after systemd, silently overriding any drop-in. The daemon (and therefore the UI
+> and this REST API) can only reach OpenSearch clusters whose admin password is literally
+> `admin`; the CLI is unaffected since it reads your shell's environment directly. See
+> [INSTALL.md](../INSTALL.md#known-limitation-ragdthe-ui-and-non-default-opensearch-credentials).
+
 > **Applying config changes:** the daemon snapshots config at startup. After changing config
 > with `rag set ...`, reload the daemon to pick up the new values — either `sudo snap restart
 > rag-cli.ragd`, or send it `SIGHUP` for an in-place reload (re-reads config and rebuilds the
@@ -234,7 +242,7 @@ curl --unix-socket "$SOCK" http://ragd/1.0/knowledge
 # Hybrid search (sync)
 curl --unix-socket "$SOCK" -X POST http://ragd/1.0/search \
   -H 'Content-Type: application/json' \
-  -d '{"knowledge":["project-docs"],"query":"how do I rotate credentials?"}'
+  -d '{"bases":["project-docs"],"query":"how do I rotate credentials?"}'
 ```
 
 A trusted root response reports `"auth":"trusted"`; an untrusted caller sees `"untrusted"`.
