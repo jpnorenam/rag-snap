@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,50 @@ func TestHandlerServesIndex(t *testing.T) {
 	}
 	if !strings.Contains(strings.ToLower(rec.Body.String()), "<html") {
 		t.Errorf("index response is not HTML: %q", rec.Body.String())
+	}
+}
+
+// TestHandlerServesExportedRoutePage verifies a route with its own exported page
+// is served that page, not the root index. The static export writes one document
+// per route (status/index.html, prompts/index.html); serving the root index for
+// them instead makes every deep link and reload render the *chat* page, whatever
+// route the user actually asked for.
+func TestHandlerServesExportedRoutePage(t *testing.T) {
+	h, err := Handler()
+	if err != nil {
+		t.Fatalf("Handler: %v", err)
+	}
+
+	assets, err := Assets()
+	if err != nil {
+		t.Fatalf("Assets: %v", err)
+	}
+
+	// The embed contains a committed placeholder index.html even before the UI is
+	// built, so only assert this where a real exported route page is present.
+	if !hasIndex(assets, "status") {
+		t.Skip("no exported status/ page in the embedded dist (run `make ui`)")
+	}
+
+	want, err := fs.ReadFile(assets, "status/index.html")
+	if err != nil {
+		t.Fatalf("reading status/index.html: %v", err)
+	}
+	root, err := fs.ReadFile(assets, "index.html")
+	if err != nil {
+		t.Fatalf("reading index.html: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /status/ status = %d, want 200", rec.Code)
+	}
+	if got := rec.Body.String(); got != string(want) {
+		if got == string(root) {
+			t.Fatal("GET /status/ served the root index (the chat page), not the status page")
+		}
+		t.Fatal("GET /status/ did not serve status/index.html")
 	}
 }
 

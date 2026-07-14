@@ -299,6 +299,61 @@ paths:
             summary: Start a chat session.
             tags:
                 - chat
+    /1.0/config:
+        get:
+            description: |-
+                Returns the effective configuration, sorted by key, each entry naming the layer it
+                resolves from ("user" when an override exists, otherwise "package"). Deprecated
+                keys are omitted, as they are in the CLI. Secret-shaped values are redacted:
+                the key is listed and remains writable, but its value is never returned.
+            operationId: configList
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: List the configuration.
+            tags:
+                - config
+    /1.0/config/{key}:
+        delete:
+            description: |-
+                Drops the key's user-layer override so the package value becomes effective again.
+                A key with no override cannot be reverted and is rejected.
+            operationId: configUnset
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Revert a configuration value to its package default.
+            tags:
+                - config
+        put:
+            description: |-
+                Writes the value to the user layer, which overrides the package value — the same
+                semantics as `rag-cli.rag set <key>=<value>`. A key that does not already exist in
+                the merged config is rejected: the API cannot create keys, only override them.
+                Deprecated keys are read-only and are rejected too.
+            operationId: configSet
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Set a configuration value.
+            tags:
+                - config
     /1.0/events:
         get:
             description: |-
@@ -783,6 +838,24 @@ paths:
             summary: Hybrid search over knowledge bases.
             tags:
                 - search
+    /1.0/status:
+        get:
+            description: |-
+                Probes each external service (OpenSearch, the inference server, Tika) over HTTP at
+                request time and reports the daemon's own listeners. Services degrade
+                independently: an unreachable service is reported as such and never fails the
+                request. The OpenSearch entry lists the ML models OpenSearch currently has
+                deployed, alongside the configured model IDs, so a configured model that is not
+                deployed is visible before a search fails on it.
+            operationId: statusGet
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+            summary: Report service health and models.
+            tags:
+                - status
 produces:
     - application/json
 responses:

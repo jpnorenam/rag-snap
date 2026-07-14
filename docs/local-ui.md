@@ -62,8 +62,8 @@ from the chips at the top of the page to ground answers in your documents.
 ## Navigating the UI
 
 The UI is a multi-page application with a persistent dark navigation rail on the left. The
-rail lists the app's sections; **Chat** and **Prompts** are shipped today, and the remaining
-entries (Knowledge bases, Search, Answer RFPs, Status) show a **Soon** badge until their features
+rail lists the app's sections; **Chat**, **Prompts**, and **Status** are shipped today, and the
+remaining entries (Knowledge bases, Search, Answer RFPs) show a **Soon** badge until their features
 land. The active section is marked with an orange left-border indicator, and the browser tab title
 tracks the section you are on. On narrow windows the rail collapses to an icon-only strip; hover a
 icon for its label.
@@ -114,6 +114,38 @@ Prompts are held by the **daemon**, so what you save here is exactly what `rag-c
 `answer batch`, and the REST API use. The daemon resolves prompts when a chat session or batch run
 *starts*, which is why the confirmation reads "New chats and batch runs will use it" — work
 already in flight keeps the prompts it began with.
+
+### Status
+
+The **Status** page (pinned to the bottom of the rail) is the browser equivalent of
+`rag-cli.rag status` and `rag-cli.rag get`/`set`. It has two zones.
+
+**Services** shows one card per service — OpenSearch, the inference server, Tika, and the ragd
+daemon — each with its state (**Running**, **Unreachable**, or **Not configured** — the word is
+always shown, never colour alone), its endpoint, and its own details:
+
+- **OpenSearch** lists the configured embedding and rerank **model IDs** (copyable, as `knowledge
+  init` prints them) *and* the models OpenSearch actually has **deployed**. If a configured model
+  is not deployed, the card says so — that combination breaks retrieval, and without this you would
+  not find out until a search failed. Fix it with `rag-cli.rag knowledge init`.
+- **Inference** shows the LLM it serves, **Tika** its version, and **ragd** its API version and
+  listeners.
+
+The daemon probes the services when you ask, not on a timer: the page checks on load and on
+**Refresh**, and shows when it last checked. An unreachable service degrades on its own card,
+with the CLI command to try next — it never takes the page down.
+
+**Configuration** lists the effective configuration. Each key shows its value and a **layer** chip:
+`package` (shipped with the snap) or `user` (your override). Filter the keys with the search box,
+edit a value in place with the pencil, and **Revert** a `user` value back to the packaged one
+(the confirmation shows both values). Saving writes the **user** layer, exactly as
+`sudo rag-cli.rag set <key>=<value>` does, and the same rules apply: you can override existing
+keys but not invent new ones. Changing a key that feeds a service connection prompts you to
+re-check Status above.
+
+Secret values are never shown. The service credentials are environment variables, not
+configuration, and the one config key that *is* a secret (`gdrive.client.secret`) is redacted by
+the daemon — it renders as `••••` and can be written but never read back.
 
 ---
 
