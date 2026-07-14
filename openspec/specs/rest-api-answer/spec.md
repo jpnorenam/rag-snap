@@ -18,6 +18,12 @@ manifest keywords, hybrid retrieval, grounded generation). When no context is re
 question, the answer SHALL be the fixed "not enough information" response rather than an
 ungrounded generation.
 
+The prompt templates driving generation SHALL come from the daemon prompt store
+(`rest-api-prompts`): the stored `answer_system_prompt` and `source_rules`, each resolving to
+its built-in default when not customized. Prompts SHALL be resolved when the batch operation
+starts; changes to stored prompts SHALL apply to operations started afterwards and SHALL NOT
+alter an operation already running.
+
 The operation's metadata SHALL convey progress across the questions, and the operation SHALL be
 cancellable.
 
@@ -36,6 +42,19 @@ cancellable.
 
 - **WHEN** a client cancels a running batch operation
 - **THEN** processing stops cooperatively and the operation reports cancellation
+
+#### Scenario: Customized prompts drive new batch runs
+
+- **WHEN** the stored `answer_system_prompt` or `source_rules` is customized and a client starts
+  a batch operation
+- **THEN** the operation's generation uses the customized templates instead of the built-in
+  defaults
+
+#### Scenario: Mid-run prompt edits do not affect the running operation
+
+- **WHEN** a stored prompt is updated while a batch operation is running
+- **THEN** the running operation continues with the prompts it started with
+- **AND** the next batch operation started uses the updated prompts
 
 ### Requirement: Batch results are retrievable
 
