@@ -59,32 +59,34 @@ doc). UI conventions are codified in the `ui-conventions` skill.
 - `handleChatStart`'s pre-existing guard fell back to `"You are a helpful assistant."` when
   retrieval was unavailable, **ignoring `chat_system_prompt` entirely** in that state — while the
   new UI told the user "New chats and batch runs will use it". **Resolved by task 9**: a
-  customized prompt is now honoured regardless of retrieval; only the RAG-specific built-in
-  default still falls back.
+  configured prompt (customization *or* built-in default) is now sent unconditionally.
 
-## 9. Follow-up: honour a customized chat prompt without retrieval
+## 9. Follow-up: the configured chat prompt is always sent
 
-- [x] 9.1 Add `chat.SystemPromptFor(cfg, retrievalAvailable)`: a customized prompt always
-      wins; the built-in default falls back to a generic assistant prompt only when retrieval is
-      unavailable (the default is RAG-specific and would make the model refuse everything).
-      Customization is detected by comparison with the default, which is sound for both stores —
-      the daemon store never persists an override equal to the default, and the local-file loader
-      fills unset fields from the defaults.
-- [x] 9.2 Route both call sites through it: `handleChatStart` (daemon) and the direct CLI REPL in
-      `chat/client.go`, which had the same bug against the local prompts file.
-- [x] 9.3 Amend the `rest-api-chat` delta with the fallback rule and two scenarios (customized
-      honoured without retrieval; uncustomized default falls back).
-- [x] 9.4 Tests: table-driven unit test for the helper; wire-level test on a retrieval-less
-      daemon asserting the generic prompt when uncustomized and the customized prompt after a PUT.
-- [x] 9.5 End-to-end against the **real** inference backend (installed snap rev x6, which
-      contains the fix — verified via the `SystemPromptFor` symbol in the packed binaries;
-      Bedrock `mistral-large-3`, retrieval unavailable on this machine): with all prompts
-      default, the model's echoed system message contains the fallback
-      "You are a helpful assistant."; after customizing `chat_system_prompt` with a
-      begin-with-`ZEBRA-42:` rule, a fresh session's answer to a neutral question started with
-      `ZEBRA-42:` — the customized prompt demonstrably reaches the real LLM without retrieval
-      (on the pre-fix build it was silently replaced by the fallback). Prompt reset afterwards;
-      daemon left with all defaults.
+The fix landed in two steps. First, a `chat.SystemPromptFor` helper honoured a *customized*
+prompt without retrieval but kept the generic fallback for the uncustomized default. Validation
+showed that was still wrong — with prompts at their defaults and OpenSearch down, "Who are you?"
+answered as a generic LLM, while the prompts API displayed a default that never ran. The fallback
+is now deleted entirely.
+
+- [x] 9.1 Send the configured `chat_system_prompt` unconditionally at both call sites —
+      `handleChatStart` (daemon) and the direct CLI REPL in `chat/client.go`, which had the same
+      bug against the local prompts file. No helper, no hidden substitute prompt.
+- [x] 9.2 Amend the `rest-api-chat` delta: the system prompt is the stored value (customization or
+      built-in default) regardless of retrieval availability; scenarios for both.
+- [x] 9.3 Wire-level test on a retrieval-less daemon: the built-in default is the system message
+      when uncustomized; the customized prompt after a PUT.
+- [x] 9.4 End-to-end against the **real** inference backend (Bedrock `mistral-large-3`, retrieval
+      unavailable): a `chat_system_prompt` customized with a begin-with-`ZEBRA-42:` rule produced
+      `ZEBRA-42: …` on a fresh session (impossible unless the prompt reached the model); with the
+      default text sent, "Who are you?" answered with the Canonical-assistant persona. Prompts
+      reset afterwards; daemon left with all defaults.
+- [ ] 9.5 **Follow-up product decision (out of scope here):** with the RAG default prompt and no
+      retrieved context, the model can answer from parametric memory while *claiming*
+      `[CANONICAL]` context (observed live). Prefixing the turn with the existing "No relevant
+      context was retrieved" note (already used on the KB-active-but-zero-hits path) converts that
+      into an honest refusal (also verified live) — but applying it to every retrieval-less turn
+      changes deliberate no-KB chat too, so it needs a deliberate decision, not a drive-by.
 
 ## 8. Definition of done (UX) — from docs/ux/00-foundation.md + docs/ux/05-prompts.md
 

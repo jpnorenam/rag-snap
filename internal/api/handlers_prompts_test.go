@@ -274,12 +274,13 @@ func TestCustomChatPromptReachesInference(t *testing.T) {
 	}
 }
 
-// TestChatPromptWithoutRetrieval pins the fallback rule at the wire, on a
-// server with no embedding model configured (retrieval unavailable): the
-// uncustomized RAG-specific default is swapped for the generic assistant
-// prompt, but a *customized* prompt is honoured — user configuration is never
-// silently overridden (the bug behind the original "prompt ignored without
-// retrieval" behaviour).
+// TestChatPromptWithoutRetrieval pins the no-hidden-substitute rule at the
+// wire, on a server with no embedding model configured (retrieval
+// unavailable): the configured chat_system_prompt — the built-in default when
+// uncustomized, the customization otherwise — is sent as the system message
+// regardless of retrieval availability. The prompts API and the session must
+// never disagree about what runs (the bug behind the original "prompt ignored
+// without retrieval" behaviour).
 func TestChatPromptWithoutRetrieval(t *testing.T) {
 	systemPrompts := make(chan string, 4)
 	inference := capturingInference(t, systemPrompts)
@@ -310,8 +311,9 @@ func TestChatPromptWithoutRetrieval(t *testing.T) {
 		}
 	}
 
-	// Uncustomized: the RAG-specific default gives way to the generic prompt.
-	askOnce("default", "You are a helpful assistant.")
+	// Uncustomized: the built-in default runs — exactly the text the prompts
+	// API displays as the default, no generic stand-in.
+	askOnce("default", chat.DefaultPrompts().ChatSystemPrompt)
 
 	// Customized: the user's prompt runs even though retrieval is unavailable.
 	const custom = "You are a laconic assistant. Answer in one sentence."

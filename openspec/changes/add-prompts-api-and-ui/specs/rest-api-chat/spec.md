@@ -17,11 +17,10 @@ with a custom manifest prompt, not chat — chat's grounding rules live inside
 changes to stored prompts SHALL apply to sessions started afterwards and SHALL NOT alter a
 session already in progress.
 
-A **customized** `chat_system_prompt` SHALL be honoured whether or not retrieval is available —
-user configuration is never silently overridden. When retrieval is unavailable and the prompt is
-**not** customized, the session SHALL fall back to a generic assistant prompt instead of the
-built-in default, because the default is written for RAG (it instructs the model to answer only
-from retrieved context, which would make it refuse every question).
+The configured `chat_system_prompt` — the customization when one is stored, the built-in default
+otherwise — SHALL be sent as the session's system prompt whether or not retrieval is available.
+The daemon SHALL NOT substitute any other prompt: what the prompts API reports as the effective
+value is exactly what a new session runs on.
 
 #### Scenario: Grounded answer over the API
 
@@ -45,12 +44,12 @@ from retrieved context, which would make it refuse every question).
   retrieval is unavailable
 - **THEN** the session's system prompt is the customized template
 
-#### Scenario: Uncustomized default falls back without retrieval
+#### Scenario: Default prompt sent without retrieval
 
 - **WHEN** the `chat_system_prompt` is not customized and a client starts a chat session while
   retrieval is unavailable
-- **THEN** the session's system prompt is a generic assistant prompt rather than the RAG-specific
-  built-in default
+- **THEN** the session's system prompt is the built-in default — the same text the prompts API
+  reports — with no substitute prompt swapped in
 
 #### Scenario: Mid-session prompt edits do not affect the running session
 

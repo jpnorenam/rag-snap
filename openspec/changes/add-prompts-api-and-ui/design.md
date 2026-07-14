@@ -118,15 +118,21 @@ and `source_rules` is appended *only* when the manifest carries a custom `prompt
 chat would be a behavior change beyond this change's remit and would diverge from the CLI REPL.
 
 **Amendment (in-snap validation finding):** both chat paths carried a guard that replaced the
-system prompt with `"You are a helpful assistant."` whenever retrieval was unavailable — which
-silently discarded a *customized* prompt and falsified the UI's "new chats will use it" promise on
-retrieval-less machines. The guard's only legitimate job is protecting the *built-in default*,
-which is RAG-specific (it instructs the model to answer solely from retrieved context) and would
-otherwise make the model refuse everything. The rule is now: a customized prompt is always
-honoured; only the uncustomized default falls back. It lives in one helper,
-`chat.SystemPromptFor`, used by both the daemon handler and the direct REPL. Customization is
-detected by comparing against the default — sound because the daemon store clears overrides equal
-to the default (D2) and the local-file loader fills unset fields from the defaults.
+system prompt with `"You are a helpful assistant."` whenever retrieval was unavailable — silently
+discarding a *customized* prompt, and (as validation against the real backend showed) also lying
+by omission in the default case: the prompts API displayed one default while sessions ran a hidden
+substitute. The rule is now the simplest one: **the configured `chat_system_prompt` is sent
+unconditionally** — customization or built-in default, with or without retrieval. No helper, no
+hidden prompt; the guard is deleted at both call sites (daemon handler and direct REPL).
+
+Live evidence against Bedrock `mistral-large-3` with retrieval unavailable informed this: the
+default RAG prompt without retrieval answers "Who are you?" with the intended persona and refuses
+ungroundable trivia, but for on-topic questions it can answer from parametric memory while
+*claiming* `[CANONICAL]` context — fabricated provenance. Prefixing the turn with the existing
+"No relevant context was retrieved" note (already injected on the KB-active-but-zero-hits path)
+converts that into an honest refusal. Extending that note to every retrieval-less turn also
+changes the shape of deliberate no-KB chat, so it is recorded as a **follow-up product decision**,
+not smuggled into this change.
 
 *Why not re-resolve per turn:* it would make the UI's post-save message ("new chats and batch
 runs will use it") wrong, create mid-conversation behavior shifts the user didn't ask for, and

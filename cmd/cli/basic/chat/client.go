@@ -112,9 +112,10 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 	//rl.CaptureExitSignal() // Should readline capture and handle the exit signal? - Can be used to interrupt the chat response stream.
 	log.SetOutput(rl.Stderr())
 
-	// A customized prompt is honoured even without retrieval; only the
-	// RAG-specific built-in default falls back to a generic assistant prompt.
-	initialSystemPrompt := SystemPromptFor(prompts, knowledgeClient != nil)
+	// The configured prompt is sent unconditionally — retrieval availability
+	// never swaps in a hidden substitute, so what `prompt init` shows is what
+	// runs.
+	initialSystemPrompt := prompts.ChatSystemPrompt
 
 	params := openai.ChatCompletionNewParams{
 		Messages: []openai.ChatCompletionMessageParamUnion{
