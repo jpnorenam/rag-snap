@@ -39,6 +39,7 @@ ui/node_modules/
 ui/.next/
 ui/out/
 ui/next-env.d.ts
+ui/tsconfig.tsbuildinfo
 
 # UX planning docs are working notes, not shipped documentation — keep them
 # local (mirrors the PLAN.md convention).
