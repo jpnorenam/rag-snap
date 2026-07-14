@@ -1,5 +1,5 @@
 import { ROOT_PATH } from "./rootPath";
-import { authHeaders } from "./token";
+import { authHeaders, captureTokenFromUrl } from "./token";
 
 // The daemon's uniform response envelope (LXD-style): every JSON response is a
 // "sync", "async", or "error" object. This is the browser analogue of lxd-ui's
@@ -39,6 +39,10 @@ async function request<T>(
   path: string,
   body?: unknown
 ): Promise<ApiEnvelope<T>> {
+  // Idempotent, and a no-op on the usual cookie path. It guarantees a fragment
+  // token is picked up even when a caller fires before AppShell's mount-time
+  // capture: child effects (OperationsProvider's seed) run before the parent's.
+  captureTokenFromUrl();
   const headers: Record<string, string> = { ...authHeaders() };
   if (body !== undefined) headers["Content-Type"] = "application/json";
 

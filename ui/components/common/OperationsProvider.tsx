@@ -16,6 +16,12 @@ const BACKOFF_MIN_MS = 1000;
 const BACKOFF_MAX_MS = 30000;
 const POLL_INTERVAL_MS = 4000;
 
+// How often to sweep for running operations that have gone quiet, and how long
+// silence must last before one is considered stale. Both are generous: the
+// sweep is a safety net behind the events socket, not a second polling loop.
+const SWEEP_INTERVAL_MS = 5000;
+const STALE_AFTER_MS = 20000;
+
 // byCreatedDesc orders operations newest first (created_at is an RFC3339 string,
 // so lexical compare matches chronological order).
 function byCreatedDesc(a: OperationView, b: OperationView): number {
@@ -136,6 +142,29 @@ export default function OperationsProvider({ children }: { children: React.React
       wsRef.current = null;
     };
   }, [seed, connect, stopPolling]);
+
+  // Safety net for the healthy-socket case. The daemon's events hub is
+  // best-effort: it drops an event for any subscriber whose buffer is full
+  // rather than blocking the publisher, so a terminal event can be lost while
+  // the socket is perfectly fine — leaving a row stuck on "running" forever.
+  // Re-fetch any running operation that has gone quiet; the polling fallback
+  // already covers the socket-down case.
+  useEffect(() => {
+    const timer = setInterval(() => {
+      if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+      const now = Date.now();
+      opsRef.current
+        .filter((op) => !isTerminal(op) && now - new Date(op.updated_at).getTime() > STALE_AFTER_MS)
+        .forEach((op) => {
+          getOperation(op.id)
+            .then((fresh) => mountedRef.current && upsert(fresh))
+            .catch(() => {
+              // Silent, as everywhere else in the tracker.
+            });
+        });
+    }, SWEEP_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [upsert]);
 
   const track = useCallback((op: OperationView) => upsert(op), [upsert]);
 

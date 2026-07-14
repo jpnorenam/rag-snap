@@ -105,6 +105,11 @@ interface OperationsContextValue {
 - **Fallback:** while the socket is down and any tracked operation is running, poll
   `GET /1.0/operations/{id}` every few seconds. Degradation is silent — no error banner (UX doc
   §States).
+- **Stale sweep:** the daemon's events hub is *best-effort* — it drops an event for any subscriber
+  whose buffer is full rather than blocking the publisher (`internal/api/events.go`), so a terminal
+  event can be lost even while the socket is healthy, stranding a row on "running" forever. Every
+  few seconds, re-fetch any running operation whose `updated_at` has gone quiet past a threshold.
+  This is a safety net behind the socket, not a second polling loop.
 - **Status mapping** uses `status_code` (running / succeeded / failed / cancelled distinguishable
   by code), never the status text, per `rest-api-operations`.
 
@@ -162,11 +167,18 @@ import rather than re-invent them.
   before merging.
 - **[Events socket message loss]** Best-effort delivery (slow subscribers drop events) or a
   reconnect gap can miss a terminal transition. → Re-fetch `GET /1.0/operations` on every
-  (re)connect and poll tracked running ops while disconnected; the daemon list is the source of
-  truth, events are only a change signal.
+  (re)connect, poll tracked running ops while disconnected, and sweep running ops that have gone
+  quiet even while the socket is up (a drop on a *healthy* socket is otherwise invisible and
+  strands the row on "running"). The daemon list is the source of truth; events are only a change
+  signal.
 - **[Cookie-only ws auth]** If the UI was opened without the `/ui/login` cookie handoff (fragment
   token only), the events upgrade is refused. → Same failure mode as chat today; the indicator
   degrades to polling (which carries the Authorization header) — no user-facing error.
+- **[Fragment token vs. effect order]** `AppShell` captures a `#token=…` fragment on mount, but
+  React runs child effects *before* the parent's, so `OperationsProvider`'s seed fetch would go out
+  before the token was stored — silently unauthenticated on the fragment path. → `request()` in
+  `envelope.ts` calls `captureTokenFromUrl()` itself; it is idempotent and a no-op on the usual
+  cookie path, so no caller can lose that race.
 - **[Static-export active-state edge]** `usePathname()` values include `basePath` and trailing
   slashes inconsistently across dev/export. → Normalize both sides before comparing; verify in
   the exported build, not just `next dev`.
