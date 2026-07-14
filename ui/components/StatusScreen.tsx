@@ -123,6 +123,9 @@ export default function StatusScreen() {
     void loadConfig();
   }, [loadStatus, loadConfig]);
 
+  // onSave writes one config key to the user layer — the same override the CLI's
+  // `rag-cli.rag set <key>=<value>` writes. The daemon rejects keys that do not
+  // already exist, so a bad key throws and the draft is kept.
   const onSave = async (key: string, value: string) => {
     setSaving(key);
     setNotice(null);
@@ -241,6 +244,25 @@ export default function StatusScreen() {
           <h2 id="status-config" className="status__zone-title">
             Configuration
           </h2>
+
+          {/* A worked example of updating a key, so the edit controls below are
+              not the only place the mechanic is spelled out. Editing a row writes
+              the same user-layer override as the CLI command shown here. */}
+          <div className="status__config-example">
+            <p>
+              Edit a value with the pencil on its row, or set it from the CLI. For example, to
+              switch the model new chats generate answers with:
+            </p>
+            <div className="p-code-snippet u-no-margin--bottom">
+              <pre className="p-code-snippet__block">
+                <code>sudo rag-cli.rag set chat.model=google.gemma-3-12b-it</code>
+              </pre>
+            </div>
+            <p className="p-text--small u-text--muted">
+              Only existing keys can be overridden — new keys are rejected. A saved value lands on
+              the <code>user</code> layer and can be reverted to the packaged value.
+            </p>
+          </div>
 
           {notice && (
             <div

@@ -747,6 +747,19 @@ $sidebar-accent: #e95420; // Ubuntu orange
   word-break: break-all;
 }
 
+// A worked example of setting a key, sitting above the editable table.
+.status__config-example {
+  margin-bottom: 1.5rem;
+
+  p {
+    margin-bottom: 0.5rem;
+  }
+
+  .p-code-snippet {
+    max-width: 32rem;
+  }
+}
+
 .status__filter {
   max-width: 24rem;
   margin-bottom: 1rem;
