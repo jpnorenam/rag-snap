@@ -62,11 +62,11 @@ from the chips at the top of the page to ground answers in your documents.
 ## Navigating the UI
 
 The UI is a multi-page application with a persistent dark navigation rail on the left. The
-rail lists the app's sections; **Chat** is the only one shipped today, and the remaining
-entries (Knowledge bases, Search, Answer RFPs, Prompts, Status) show a **Soon** badge until
-their features land. The active section is marked with an orange left-border indicator, and the
-browser tab title tracks the section you are on. On narrow windows the rail collapses to an
-icon-only strip; hover a icon for its label.
+rail lists the app's sections; **Chat** and **Prompts** are shipped today, and the remaining
+entries (Knowledge bases, Search, Answer RFPs, Status) show a **Soon** badge until their features
+land. The active section is marked with an orange left-border indicator, and the browser tab title
+tracks the section you are on. On narrow windows the rail collapses to an icon-only strip; hover a
+icon for its label.
 
 ### Background operations
 
@@ -93,6 +93,27 @@ running operation**. Live updates arrive over the `GET /1.0/events` websocket; i
 unavailable the indicator silently falls back to polling, so it keeps working with no error
 banner as long as the REST API is reachable. This mirrors the CLI, where the same operations are
 driven from commands like `rag-cli.rag k ingest …`.
+
+### Prompts
+
+The **Prompts** page is the browser equivalent of `rag-cli.rag prompt init`. It shows the three
+templates that drive generation — the **chat system prompt**, the **answer system prompt** (batch
+answering), and the **source rules** (the grounding block appended to a batch manifest's custom
+prompt) — each as a card marked **Default** or **Customized**.
+
+- **Edit** expands a card into a monospace editor pre-filled with the prompt in effect. While
+  editing, *View default prompt* shows the built-in default read-only, so you can compare against
+  it (or copy from it) without leaving the editor. **Save** stays disabled until you actually
+  change something.
+- **Reset to default** appears only on a customized prompt and asks for confirmation before
+  replacing your text with the built-in default.
+- Only one card is open at a time, and unsaved edits are protected: switching cards, navigating
+  away, or reloading the page asks before discarding them. A failed save keeps your text.
+
+Prompts are held by the **daemon**, so what you save here is exactly what `rag-cli.rag chat`,
+`answer batch`, and the REST API use. The daemon resolves prompts when a chat session or batch run
+*starts*, which is why the confirmation reads "New chats and batch runs will use it" — work
+already in flight keeps the prompts it began with.
 
 ---
 

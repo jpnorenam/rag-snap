@@ -1287,19 +1287,38 @@ rag-cli.rag answer batch --build ~/rfp/ericsson.pdf --preview
 
 ## Prompt
 
-The `prompt` command (alias `p`) manages the system prompts used by the RAG pipeline. Customised prompts are saved to `~/.config/rag-cli/prompts.json` and override the built-in defaults at runtime — no rebuild or reinstall is needed.
+The `prompt` command (alias `p`) manages the system prompts used by the RAG pipeline. Customised prompts override the built-in defaults at runtime — no rebuild or reinstall is needed.
+
+### Where prompts are stored
+
+Prompts live in one of two places, depending on whether the `ragd` daemon is running:
+
+| | Stored in | Read by |
+|---|---|---|
+| **Daemon running** (the usual case) | the daemon, at `$SNAP_COMMON/ragd/prompts.json` | `chat`, `answer batch`, the [web UI](local-ui.md), and the [REST API](rest-api.md) |
+| **No daemon** (direct CLI runs) | `~/.config/rag-cli/prompts.json` | direct (daemonless) CLI runs only |
+
+`prompt init` writes to whichever applies, and `chat` / `answer batch` prefer the daemon whenever
+it is running — so with `ragd` active, the **daemon store is the one that matters**. A prompt
+saved there is shared with the web UI and applies to every client.
+
+> **Migrating from a CLI-local file:** the daemon runs as a service with its own home directory,
+> so it cannot read `~/.config/rag-cli/prompts.json`. If you customised prompts before the daemon
+> existed, `prompt init` notices and offers — once, and only with your confirmation — to re-save
+> them to the daemon. Nothing is copied silently, and the local file is left in place for
+> daemonless runs.
 
 ### Sub-commands at a glance
 
 | Command | Description |
 |---|---|
-| `prompt init` | Interactively select and edit a system prompt |
+| `prompt init` | Interactively select and edit (or reset) a system prompt |
 
 ---
 
 ### `prompt init`
 
-Opens an interactive terminal editor pre-populated with the current value of the selected prompt (custom or built-in default). Submitting writes the updated prompt to `~/.config/rag-cli/prompts.json`.
+Opens an interactive terminal editor pre-populated with the current value of the selected prompt (custom or built-in default). A prompt that is already customised can also be **reset to its built-in default** from the same flow.
 
 ```
 rag-cli.rag prompt init
@@ -1319,8 +1338,8 @@ Three prompts are configurable:
 $ rag-cli.rag prompt init
 
   Which prompt do you want to configure?
-  > answer_system_prompt — system instruction for batch Q&A mode (answer batch)
-    chat_system_prompt   — system instruction for the interactive chat REPL (chat)
+  > chat_system_prompt   — system instruction for the interactive chat REPL (chat)
+    answer_system_prompt — system instruction for batch Q&A mode (answer batch)
     source_rules         — grounding constraints appended to custom batch prompts (answer batch)
 
   Edit: answer_system_prompt
@@ -1330,16 +1349,25 @@ $ rag-cli.rag prompt init
   │ (edit the text above, then press Alt+Enter or Ctrl+J to save)               │
   └──────────────────────────────────────────────────────────────────────────────┘
 
-answer_system_prompt updated and saved to ~/.config/rag-cli/prompts.json
+answer_system_prompt saved to the daemon. New chats and batch runs will use it.
 ```
+
+A prompt that is already customised is marked `[customized]` in the list, and selecting it offers
+to edit it or reset it to the built-in default.
+
+> **When a saved prompt takes effect:** the daemon resolves prompts when a chat session or batch
+> run *starts*. Saving a prompt applies to the next session or run — work already in flight keeps
+> the prompts it began with.
 
 > **Note on source rules:** When a batch manifest includes a top-level `prompt:` field, the
 > `source_rules` prompt is automatically appended to it. This ensures that even fully custom
 > prompts respect the `[CANONICAL]`/`[UPSTREAM]` prioritisation logic. Edit `source_rules` only
 > if you need to adjust the grounding constraints themselves, not just the tone or format.
 
-> **Note on defaults:** Deleting `~/.config/rag-cli/prompts.json` restores all built-in defaults.
-> You can also reset a single prompt by editing it back to the original text via `prompt init`.
+> **Note on defaults:** Only your customisations are stored — a prompt you never edited always
+> tracks the built-in default of the installed release. Reset a prompt from `prompt init` (or from
+> the web UI's Prompts page); daemonless setups can also delete `~/.config/rag-cli/prompts.json`
+> to restore every default at once.
 
 ---
 

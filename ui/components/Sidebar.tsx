@@ -28,7 +28,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "knowledge", label: "Knowledge bases", icon: "knowledge", href: "/knowledge/" },
   { id: "search", label: "Search", icon: "search", href: "/search/" },
   { id: "answer", label: "Answer RFPs", icon: "rfp", href: "/answer/" },
-  { id: "prompts", label: "Prompts", icon: "prompt", href: "/prompts/" },
+  { id: "prompts", label: "Prompts", icon: "prompt", href: "/prompts/", enabled: true },
 ];
 
 // Status is a utility entry pinned to the bottom of the rail (above the toggle).
