@@ -109,9 +109,11 @@ function NavEntry({ item, current }: { item: NavItem; current: string }) {
   if (!item.enabled) {
     return (
       <span
-        className="app-sidebar__item app-sidebar__item--soon"
+        className={["app-sidebar__item", "app-sidebar__item--soon"].join(" ")}
         aria-disabled="true"
-        title="Coming soon"
+        // Names the section: in the collapsed 620px rail the label is hidden and
+        // the tooltip is all the user has to go on.
+        title={`${item.label} — coming soon`}
       >
         <NavIcon name={item.icon} />
         <span className="app-sidebar__label">{item.label}</span>
@@ -121,10 +123,11 @@ function NavEntry({ item, current }: { item: NavItem; current: string }) {
   }
 
   const active = normalizePath(item.href) === current;
+  const classes = ["app-sidebar__item", active ? "is-active" : ""].filter(Boolean).join(" ");
   return (
     <Link
       href={item.href}
-      className={`app-sidebar__item${active ? " is-active" : ""}`}
+      className={classes}
       aria-current={active ? "page" : undefined}
       title={item.label}
     >

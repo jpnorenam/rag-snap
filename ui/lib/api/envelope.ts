@@ -25,6 +25,23 @@ export class ApiError extends Error {
   }
 }
 
+// DAEMON_UNREACHABLE is the standard copy for a dead daemon (foundation §7).
+// `ApiError.code === 0` means the request never reached ragd, so the raw
+// transport message ("network error contacting the API: TypeError…") tells the
+// user nothing actionable — this says what happened and what to do next.
+export const DAEMON_UNREACHABLE =
+  "Cannot reach the RAG daemon. Check that the service is running (`snap services rag-cli`).";
+
+// errorMessage turns any thrown value into the sentence to show the user: the
+// standard connection error when the daemon is unreachable, the daemon's own
+// message otherwise. Every screen should render errors through this.
+export function errorMessage(e: unknown): string {
+  if (e instanceof ApiError) {
+    return e.code === 0 ? DAEMON_UNREACHABLE : e.message;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
 // apiUrl builds an absolute-from-origin API path: `${ROOT_PATH}/1.0/...`.
 export function apiUrl(path: string): string {
   const suffix = path.startsWith("/") ? path : `/${path}`;

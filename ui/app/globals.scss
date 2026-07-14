@@ -363,10 +363,15 @@ $sidebar-accent: #e95420; // Ubuntu orange
 
 .app-empty__guidance {
   max-width: 28rem;
+}
 
-  code {
-    white-space: nowrap;
-  }
+// The CLI-equivalent command: full width of the empty state, left-aligned so the
+// command reads as a command rather than as prose.
+.app-empty__command {
+  width: 100%;
+  max-width: 28rem;
+  margin: 0.5rem 0 0;
+  text-align: left;
 }
 
 .app-empty__action {
@@ -420,7 +425,8 @@ $sidebar-accent: #e95420; // Ubuntu orange
   background-color: var(--vf-color-background-alt);
   border: 1px solid var(--vf-color-border-default);
   border-radius: 0.25rem;
-  box-shadow: 0 0.5rem 1.25rem rgba(0, 0, 0, 0.2);
+  // Vanilla's own elevation, so the card lifts correctly in both themes.
+  box-shadow: vanilla-framework.$box-shadow;
 }
 
 .app-ops-panel__list {

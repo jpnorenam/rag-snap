@@ -106,7 +106,11 @@ export default function OperationsIndicator() {
         className="app-ops__toggle p-button--base u-no-margin--bottom"
         aria-expanded={open}
         aria-controls={panelId}
-        aria-label={running > 0 ? `${running} operations running` : "Operations"}
+        aria-label={
+          running > 0
+            ? `${running} ${running === 1 ? "operation" : "operations"} running`
+            : "Operations"
+        }
         onClick={() => (open ? close() : setOpen(true))}
       >
         <i
@@ -138,12 +142,8 @@ export default function OperationsIndicator() {
               <li className="app-ops-panel__empty">
                 <EmptyState
                   headline="No operations yet"
-                  guidance={
-                    <>
-                      Background work — ingest, batch answer, export — appears here. Or run a
-                      command such as <code>rag-cli.rag k ingest …</code>.
-                    </>
-                  }
+                  guidance="Background work — ingest, batch answer, export — appears here as it runs. The CLI does the same work:"
+                  command="rag-cli.rag k ingest <name> <source-id> --file <path>"
                 />
               </li>
             )}

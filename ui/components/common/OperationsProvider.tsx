@@ -61,17 +61,28 @@ export default function OperationsProvider({ children }: { children: React.React
     });
   }, []);
 
-  // seed (re)loads the authoritative list; upserts so a just-tracked op is not
-  // dropped by a race. Silent on failure — the screen owns connection errors.
+  // seed (re)loads the authoritative list so a reload — or a reconnect gap —
+  // does not lose work that is still running. The daemon never reaps its
+  // operations registry, so the list also carries every operation completed
+  // since ragd started: adopting those would light the indicator and fill the
+  // panel with history the user never started. Only running operations are
+  // adopted; already-known ids are still refreshed, so a row that reached a
+  // terminal state while we were disconnected gets its final view.
+  // Silent on failure — the screen owns connection errors.
   const seed = useCallback(async () => {
     try {
       const ops = await listOperations();
       if (!mountedRef.current) return;
-      if (ops.length) setSeen(true);
+      const adoptable = (op: OperationView) =>
+        !dismissedRef.current.has(op.id) && !isTerminal(op);
+      if (ops.some(adoptable)) setSeen(true);
       setOperations((prev) => {
         const known = new Map(prev.map((o) => [o.id, o]));
         for (const op of ops) {
-          if (!dismissedRef.current.has(op.id)) known.set(op.id, op);
+          if (dismissedRef.current.has(op.id)) continue;
+          // Adopt running work; refresh rows we already track (they may have
+          // finished while we were away). Never import unrelated history.
+          if (known.has(op.id) || !isTerminal(op)) known.set(op.id, op);
         }
         return Array.from(known.values()).sort(byCreatedDesc);
       });

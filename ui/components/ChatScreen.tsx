@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Header from "@/components/Header";
-import { ApiError } from "@/lib/api/envelope";
+import { ApiError, errorMessage } from "@/lib/api/envelope";
 import { startChat, ChatConnection, type ChatFrame } from "@/lib/api/chat";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
 
@@ -36,8 +36,9 @@ export default function ChatScreen() {
     listKnowledge()
       .then(setBases)
       .catch((e) => {
-        // A missing knowledge backend is not fatal to chat; surface softly.
-        if (e instanceof ApiError && e.code === 0) setError(e.message);
+        // A missing knowledge backend is not fatal to chat; surface softly. An
+        // unreachable daemon is, so it gets the standard connection error.
+        if (e instanceof ApiError && e.code === 0) setError(errorMessage(e));
       });
   }, []);
 
@@ -138,7 +139,7 @@ export default function ChatScreen() {
       conn.prompt(text);
     } catch (e) {
       awaitingDone.current = false;
-      setError(e instanceof Error ? e.message : String(e));
+      setError(errorMessage(e));
       setMessages((prev) => {
         const next = [...prev];
         const last = next[next.length - 1];

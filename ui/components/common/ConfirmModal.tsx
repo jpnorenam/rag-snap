@@ -111,7 +111,7 @@ export default function ConfirmModal({
           </h2>
         </header>
 
-        <div className="p-modal__body">{children}</div>
+        {children}
 
         {confirmPhrase !== undefined && (
           <div className="p-form p-form--stacked">
