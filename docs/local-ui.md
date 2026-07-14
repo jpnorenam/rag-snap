@@ -22,11 +22,7 @@ Remote/HTTPS exposure is intentionally **not** part of this surface: the listene
 
 For the full path from a fresh install to a working UI — installing the snap, configuring
 backends, secrets, and enabling the loopback listener — see
-**[INSTALL.md](../INSTALL.md#enable-the-browser-ui)**. That doc also covers a known limitation
-where `ragd` cannot be given non-default OpenSearch credentials the way it can for
-`CHAT_API_KEY`; see
-[INSTALL.md's callout](../INSTALL.md#known-limitation-ragdthe-ui-and-non-default-opensearch-credentials)
-if a knowledge base fails to load in the UI.
+**[INSTALL.md](../INSTALL.md#enable-the-browser-ui)**.
 
 Once configured, opening the UI is just:
 
@@ -146,43 +142,38 @@ the UI is served by the **`ragd` systemd service**, which has its own environmen
 `Authorization` header and the backend replies `401 Unauthorized` (e.g. Bedrock:
 `"Authorization header is missing"`).
 
-Give the key to the daemon with a **root-only systemd drop-in** (the snap's auto-generated
-unit is regenerated on every restart and must not be edited directly). The same recipe is in
-[the REST API guide](rest-api.md):
+Give the daemon its secrets — the chat key, and your real OpenSearch credentials if your
+cluster doesn't use the `admin`/`admin` default — with a **root-only systemd drop-in** (the
+snap's auto-generated unit is regenerated on every restart and must not be edited directly).
+The same recipe is in [the REST API guide](rest-api.md):
 
 ```bash
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$YOUR_KEY" | \
-  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf >/dev/null
-sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
+printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\n' \
+  "$YOUR_CHAT_KEY" "$YOUR_OPENSEARCH_USER" "$YOUR_OPENSEARCH_PASSWORD" | \
+  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf >/dev/null
+sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
 sudo systemctl daemon-reload
 sudo snap restart rag-cli.ragd
 ```
 
-The drop-in is `root:root 0600`, so the secret is never world-readable and never passes
+The drop-in is `root:root 0600`, so the secrets are never world-readable and never pass
 through the `snapctl` config store or the `GET /1.0` config summary.
 
-Confirm the running daemon actually has the key (checks the live process, not just the unit):
+Confirm the running daemon actually has them (checks the live process, not just the unit):
 
 ```bash
-sudo tr '\0' '\n' < /proc/$(pgrep -x ragd)/environ | grep CHAT_API_KEY
+sudo tr '\0' '\n' < /proc/$(pgrep -x ragd)/environ | grep -E 'CHAT_API_KEY|OPENSEARCH_USERNAME|OPENSEARCH_PASSWORD'
 ```
 
 The drop-in directory survives `snap restart` and `snap install --dangerous` of the same
 build. A full `snap remove` clears it, so re-apply the drop-in after a clean reinstall.
 
-> **Note:** the snap deliberately does **not** declare `CHAT_API_KEY` in its own metadata.
-> Declaring it (even as an empty string) would make snapd apply that value over whatever the
-> systemd unit provides, so the drop-in could never take effect.
-
-> **Known limitation:** `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD` are declared in
-> `snap/snapcraft.yaml`'s `ragd` app metadata (hardcoded to `admin`/`admin`), so — unlike
-> `CHAT_API_KEY` — they **cannot** be overridden with a drop-in the same way; snapd applies the
-> hardcoded value after systemd and silently wins. If your OpenSearch cluster doesn't use the
-> `admin`/`admin` default, knowledge-base features in the UI (search, ingest) will fail with an
-> `opensearch not available` error even though the CLI works fine against the same cluster (the
-> CLI reads your shell's environment directly). See
-> [INSTALL.md](../INSTALL.md#known-limitation-ragdthe-ui-and-non-default-opensearch-credentials).
+> **Note:** the snap deliberately declares no `environment:` values for `CHAT_API_KEY`,
+> `OPENSEARCH_USERNAME`, or `OPENSEARCH_PASSWORD` in its own metadata. Hardcoding any of them
+> (even as an empty string) would make snapd apply that value over whatever the systemd unit
+> provides, so the drop-in could never take effect — this is what lets a non-default OpenSearch
+> username/password work the same way as the chat key.
 
 ---
 
@@ -257,6 +248,6 @@ daemon. Rebuild the snap so the embedded UI matches (`make ui` then `snapcraft`)
 restart the daemon, and hard-reload the browser (Ctrl+Shift+R) to bypass the cached bundle.
 
 **A knowledge base fails to load, or search/ingest errors with `opensearch not available`, even
-though the CLI works fine against the same cluster.** You're hitting the known
-`ragd`/OpenSearch-credentials limitation — see the callout above under
-[Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key).
+though the CLI works fine against the same cluster.** The daemon doesn't have your OpenSearch
+credentials. Give it `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD` the same way as `CHAT_API_KEY` —
+see [Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key).

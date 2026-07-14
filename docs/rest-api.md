@@ -64,28 +64,25 @@ the **daemon's** service environment, not on each CLI invocation and never in `s
 config. The daemon reads the rest of its configuration (`chat.*`, `knowledge.*`, `tika.*`,
 `api.socket.*`) from `snapctl` at startup.
 
-To give the daemon an inference API key (e.g. for OpenRouter or AWS Bedrock), inject it via a
-root-only systemd drop-in, then restart the daemon:
+To give the daemon an inference API key (e.g. for OpenRouter or AWS Bedrock) and/or your real
+OpenSearch credentials, inject them via a root-only systemd drop-in, then restart the daemon:
 
 ```bash
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$YOUR_KEY" | \
-  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf >/dev/null
-sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
+printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\n' \
+  "$YOUR_CHAT_KEY" "$YOUR_OPENSEARCH_USER" "$YOUR_OPENSEARCH_PASSWORD" | \
+  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf >/dev/null
+sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
 sudo systemctl daemon-reload
 sudo snap restart rag-cli.ragd
 ```
 
-The drop-in file is `root:root 0600`, so the secret is never world-readable and never passes
-through the `snapctl` config store or the `GET /1.0` config summary.
-
-> **Known limitation:** unlike `CHAT_API_KEY`, `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD`
-> currently **cannot** be overridden for the daemon via a drop-in the same way —
-> `snap/snapcraft.yaml`'s `ragd` app hardcodes both to `admin`/`admin`, and snapd applies that
-> environment after systemd, silently overriding any drop-in. The daemon (and therefore the UI
-> and this REST API) can only reach OpenSearch clusters whose admin password is literally
-> `admin`; the CLI is unaffected since it reads your shell's environment directly. See
-> [INSTALL.md](../INSTALL.md#known-limitation-ragdthe-ui-and-non-default-opensearch-credentials).
+The drop-in file is `root:root 0600`, so the secrets are never world-readable and never pass
+through the `snapctl` config store or the `GET /1.0` config summary. `ragd`'s app definition
+declares no hardcoded `environment:` values for any of these three keys — a hardcoded value
+would be reapplied by `snap run` after systemd and silently override the drop-in, so leaving
+them undeclared is what lets this recipe work for a non-default OpenSearch username/password
+too, not just the chat key.
 
 > **Applying config changes:** the daemon snapshots config at startup. After changing config
 > with `rag set ...`, reload the daemon to pick up the new values — either `sudo snap restart

@@ -8,7 +8,6 @@ browser UI.
 - [Install the snap](#install-the-snap)
 - [Configure the backends](#configure-the-backends)
 - [Secrets](#secrets)
-- [Known limitation: `ragd`/the UI and non-default OpenSearch credentials](#known-limitation-ragdthe-ui-and-non-default-opensearch-credentials)
 - [Initialize pipelines and models](#initialize-pipelines-and-models)
 - [Verify: create a knowledge base and chat](#verify-create-a-knowledge-base-and-chat)
 - [Enable the browser UI](#enable-the-browser-ui)
@@ -163,46 +162,31 @@ The CLI inherits these directly from your shell, so this is enough for every `ra
 command.
 
 **For the browser UI / REST API**, the daemon (`ragd`) runs as a separate systemd service with
-its own environment — your shell's `export` is invisible to it. Give it the chat key with a
+its own environment — your shell's `export` is invisible to it. Give it all three secrets with a
 root-only systemd drop-in (the auto-generated unit is regenerated on every restart, so don't edit
 it directly):
 
 ```bash
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$YOUR_KEY" | \
-  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf >/dev/null
-sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
+printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\n' \
+  "$YOUR_CHAT_KEY" "$YOUR_OPENSEARCH_USER" "$YOUR_OPENSEARCH_PASSWORD" | \
+  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf >/dev/null
+sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
 sudo systemctl daemon-reload
 sudo snap restart rag-cli.ragd
 ```
 
-Confirm the running daemon actually has the key:
+Confirm the running daemon actually has the keys:
 
 ```bash
-sudo sh -c "tr '\0' '\n' < /proc/\$(pgrep -x ragd)/environ" | grep -c '^CHAT_API_KEY='
-# should print 1
+sudo sh -c "tr '\0' '\n' < /proc/\$(pgrep -x ragd)/environ" | grep -cE '^(CHAT_API_KEY|OPENSEARCH_USERNAME|OPENSEARCH_PASSWORD)='
+# should print 3
 ```
 
-## Known limitation: `ragd`/the UI and non-default OpenSearch credentials
-
-Unlike `CHAT_API_KEY`, **`OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD` cannot currently be
-overridden for `ragd`** via a systemd drop-in — `snap/snapcraft.yaml` hardcodes both to
-`admin`/`admin` on the `ragd` app, and snap applies that environment *after* systemd, silently
-overriding any drop-in you set.
-
-In practice this means:
-- The **CLI** (`rag-cli.rag chat`, `k create`, `k ingest`, `knowledge init`, ...) works against
-  any OpenSearch credentials, since it reads your shell's environment directly.
-- The **browser UI / REST API** (served by `ragd`) always authenticates to OpenSearch as
-  `admin`/`admin`. Plain chat with no knowledge base selected is unaffected (it only needs the
-  chat backend). Anything that touches OpenSearch through the daemon — selecting/searching a
-  knowledge base in the UI, `POST /1.0/search`, ingest via the REST API — will fail with an
-  `opensearch not available` error unless your cluster's actual `admin` password is literally
-  `admin`.
-
-If you need the UI's knowledge-base features against a cluster with a custom password, this
-requires a packaging fix (removing the hardcoded environment values from `snap/snapcraft.yaml`'s
-`ragd` app) — not done here; track it as a follow-up if you hit this.
+> `ragd`'s app definition in `snap/snapcraft.yaml` declares no hardcoded `environment:` values
+> for these — a hardcoded value there would be reapplied by `snap run` *after* systemd and
+> silently override anything set via a drop-in. Because none are hardcoded, all three secrets
+> above take effect the same way, including a non-default OpenSearch username/password.
 
 ---
 
@@ -246,7 +230,8 @@ sudo snap start --enable rag-cli.ragd
 
 (If you already started `ragd` before enabling the listener, restart it instead:
 `sudo snap restart rag-cli.ragd`.) Make sure you've completed [Secrets](#secrets) above so the
-daemon has `CHAT_API_KEY` — otherwise chat requests will fail with `401 Unauthorized`.
+daemon has `CHAT_API_KEY` and your real OpenSearch credentials — otherwise chat requests fail
+with `401 Unauthorized`, and knowledge-base features fail with `opensearch not available`.
 
 Open the UI:
 
@@ -257,9 +242,7 @@ rag-cli.rag ui --no-browser
 ```
 
 You must be `root` or a member of the daemon's access group (default `rag`) to reach it. See
-[docs/local-ui.md](docs/local-ui.md) for navigating the UI, the trust model, and troubleshooting,
-and remember the [known limitation](#known-limitation-ragdthe-ui-and-non-default-opensearch-credentials)
-above if you're pointing at a non-default-credential OpenSearch cluster.
+[docs/local-ui.md](docs/local-ui.md) for navigating the UI, the trust model, and troubleshooting.
 
 ---
 

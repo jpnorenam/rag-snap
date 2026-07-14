@@ -21,9 +21,10 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 # sudo $SNAP_INSTANCE_NAME set --package tika.http.port="9998"
 # sudo $SNAP_INSTANCE_NAME set --package tika.http.host="127.0.0.1"
 # sudo $SNAP_INSTANCE_NAME set --package verbose="false"
-# 
-export OPENSEARCH_USERNAME="admin"
-export OPENSEARCH_PASSWORD="admin"
+#
+# Backend secrets (OPENSEARCH_USERNAME/PASSWORD, CHAT_API_KEY) are never set here: this hook
+# is one-shot and does not persist into the ragd daemon's runtime environment. See the
+# `ragd` app's environment comment in snapcraft.yaml for how operators inject them.
 
 # Register Google Drive OAuth2 credential keys so users can configure them with:
 #   sudo rag set gdrive.client.id=<client-id>
