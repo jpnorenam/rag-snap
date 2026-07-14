@@ -137,6 +137,16 @@ export default function SearchScreen() {
   const showInitial =
     !searching && !searchError && results === null && !basesError && !noBases;
 
+  // Connection state for the "Knowledge bases:" label, mirroring the chat
+  // screen's dot: a successful listKnowledge() means OpenSearch is reachable;
+  // a failure (the daemon down, or the knowledge store unreachable) is shown as
+  // "Unavailable" rather than a bare label.
+  const kbState: "loading" | "connected" | "unavailable" = basesError
+    ? "unavailable"
+    : bases === null
+      ? "loading"
+      : "connected";
+
   return (
     <main className="app-main search">
       <form className="p-search-box search__bar" role="search" onSubmit={onSubmit}>
@@ -176,7 +186,16 @@ export default function SearchScreen() {
 
       <div className="search__scope">
         <span className="search__scope-label" id="search-bases-label">
-          Knowledge bases:
+          <span
+            className={`app-status-dot ${
+              kbState === "connected" ? "is-connected" : kbState === "unavailable" ? "is-error" : ""
+            }`}
+          />
+          {kbState === "connected"
+            ? "Connected · Knowledge bases:"
+            : kbState === "unavailable"
+              ? "Unavailable · Knowledge bases:"
+              : "Knowledge bases:"}
         </span>
         {bases === null && !basesError && <Spinner label="Loading knowledge bases…" />}
         {bases?.map((b) => (
