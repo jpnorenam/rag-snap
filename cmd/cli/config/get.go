@@ -3,23 +3,12 @@ package config
 import (
 	"fmt"
 	"os"
-	"slices"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/pkg/utils"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
-
-// Deprecated configurations from the user
-var deprecatedConfig = []string{
-	"model",
-	"model-name",
-	"multimodel-projector",
-	"server",
-	"target-device",
-	"http.base-path",
-}
 
 type getCommand struct {
 	*common.Context
@@ -72,7 +61,7 @@ func (cmd *getCommand) getValue(key string) error {
 	}
 
 	// Warn the user about deprecated fields. These are still consumed by the engines.
-	if slices.Contains(deprecatedConfig, key) && utils.IsTerminalOutput() {
+	if IsDeprecated(key) && utils.IsTerminalOutput() {
 		fmt.Fprintf(os.Stderr, "Note: %q configuration field is deprecated!\n", key)
 	}
 
@@ -87,7 +76,7 @@ func (cmd *getCommand) getValues() error {
 
 	// Drop deprecated configurations. The user doesn't need to see them.
 	for k := range values {
-		if slices.Contains(deprecatedConfig, k) {
+		if IsDeprecated(k) {
 			delete(values, k)
 		}
 	}

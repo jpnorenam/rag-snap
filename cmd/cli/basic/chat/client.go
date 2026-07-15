@@ -47,7 +47,7 @@ func FindModelName(baseURL string) (string, error) {
 	return modelPage.Data[0].ID, nil
 }
 
-func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddingModelID string, llmModelName string, prompts PromptConfig, temperature float64, verbose bool) error {
+func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaClient *knowledge.KapaClient, embeddingModelID string, llmModelName string, prompts PromptConfig, temperature float64, verbose bool) error {
 	fmt.Printf("Using inference server at %v\n", baseURL)
 
 	// Check if server is reachable
@@ -59,12 +59,16 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 
 	if knowledgeClient != nil {
 		fmt.Printf(
-			"Using the `%s` knowledge base at %v\n\t> Use `%s` to see other available knowledge bases\n\n",
+			"Using the `%s` knowledge base at %v\n\t> Use `%s` to see other available knowledge bases\n",
 			defaultKnowledgeBase,
 			knowledgeClient.URL(),
 			cmdUseKnowledge,
 		)
 	}
+	if kapaClient != nil {
+		fmt.Printf("\t> Use `%s` to select Kapa.ai source groups\n", cmdUseKapa)
+	}
+	fmt.Println()
 
 	if llmModelName == "" {
 		var err error
@@ -127,9 +131,15 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 
 	session := &Session{
 		KnowledgeClient:  knowledgeClient,
+		KapaClient:       kapaClient,
 		EmbeddingModelID: embeddingModelID,
 		ActiveIndexes:    []string{knowledge.DefaultIndexName()},
 	}
+
+	// Saved-chat history is stored client-locally in daemonless mode. chatID pins
+	// the record this session saves to, so a second /save updates it in place.
+	chatStore, _ := localChatStore()
+	var chatID string
 
 	for {
 		prompt, err := rl.Readline()
@@ -147,10 +157,25 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 			break
 		}
 
-		// Handle slash commands (e.g. /active-context) without sending to the LLM.
+		// Handle slash commands without sending to the LLM. Readline is torn down
+		// and recreated around them because /use-knowledge and /history drive the
+		// terminal via huh, which conflicts with an active readline.
 		if strings.HasPrefix(prompt, "/") {
 			rl.Close()
-			handleSlashCommand(prompt, session)
+			verb, args, _ := strings.Cut(strings.TrimSpace(prompt), " ")
+			switch verb {
+			case cmdSave:
+				if id, ok := saveDirectChat(chatStore, chatID, args, llmModelName, session, params.Messages); ok {
+					chatID = id
+				}
+			case cmdHistory:
+				if msgs, id, ok := resumeDirectChat(chatStore, initialSystemPrompt, session); ok {
+					params.Messages = msgs
+					chatID = id
+				}
+			default:
+				handleSlashCommand(prompt, session)
+			}
 			rl, err = readline.NewEx(rlConfig)
 			if err != nil {
 				return fmt.Errorf("error reinitializing readline: %w", err)
@@ -295,12 +320,14 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	// without retrieval (mirroring the daemon's LiveSession.Prompt), so a plain
 	// greeting like "Hi" gets a natural reply instead of a grounded refusal.
 	hasRAG := session.KnowledgeClient != nil && len(session.ActiveIndexes) > 0
+	hasKapa := session.KapaClient != nil && len(session.ActiveKapaGroups) > 0
+	hasContext := hasRAG || hasKapa
 
 	// Rewrite the query for richer BM25 matching using conversation context.
 	// On the first turn (no history) this returns the original prompt.
 	lexicalQuery := prompt
 	ragContext := ""
-	if hasRAG {
+	if hasContext {
 		lexicalQuery = rewriteSearchQuery(client, params.Model, params.Messages, prompt, verbose)
 		// Retrieve RAG context from knowledge base (no-op when unavailable).
 		ragContext = retrieveContext(session, prompt, lexicalQuery, verbose)
@@ -313,7 +340,7 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	llmPrompt := prompt
 	if ragContext != "" {
 		llmPrompt = buildRAGPrompt(ragContext, prompt)
-	} else if hasRAG {
+	} else if hasContext {
 		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", prompt)
 	}
 

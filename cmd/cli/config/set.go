@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
@@ -66,7 +65,7 @@ func (cmd *setCommand) setValue(keyValue string) error {
 		err = cmd.Config.Set(key, value, storage.PackageConfig)
 	} else {
 		// Reject use of internal keys by the user
-		if slices.Contains(deprecatedConfig, key) {
+		if IsDeprecated(key) {
 			return fmt.Errorf("%q is read-only", key)
 		}
 		err = cmd.Config.Set(key, value, storage.UserConfig)

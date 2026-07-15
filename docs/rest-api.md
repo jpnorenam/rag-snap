@@ -64,20 +64,25 @@ the **daemon's** service environment, not on each CLI invocation and never in `s
 config. The daemon reads the rest of its configuration (`chat.*`, `knowledge.*`, `tika.*`,
 `api.socket.*`) from `snapctl` at startup.
 
-To give the daemon an inference API key (e.g. for OpenRouter or AWS Bedrock), inject it via a
-root-only systemd drop-in, then restart the daemon:
+To give the daemon an inference API key (e.g. for OpenRouter or AWS Bedrock) and/or your real
+OpenSearch credentials, inject them via a root-only systemd drop-in, then restart the daemon:
 
 ```bash
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$YOUR_KEY" | \
-  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf >/dev/null
-sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
+printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\n' \
+  "$YOUR_CHAT_KEY" "$YOUR_OPENSEARCH_USER" "$YOUR_OPENSEARCH_PASSWORD" | \
+  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf >/dev/null
+sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
 sudo systemctl daemon-reload
 sudo snap restart rag-cli.ragd
 ```
 
-The drop-in file is `root:root 0600`, so the secret is never world-readable and never passes
-through the `snapctl` config store or the `GET /1.0` config summary.
+The drop-in file is `root:root 0600`, so the secrets are never world-readable and never pass
+through the `snapctl` config store or the `GET /1.0` config summary. `ragd`'s app definition
+declares no hardcoded `environment:` values for any of these three keys — a hardcoded value
+would be reapplied by `snap run` after systemd and silently override the drop-in, so leaving
+them undeclared is what lets this recipe work for a non-default OpenSearch username/password
+too, not just the chat key.
 
 > **Applying config changes:** the daemon snapshots config at startup. After changing config
 > with `rag set ...`, reload the daemon to pick up the new values — either `sudo snap restart
@@ -234,7 +239,7 @@ curl --unix-socket "$SOCK" http://ragd/1.0/knowledge
 # Hybrid search (sync)
 curl --unix-socket "$SOCK" -X POST http://ragd/1.0/search \
   -H 'Content-Type: application/json' \
-  -d '{"knowledge":["project-docs"],"query":"how do I rotate credentials?"}'
+  -d '{"bases":["project-docs"],"query":"how do I rotate credentials?"}'
 ```
 
 A trusted root response reports `"auth":"trusted"`; an untrusted caller sees `"untrusted"`.
@@ -309,6 +314,10 @@ websocket URL to dial for streamed tokens and `<think>` blocks.
 | `GET /1.0/prompts`, `GET /1.0/prompts/{name}` | sync | Read the prompt templates |
 | `PUT /1.0/prompts/{name}` | sync | Customize a prompt template |
 | `DELETE /1.0/prompts/{name}` | sync | Reset a prompt to its built-in default |
+| `GET /1.0/status` | sync | Live service health, endpoints, and deployed models |
+| `GET /1.0/config` | sync | Read the configuration with layer provenance |
+| `PUT /1.0/config/{key}` | sync | Set a value in the user layer |
+| `DELETE /1.0/config/{key}` | sync | Revert a key to its package value |
 
 The full, authoritative contract is the generated [`rest-api.yaml`](../rest-api.yaml)
 OpenAPI specification at the repository root.
@@ -355,3 +364,64 @@ Semantics worth knowing:
   default of the installed release.
 - Prompts are machine-global, like knowledge bases: any caller authorized to reach the API can
   change them.
+
+---
+
+## Status
+
+`GET /1.0/status` probes the three external services **at request time** and reports the daemon
+itself. It is the API behind the web UI's Status page and the analogue of `rag-cli.rag status`.
+
+Each service reports a `state` of `running`, `unreachable`, or `not configured` (no endpoint
+resolved — nothing is broken, nothing is configured), plus its resolved `endpoint`. Services
+degrade **independently**: an unreachable OpenSearch never fails the request or hides Tika's
+version. Probes run concurrently under a short timeout, so a fully-down stack answers in seconds.
+
+```bash
+sudo curl -s --unix-socket /var/snap/rag-cli/common/ragd/unix.socket \
+  http://localhost/1.0/status | jq '.metadata'
+```
+
+Per-service detail:
+
+- **`opensearch`** — the configured embedding and rerank model IDs (`models`), and the models
+  OpenSearch actually has deployed (`deployed_models`, from `_plugins/_ml/models/_search` filtered
+  to `model_state: DEPLOYED`). Each configured model carries a `deployed` flag. **A configured
+  model ID that is not deployed breaks retrieval, and nothing else reports it until a search
+  fails** — this flag is how you see it. Fix it with `rag-cli.rag knowledge init`.
+- **`inference`** — the LLM model name the chat backend serves (`llm_model`).
+- **`tika`** — the Tika server version (`version`).
+- **`ragd`** — the API version and the enabled listeners (unix socket, and the loopback address
+  when the loopback listener is on). The localhost token is never included.
+
+## Configuration
+
+`GET /1.0/config` returns the effective configuration, sorted by key, each entry naming the
+`layer` it resolves from: `user` when an override exists, otherwise `package`. Deprecated keys are
+hidden, exactly as `rag-cli.rag get` hides them. An overridden entry also carries the
+`package_value` a revert would restore.
+
+Writes go to the **user** layer — the same override `sudo rag-cli.rag set <key>=<value>` writes —
+and follow the same rules: a key that does not already exist is rejected (the API overrides keys,
+it never creates them), and deprecated keys are read-only.
+
+```bash
+# Read the configuration with its layer provenance.
+sudo curl -s --unix-socket /var/snap/rag-cli/common/ragd/unix.socket \
+  http://localhost/1.0/config | jq '.metadata.keys[] | {key, value, layer}'
+
+# Override a key (user layer).
+sudo curl -s --unix-socket /var/snap/rag-cli/common/ragd/unix.socket -X PUT \
+  -H 'Content-Type: application/json' -d '{"value": "9000"}' \
+  http://localhost/1.0/config/chat.http.port
+
+# Revert it to the packaged value.
+sudo curl -s --unix-socket /var/snap/rag-cli/common/ragd/unix.socket -X DELETE \
+  http://localhost/1.0/config/chat.http.port
+```
+
+**Secrets never come back out.** The service credentials (`OPENSEARCH_USERNAME`,
+`OPENSEARCH_PASSWORD`, `CHAT_API_KEY`) are environment variables and are not config keys at all.
+The config keys that *are* secrets — any key whose last segment is `secret`, `password`, or
+`token`, today `gdrive.client.secret` — are redacted on read: the key is listed and stays
+writable, but its value is replaced with `<redacted>`. They are write-only through the API.

@@ -13,6 +13,7 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
+	"github.com/jpnorenam/rag-snap/internal/chatstore"
 	"github.com/jpnorenam/rag-snap/internal/webui"
 )
 
@@ -34,8 +35,11 @@ var apiExtensions = []string{
 	"knowledge_engine_init",
 	"search",
 	"chat_websocket",
+	"chat_history",
 	"batch_answer",
 	"prompts",
+	"status",
+	"config",
 }
 
 // Server is the ragd HTTP API server. It owns the configuration snapshot, the
@@ -52,7 +56,10 @@ type Server struct {
 	// prompts is the daemon-owned store of prompt-template overrides. Chat
 	// sessions and batch operations are seeded from it at start, so a
 	// customization applies to work started after it was saved.
-	prompts  *promptStore
+	prompts *promptStore
+	// chats is the daemon-owned store of saved chat conversations, shared by the
+	// UI and the CLI's remote mode. Sessions save into it and resume from it.
+	chats    *chatstore.Store
 	httpSrv  *http.Server
 	listener net.Listener
 	// token is the localhost bearer token authenticating loopback requests. It
@@ -92,6 +99,7 @@ func New(opts Options) *Server {
 		clients:  newClientCache(opts.Context, opts.BackendURLs),
 		events:   newEventsHub(),
 		prompts:  newPromptStore(),
+		chats:    newChatStore(),
 	}
 	s.httpSrv = &http.Server{
 		Handler:           s.routes(),
@@ -311,6 +319,11 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	// Chat (interactive websocket session).
 	mux.HandleFunc("POST /1.0/chat", s.requireAuth(s.handleChatStart))
 
+	// Saved chats (local history: list/search, get, delete).
+	mux.HandleFunc("GET /1.0/chats", s.requireAuth(s.handleChatsList))
+	mux.HandleFunc("GET /1.0/chats/{id}", s.requireAuth(s.handleChatGet))
+	mux.HandleFunc("DELETE /1.0/chats/{id}", s.requireAuth(s.handleChatDelete))
+
 	// Batch answering (prepared manifest, async operation).
 	mux.HandleFunc("POST /1.0/answer/batch", s.requireAuth(s.handleAnswerBatch))
 
@@ -319,6 +332,14 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /1.0/prompts/{name}", s.requireAuth(s.handlePromptGet))
 	mux.HandleFunc("PUT /1.0/prompts/{name}", s.requireAuth(s.handlePromptUpdate))
 	mux.HandleFunc("DELETE /1.0/prompts/{name}", s.requireAuth(s.handlePromptReset))
+
+	// Service status (live probes of the three backends plus the daemon itself).
+	mux.HandleFunc("GET /1.0/status", s.requireAuth(s.handleStatus))
+
+	// Configuration (snapctl-backed; writes land in the user layer).
+	mux.HandleFunc("GET /1.0/config", s.requireAuth(s.handleConfigList))
+	mux.HandleFunc("PUT /1.0/config/{key}", s.requireAuth(s.handleConfigSet))
+	mux.HandleFunc("DELETE /1.0/config/{key}", s.requireAuth(s.handleConfigUnset))
 }
 
 // swagger:route GET / server apiRoot

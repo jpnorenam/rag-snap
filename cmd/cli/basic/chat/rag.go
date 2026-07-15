@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
@@ -24,48 +25,15 @@ type extractedKeywords struct {
 	Expansion []string `json:"expansion"`
 }
 
-// retrieveContext searches the active knowledge base indexes for content
-// relevant to query. Returns an empty string when RAG is unavailable or
-// the search yields no results, allowing the caller to fall back to a
-// plain prompt.
-func retrieveContext(session *Session, query, lexicalQuery string, verbose bool) string {
-	if session.KnowledgeClient == nil || len(session.ActiveIndexes) == 0 || session.EmbeddingModelID == "" {
-		return ""
-	}
-
-	hits, err := session.KnowledgeClient.Search(
-		context.Background(),
-		session.ActiveIndexes,
-		query,
-		lexicalQuery,
-		session.EmbeddingModelID,
-		defaultRAGTopK,
-	)
-	if err != nil {
-		if verbose {
-			fmt.Printf("Knowledge search failed: %v\n", err)
-		}
-		return ""
-	}
-
-	if len(hits) == 0 {
-		return ""
-	}
-
-	if verbose {
-		fmt.Printf("Retrieved %d results from knowledge base\n", len(hits))
-	}
-
-	return formatContext(hits)
-}
-
 // sourceLabel returns a provenance tag for a search hit based on its index name.
-// KB names containing "upstream" are tagged [UPSTREAM]; all others are [CANONICAL].
 // Convention: when ingesting open-source / third-party documentation, the KB name
 // must include "upstream" (e.g. "openstack-upstream", "kubernetes-upstream").
-// The LLM uses these tags to enforce source priority rules in its answer.
 func sourceLabel(indexName string) string {
-	if strings.Contains(strings.ToLower(indexName), "upstream") {
+	lower := strings.ToLower(indexName)
+	if lower == knowledge.KapaIndexName {
+		return "[KAPA-CANONICAL]"
+	}
+	if strings.Contains(lower, "upstream") {
 		return "[UPSTREAM]"
 	}
 	return "[CANONICAL]"
@@ -73,8 +41,7 @@ func sourceLabel(indexName string) string {
 
 // formatContext renders a slice of search hits into a single text block
 // suitable for injection into a RAG prompt. Each chunk is prefixed with a
-// provenance label ([CANONICAL] or [UPSTREAM]) so the LLM can apply source
-// priority rules when formulating its answer.
+// provenance label so the LLM can apply source priority rules.
 func formatContext(hits []knowledge.SearchHit) string {
 	var b strings.Builder
 	for i, hit := range hits {
@@ -86,6 +53,76 @@ func formatContext(hits []knowledge.SearchHit) string {
 		fmt.Fprintf(&b, "\n(source: %s, score: %.4f)", hit.SourceID, hit.Score)
 	}
 	return b.String()
+}
+
+// retrieveContext searches all active knowledge sources for content relevant to
+// query. Local OpenSearch indexes and kapa.ai are queried in parallel when both
+// are available. Local hits appear first (more specific); kapa hits follow.
+// Returns an empty string when no sources are configured or retrieval yields nothing.
+func retrieveContext(session *Session, query, lexicalQuery string, verbose bool) string {
+	hasLocal := session.KnowledgeClient != nil && len(session.ActiveIndexes) > 0 && session.EmbeddingModelID != ""
+	hasKapa := session.KapaClient != nil && len(session.ActiveKapaGroups) > 0
+
+	if !hasLocal && !hasKapa {
+		return ""
+	}
+
+	var (
+		localHits []knowledge.SearchHit
+		kapaHits  []knowledge.SearchHit
+		localErr  error
+		kapaErr   error
+		wg        sync.WaitGroup
+	)
+
+	if hasLocal {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			localHits, localErr = session.KnowledgeClient.Search(
+				context.Background(),
+				session.ActiveIndexes,
+				query,
+				lexicalQuery,
+				session.EmbeddingModelID,
+				defaultRAGTopK,
+			)
+		}()
+	}
+
+	if hasKapa {
+		if verbose {
+			fmt.Printf("Kapa search: groups=%v\n", session.ActiveKapaGroups)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			kapaHits, kapaErr = session.KapaClient.Search(context.Background(), query, defaultRAGTopK, session.ActiveKapaGroups)
+		}()
+	}
+
+	wg.Wait()
+
+	if localErr != nil && verbose {
+		fmt.Printf("Knowledge search failed: %v\n", localErr)
+	}
+	if kapaErr != nil && verbose {
+		fmt.Printf("Kapa search failed: %v\n", kapaErr)
+	}
+
+	allHits := make([]knowledge.SearchHit, 0, len(localHits)+len(kapaHits))
+	allHits = append(allHits, localHits...)
+	allHits = append(allHits, kapaHits...)
+
+	if len(allHits) == 0 {
+		return ""
+	}
+
+	if verbose {
+		fmt.Printf("Retrieved %d local + %d kapa results\n", len(localHits), len(kapaHits))
+	}
+
+	return formatContext(allHits)
 }
 
 // rewriteSearchQuery uses the inference server to extract search keywords
@@ -252,21 +289,29 @@ func formatConversationForRewrite(messages []openai.ChatCompletionMessageParamUn
 }
 
 // ragSourceRules is the non-negotiable source-grounding block appended to any
-// custom manifest prompt to ensure [CANONICAL]/[UPSTREAM] rules are always active.
+// custom manifest prompt to ensure [CANONICAL]/[KAPA-CANONICAL]/[UPSTREAM] rules
+// are always active, regardless of which of those tags actually shows up in a
+// given context (Kapa.ai is an optional integration; [KAPA-CANONICAL] chunks are
+// only present when it is enabled and configured).
 const ragSourceRules = "Source rules (mandatory, override any prior instruction):\n" +
-	"- Context chunks are tagged [CANONICAL] or [UPSTREAM]. [CANONICAL] is the sole authoritative source.\n" +
-	"- Only name a product or component if a [CANONICAL] chunk explicitly documents it. Do NOT name anything found only in [UPSTREAM] chunks.\n" +
-	"- If the question names a product as an example, do not repeat or endorse it unless a [CANONICAL] chunk confirms it.\n" +
+	"- Context chunks are tagged [CANONICAL], [KAPA-CANONICAL], or [UPSTREAM]. Not every tag necessarily appears in a given context — Kapa.ai integration is optional, so [KAPA-CANONICAL] chunks are only present when it is enabled and returns results. Apply the rules below only to tags actually present; never treat a missing tag as a gap to fill with outside knowledge.\n" +
+	"- Priority among tags actually present: [CANONICAL] > [KAPA-CANONICAL] > [UPSTREAM]. A higher-priority tag overrides a lower one on the same point; a lower-priority tag remains usable on points no higher-priority tag covers.\n" +
+	"- Only name a product or component if a [CANONICAL] or [KAPA-CANONICAL] chunk explicitly documents it. Do NOT name anything found only in [UPSTREAM] chunks.\n" +
+	"- If the question names a product as an example, do not repeat or endorse it unless a [CANONICAL] or [KAPA-CANONICAL] chunk confirms it.\n" +
 	"- Never speculate or use knowledge outside the provided context."
 
 // ragAnswerSystemPrompt is the system-level instruction for batch answer (rag answer batch).
 // Produces professional, document-ready responses suitable for submission in RFI/RFP documents.
 const ragAnswerSystemPrompt = "You are a Canonical support engineer responding to a procurement executive on behalf of Canonical. Apply these rules strictly:\n" +
 	"1. GROUNDING: Use ONLY information explicitly stated in the provided context. Never infer, extrapolate, or use outside knowledge.\n" +
-	"2. SOURCE PRIORITY: Each context chunk is tagged [CANONICAL] or [UPSTREAM]. [CANONICAL] is the authoritative source. [UPSTREAM] chunks provide supplemental detail only — when [CANONICAL] and [UPSTREAM] address the same point, follow [CANONICAL] exclusively.\n" +
-	"3. PRODUCTS: Only name a product or component if a [CANONICAL] chunk explicitly documents or endorses it. " +
+	"2. SOURCE PRIORITY: Context chunks are tagged [CANONICAL], [KAPA-CANONICAL], or [UPSTREAM]. Not all three necessarily appear — Kapa.ai integration is optional, so [KAPA-CANONICAL] chunks are only present when it is enabled and returns results. Apply priority only among tags actually present in the context; never treat a missing tier as a gap to fill with outside knowledge.\n" +
+	"   - [CANONICAL]: private internal documents (RFPs, implementation notes) — most specific, takes precedence over [KAPA-CANONICAL] and [UPSTREAM] on the same point.\n" +
+	"   - [KAPA-CANONICAL]: official Canonical public documentation — authoritative for general product facts and capabilities on points no [CANONICAL] chunk covers.\n" +
+	"   - [UPSTREAM]: third-party upstream docs — supplemental only, lowest priority; usable on points no [CANONICAL] or [KAPA-CANONICAL] chunk covers, subject to rule 3.\n" +
+	"   When sources conflict on the same point, follow the higher-priority source exclusively.\n" +
+	"3. PRODUCTS: Only name a product or component if a [CANONICAL] or [KAPA-CANONICAL] chunk explicitly documents or endorses it. " +
 	"Do NOT name any product found only in [UPSTREAM] chunks — not even as background context or an example. " +
-	"If the question itself names a product as an example, do NOT repeat or endorse it unless a [CANONICAL] chunk explicitly confirms it. " +
+	"If the question itself names a product as an example, do NOT repeat or endorse it unless a [CANONICAL] or [KAPA-CANONICAL] chunk explicitly confirms it. " +
 	"Never mention proprietary third-party products.\n" +
 	"4. FORMAT: Write for a procurement executive, not a technical audience. " +
 	"Be direct and concise — state the capability or answer plainly, then stop. " +
@@ -280,8 +325,12 @@ const ragAnswerSystemPrompt = "You are a Canonical support engineer responding t
 // Grounded and conversational — follows the same strict accuracy rules with natural phrasing.
 const ragChatSystemPrompt = "You are a Canonical technical assistant. Apply these rules strictly:\n" +
 	"1. GROUNDING: Use ONLY information explicitly stated in the provided context. Never infer, extrapolate, or use outside knowledge.\n" +
-	"2. SOURCE PRIORITY: Each context chunk is tagged [CANONICAL] or [UPSTREAM]. When they conflict or overlap, [CANONICAL] always takes precedence.\n" +
-	"3. PRODUCTS: Only name a product or component if a [CANONICAL] chunk explicitly documents or endorses it. " +
+	"2. SOURCE PRIORITY: Context chunks are tagged [CANONICAL], [KAPA-CANONICAL], or [UPSTREAM]. Not all three necessarily appear — Kapa.ai integration is optional, so [KAPA-CANONICAL] chunks are only present when it is enabled and returns results. Apply priority only among tags actually present in the context; never treat a missing tier as a gap to fill with outside knowledge.\n" +
+	"   - [CANONICAL]: private internal documents (RFPs, implementations) — takes precedence over [KAPA-CANONICAL] and [UPSTREAM] on the same point.\n" +
+	"   - [KAPA-CANONICAL]: official Canonical public documentation — authoritative for general product facts on points no [CANONICAL] chunk covers.\n" +
+	"   - [UPSTREAM]: third-party upstream docs — supplemental only, usable on points no [CANONICAL] or [KAPA-CANONICAL] chunk covers, subject to rule 3.\n" +
+	"   When sources conflict on the same point, follow the higher-priority source.\n" +
+	"3. PRODUCTS: Only name a product or component if a [CANONICAL] or [KAPA-CANONICAL] chunk explicitly documents or endorses it. " +
 	"Do NOT name any product found only in [UPSTREAM] chunks — not even as background context or an example. " +
 	"Never mention proprietary third-party products.\n" +
 	"4. FORMAT: Be concise and direct. Use bullet points when listing multiple items. You may ask a clarifying question if the query is ambiguous.\n" +

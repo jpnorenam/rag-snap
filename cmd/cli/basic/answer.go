@@ -81,7 +81,8 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			}
 			knowledgeClient, _ := knowledge.NewClient(apiUrls[opensearch])
 			embeddingModelID, _ := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
-			return chat.ProcessBatchChat(apiUrls[openAi], knowledgeClient, embeddingModelID, manifest, chat.LoadPrompts(), temperature, cmd.Verbose)
+			kapaClient := buildKapaClient(cmd.Context)
+			return chat.ProcessBatchChat(apiUrls[openAi], knowledgeClient, kapaClient, embeddingModelID, manifest, chat.LoadPrompts(), temperature, cmd.Verbose)
 		},
 	}
 

@@ -15,6 +15,9 @@ func TestSyntaxHint(t *testing.T) {
 		{"query started", "/search ceph", "", false},
 		{"partial name", "/sea", "", false},
 		{"command without args", "/use-knowledge", "", false},
+		{"save command", "/save", "[title]", true},
+		{"save with title started", "/save notes", "", false},
+		{"history command has no args", "/history", "", false},
 		{"bare slash", "/", "", false},
 		{"plain text", "hello", "", false},
 		{"empty", "", "", false},
@@ -28,5 +31,24 @@ func TestSyntaxHint(t *testing.T) {
 					tt.input, gotHint, gotOK, tt.wantHint, tt.wantOK)
 			}
 		})
+	}
+}
+
+func TestSlashCommandsRegistered(t *testing.T) {
+	want := map[string]bool{
+		cmdUseKnowledge: false,
+		cmdSearch:       false,
+		cmdSave:         false,
+		cmdHistory:      false,
+	}
+	for _, c := range slashCommands {
+		if _, ok := want[c.name]; ok {
+			want[c.name] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("slash command %q is not registered", name)
+		}
 	}
 }

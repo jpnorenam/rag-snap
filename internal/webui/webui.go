@@ -13,6 +13,7 @@ import (
 	"embed"
 	"io/fs"
 	"net/http"
+	"path"
 	"strings"
 )
 
@@ -78,8 +79,8 @@ func resolvePath(assets fs.FS, upath string) string {
 }
 
 // assetExists reports whether name (slash-rooted, no leading slash) resolves to
-// a regular file in the embedded FS. Directories do not count as assets so they
-// also fall through to the SPA index.
+// a regular file in the embedded FS. Directories do not count as assets: they
+// are handled by hasIndex.
 func assetExists(assets fs.FS, name string) bool {
 	f, err := assets.Open(name)
 	if err != nil {
@@ -91,4 +92,10 @@ func assetExists(assets fs.FS, name string) bool {
 		return false
 	}
 	return true
+}
+
+// hasIndex reports whether name is a directory holding an index.html — an
+// exported route page such as status/ or prompts/.
+func hasIndex(assets fs.FS, name string) bool {
+	return assetExists(assets, path.Join(name, "index.html"))
 }

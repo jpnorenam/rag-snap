@@ -64,5 +64,7 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 
 	embeddingModelID, _ := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
 
-	return chat.Client(apiUrls[openAi], knowledgeClient, embeddingModelID, llmModelName, chat.LoadPrompts(), cmd.temperature, cmd.Verbose)
+	kapaClient := buildKapaClient(cmd.Context)
+
+	return chat.Client(apiUrls[openAi], knowledgeClient, kapaClient, embeddingModelID, llmModelName, chat.LoadPrompts(), cmd.temperature, cmd.Verbose)
 }

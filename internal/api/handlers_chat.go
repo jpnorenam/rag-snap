@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
+	"github.com/jpnorenam/rag-snap/internal/chatstore"
 )
 
 // chatIdleTimeout ends a chat session after this period without a client
@@ -19,30 +20,37 @@ const chatIdleTimeout = 30 * time.Minute
 
 // chatStartRequest is the body of POST /1.0/chat. All fields are optional: the
 // model falls back to config/server lookup, and the active bases and
-// temperature default to the chat REPL's behaviour.
+// temperature default to the chat REPL's behaviour. Resume, when set, seeds the
+// session from the saved chat with that id (its transcript and active bases).
 type chatStartRequest struct {
 	Model       string   `json:"model,omitempty"`
 	Bases       []string `json:"bases,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
+	Resume      string   `json:"resume,omitempty"`
 }
 
 // chatControlMessage is a client→server control frame on the chat websocket.
 // Type "prompt" submits a question; type "set-active-kbs" changes the active
-// knowledge bases (the API equivalent of the in-REPL /use-knowledge).
+// knowledge bases (the API equivalent of the in-REPL /use-knowledge); type
+// "save" persists the running conversation to the saved-chat store.
 type chatControlMessage struct {
 	Type    string   `json:"type"`
 	Content string   `json:"content,omitempty"`
 	Bases   []string `json:"bases,omitempty"`
+	Title   string   `json:"title,omitempty"`
 }
 
 // chatServerMessage is a server→client frame on the chat websocket: streamed
 // "token"/"think" content, a terminal "done" per answer, an "active-kbs"
-// acknowledgement, or an "error".
+// acknowledgement, a "saved" acknowledgement (carrying the saved chat's id and
+// title), or an "error".
 type chatServerMessage struct {
 	Type    string   `json:"type"`
 	Content string   `json:"content,omitempty"`
 	Bases   []string `json:"bases,omitempty"`
 	Error   string   `json:"error,omitempty"`
+	ChatID  string   `json:"id,omitempty"`
+	Title   string   `json:"title,omitempty"`
 }
 
 // defaultChatTemperature matches the chat REPL's default sampling temperature.
@@ -66,6 +74,18 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
 		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
 		return
+	}
+
+	// Resume: load the saved chat first so an unknown id fails before any session
+	// is started, and so its saved bases seed the active set below.
+	var resumed *chatstore.Chat
+	if req.Resume != "" {
+		chat, err := s.chats.Get(req.Resume)
+		if err != nil {
+			respondChatStoreError(w, err)
+			return
+		}
+		resumed = &chat
 	}
 
 	baseURL := s.clients.openAIURL()
@@ -104,17 +124,30 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 	// substitute, so what the prompts API shows is what runs.
 	systemPrompt := s.prompts.resolve().ChatSystemPrompt
 
-	live, err := chat.NewLiveSession(baseURL, model, knowledgeClient, embeddingModelID, req.Bases, systemPrompt, temperature, s.ctx.Verbose)
+	// Initial active bases: a resumed session restores the saved set (dropping any
+	// base whose index no longer exists), otherwise the request's bases are used.
+	initialBases := req.Bases
+	var droppedBases []string
+	if resumed != nil {
+		initialBases, droppedBases = filterExistingBases(r.Context(), knowledgeClient, resumed.Bases)
+	}
+
+	live, err := chat.NewLiveSession(baseURL, model, knowledgeClient, embeddingModelID, initialBases, systemPrompt, temperature, s.ctx.Verbose)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "starting chat session: "+err.Error())
 		return
+	}
+	if resumed != nil {
+		// Seed the conversation history and pin the record so a later save updates
+		// it in place rather than creating a duplicate.
+		live.Restore(resumed.Turns, resumed.ID)
 	}
 
 	op, err := s.ops.createWebsocket(
 		"Chat session",
 		map[string][]string{"knowledge": {"/1.0/knowledge"}},
 		func(ctx context.Context, conn *websocket.Conn) error {
-			return runChatSession(ctx, conn, live)
+			return s.runChatSession(ctx, conn, live)
 		},
 	)
 	if err != nil {
@@ -124,13 +157,25 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 
 	// Advertise the connect URL and one-time secret in the operation metadata,
 	// mirroring LXD's interactive-exec operation.
-	op.UpdateMetadata(map[string]any{
+	meta := map[string]any{
 		"model": live.Model(),
 		"websocket": map[string]any{
 			"url":    op.url() + "/websocket",
 			"secret": op.secretValue(),
 		},
-	})
+	}
+	if resumed != nil {
+		// Carry the restored transcript and effective bases so the client can
+		// render where the conversation left off without a second request.
+		meta["chat"] = map[string]any{
+			"id":            resumed.ID,
+			"title":         resumed.Title,
+			"turns":         resumed.Turns,
+			"bases":         live.ActiveBases(),
+			"dropped_bases": droppedBases,
+		}
+	}
+	op.UpdateMetadata(meta)
 	respondAsync(w, op.url(), op.view())
 }
 
@@ -177,7 +222,7 @@ func (s *Server) handleChatConnect(w http.ResponseWriter, r *http.Request) {
 // active-KB changes. It returns when the client disconnects, an idle timeout
 // elapses, or ctx is cancelled. The daemon owns the LiveSession for the
 // connection's lifetime, so history and active bases persist across turns.
-func runChatSession(ctx context.Context, conn *websocket.Conn, live *chat.LiveSession) error {
+func (s *Server) runChatSession(ctx context.Context, conn *websocket.Conn, live *chat.LiveSession) error {
 	defer conn.Close(websocket.StatusNormalClosure, "session closed")
 
 	for {
@@ -222,6 +267,27 @@ func runChatSession(ctx context.Context, conn *websocket.Conn, live *chat.LiveSe
 		case "set-active-kbs":
 			live.SetActiveBases(msg.Bases)
 			if err := writeChat(ctx, conn, chatServerMessage{Type: "active-kbs", Bases: live.ActiveBases()}); err != nil {
+				return nil
+			}
+
+		case "save":
+			saved, err := s.chats.Save(chatstore.Chat{
+				ID:    live.ChatID(),
+				Title: strings.TrimSpace(msg.Title),
+				Model: live.Model(),
+				Bases: live.ActiveBases(),
+				Turns: live.Turns(),
+			})
+			if err != nil {
+				// A store failure (or an empty session) is reported without ending
+				// the session: the conversation keeps working.
+				if writeErr := writeChat(ctx, conn, chatServerMessage{Type: "error", Error: chatSaveErrorMessage(err)}); writeErr != nil {
+					return nil
+				}
+				continue
+			}
+			live.SetChatID(saved.ID)
+			if err := writeChat(ctx, conn, chatServerMessage{Type: "saved", ChatID: saved.ID, Title: saved.Title}); err != nil {
 				return nil
 			}
 

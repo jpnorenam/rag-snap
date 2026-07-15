@@ -1,216 +1,33 @@
 # RAG Snap
 
-A CLI-based RAG implementation to locally manage knowledge bases and chat with them.
+A CLI-based RAG (Retrieval-Augmented Generation) tool, packaged as a strictly-confined snap
+(`rag-cli`), that lets you build local knowledge bases and chat with them. It's a thin
+orchestrator over three external services:
 
-## Quick start
+- **OpenSearch** (the `knowledge` store) — embeddings, ingest/search pipelines, indexes, ML models.
+- **An inference server** (the `chat` backend) — either a local
+  [Inference snap](https://github.com/canonical/inference-snaps) or a third-party
+  OpenAI-compatible API, e.g. [AWS Bedrock](docs/bedrock_guide.md).
+- **Apache Tika** (the `tika` service) — text extraction from documents. Bundled with the snap.
 
-### Prerequisites
-Before starting, the RAG snap depends on the OpenSearch snap, and optionally, one of the Inference snaps:
+You interact with it either through the CLI (`rag-cli.rag`) or a local browser UI served by the
+`ragd` daemon.
 
-#### Install and setup the [OpenSearch snap](https://github.com/canonical/opensearch-snap).
+## Typical flow
 
-During the [creation of the certificates](https://github.com/canonical/opensearch-snap?tab=readme-ov-file#creating-certificates), ensure that the `ingest` and `ml` roles are set in the node.
+`knowledge init` (sets up pipelines/models) → `k create <name>` → `k ingest <name> <source-id>
+--file|--url` → `chat` (activate knowledge bases with `/use-knowledge`, ask questions). `k
+export`/`k import` move knowledge bases between machines without re-embedding.
 
-``` bash
-sudo snap run opensearch.setup                  \
-    --node-name vdb0                            \
-    --node-roles cluster_manager,data,ingest,ml \
-    --tls-priv-key-root-pass root1234           \
-    --tls-priv-key-admin-pass admin1234         \
-    --tls-priv-key-node-pass node1234           \
-    --tls-init-setup yes
-```
+## Getting started
 
-Increase the JVM heap size to fit the sentence-transformer and cross-encoder models (at least 6 GB is recommended; adjust to your machine's available RAM):
-```bash
-echo '-Xms6g' | sudo tee /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
-echo '-Xmx6g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.options.d/heap.options
+See **[INSTALL.md](INSTALL.md)** for the full install and configuration walkthrough — prerequisites,
+installing the snap, configuring backends, secrets, and enabling the browser UI.
 
-sudo snap restart opensearch
-```
+## Documentation
 
-Validate your OpenSearch snap node roles:
-```bash
-curl -k -u admin:admin https://localhost:9200/_cat/nodes?v
-```
-
-#### (Recommended) Use [AWS Bedrock as the Inference Server](docs/bedrock_guide.md)
-
-> **Warning:** When using a third-party inference API, your prompts and retrieved context are sent to an external service. Do not ingest or ask about confidential information in that configuration.
-
-#### (Alternative) Install a [Inference snap](https://github.com/canonical/inference-snaps) of your selection.
-
-Ensure you are using the right engine available in your machine for better performance:
-```bash
-sudo <inference-snap-name> show-engine
-```
-
-Test your Inference snap installation:
-```bash
-curl http://localhost:8324/v1/chat/completions \
-  -H 'Content-Type: application/json'          \
-  -d '{
-    "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "Hello!"}
-    ]
-  }'
-```
-
-### Installation
-From the Snap store
-```bash
-sudo snap install rag-cli --channel edge
-```
-
-
-Or build and install
-```bash
-snapcraft -v
-sudo snap install --dangerous ./rag-cli_*.snap
-```
-
-### Package setup
-
-The package comes with sensible defaults set by the install hook. Override them only if your services run on non-default hosts or ports:
-
-#### If you are using Bedrock as the Inference Server
-```bash
-sudo rag-cli.rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
-sudo rag-cli.rag set --package chat.http.port="443"
-sudo rag-cli.rag set --package chat.http.tls="true"
-sudo rag-cli.rag set --package chat.http.path="openai/v1"
-sudo rag-cli.rag set --package knowledge.http.host="127.0.0.1"
-sudo rag-cli.rag set --package knowledge.http.port="9200"
-sudo rag-cli.rag set --package knowledge.http.tls="true"
-sudo rag-cli.rag set --package tika.http.path="tika"
-sudo rag-cli.rag set --package tika.http.port="9998"
-sudo rag-cli.rag set --package tika.http.host="127.0.0.1"
-
-export CHAT_API_KEY="bedrock-api-key-****"
-
-rag-cli.rag chat mistral.mistral-large-3-675b-instruct
-```
-
-#### If you are using an Inference Snap
-```bash
-sudo rag-cli.rag set --package chat.http.host="127.0.0.1"
-sudo rag-cli.rag set --package chat.http.port="8324"
-sudo rag-cli.rag set --package chat.http.path="v1"
-sudo rag-cli.rag set --package knowledge.http.host="127.0.0.1"
-sudo rag-cli.rag set --package knowledge.http.port="9200"
-sudo rag-cli.rag set --package knowledge.http.tls="true"
-sudo rag-cli.rag set --package tika.http.path="tika"
-sudo rag-cli.rag set --package tika.http.port="9998"
-sudo rag-cli.rag set --package tika.http.host="127.0.0.1"
-```
-
-The optional secrets like `OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, and `CHAT_API_KEY` are provided via environment variables:
-```bash
-export OPENSEARCH_USERNAME="admin"
-export OPENSEARCH_PASSWORD="admin"
-```
-
-#### (Optional) Google Drive import
-
-To use `knowledge import --url <google-drive-url>`, configure your Google Drive OAuth2 credentials (a "Desktop app" client from [Google Cloud Console](https://console.cloud.google.com/apis/credentials)):
-
-```bash
-sudo rag-cli.rag set gdrive.client.id=<your-oauth2-client-id>
-sudo rag-cli.rag set gdrive.client.secret=<your-oauth2-client-secret>
-```
-
-On first use, `knowledge import --url` will open a browser for a one-time Google account sign-in. The token is cached and refreshed automatically for subsequent runs.
-
-The snap manages the tika-server service. To start it run:
-```bash
-sudo snap start rag-cli.tika-server
-```
-
-The status of the snap can be checked with `rag-cli.rag status`.
-
-
-## Basic Usage
-
-### Initialize pipelines and models
-
-```bash
-rag-cli.rag knowledge init
-```
-
-It will print the model IDs so you can add them to the package config:
-```bash
-sudo rag-cli.rag set --package knowledge.model.embedding=<embedding-model-id>
-sudo rag-cli.rag set --package knowledge.model.rerank=<rerank-model-id>
-```
-
-### Manage your knowledge bases
-
-`knowledge init` sets up the pipelines and index template, but does not create any index yet.
-Create your first knowledge base (the `default` name is used by chat when no other base is selected):
-
-```bash
-rag-cli.rag k create default
-```
-
-Additional knowledge bases can be created to separate content into distinct contexts that you can activate during a chat session.
-
-Create an `example` knowledge base:
-```bash
-rag-cli.rag k create example
-```
-
-List the knowledge bases with `rag-cli.rag k list`.
-
-Ingest files into the `example` and `default` bases:
-```bash
-rag-cli.rag k ingest example <source-id-file> --file <path-to-local-file>
-
-rag-cli.rag k ingest default <source-id-url> --url <url-to-document>
-```
-
-List the added sources with `rag-cli.rag k list -s`.
-
-Back up a knowledge base to a compressed archive:
-```bash
-rag-cli.rag k export example --compress
-# → ./example-export.tar.gz
-```
-
-Restore it — on the same machine or another — without re-embedding:
-```bash
-rag-cli.rag k import --input ./example-export.tar.gz
-# restores under the original name stored in the archive
-
-rag-cli.rag k import example-copy --input ./example-export.tar.gz
-# restores under a different name
-```
-
-
-### Chat with your knowledge bases
-
-Start a new conversation:
-```bash
-rag-cli.rag chat
-```
-
-Activate the relevant knowledge bases for your conversation and ask questions:
-```bash
-Using inference server at http://127.0.0.1:8324/v1
-Using the `default` knowledge base at https://127.0.0.1:9200
-	> Use `/use-knowledge` to see other available knowledge bases
-
-Type your prompt, then ENTER to submit. CTRL-C to quit
-export CHAT_API_KEY="bedrock-api-key-****"
-
-rag-cli.rag chat mistral.mistral-large-3-675b-instruct
-» /use-knowledge 
-┃ Select active knowledge bases
-┃   • default (27 docs, 671.1kb)
-┃ > ✓ example (102 docs, 1.2mb)
-x toggle • ↑ up • ↓ down • / filter • enter submit • ctrl+a select all
-
-» This a relevant question that can be answered from the example knowledge base ... ?
-```
-
-For a more detail usage, please see the [usage docs](docs/usage.md).
+- [INSTALL.md](INSTALL.md) — install and configuration walkthrough
+- [docs/usage.md](docs/usage.md) — full CLI reference
+- [docs/local-ui.md](docs/local-ui.md) — browser UI reference
+- [docs/rest-api.md](docs/rest-api.md) — REST API (`ragd`) reference
+- [docs/bedrock_guide.md](docs/bedrock_guide.md) — AWS Bedrock API key walkthrough

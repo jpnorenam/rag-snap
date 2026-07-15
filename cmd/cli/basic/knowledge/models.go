@@ -347,6 +347,74 @@ func (c *OpenSearchClient) findModelInGroup(
 	return "", nil
 }
 
+// DeployedModel describes an ML model that OpenSearch currently has deployed and can
+// therefore serve. It is what a status view needs to tell the user which models are
+// really available, as opposed to which model IDs are configured.
+type DeployedModel struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Algorithm    string `json:"algorithm"`
+	ModelVersion string `json:"model_version"`
+	ModelGroupID string `json:"model_group_id"`
+}
+
+// maxDeployedModels caps the deployed-model search. A local RAG cluster deploys a
+// handful of models, so this is effectively "all of them"; the result is not paginated.
+const maxDeployedModels = 1000
+
+// ListDeployedModels returns every ML model in state DEPLOYED. Models that are only
+// registered are omitted: the question this answers is what can be used right now.
+func (c *OpenSearchClient) ListDeployedModels(ctx context.Context) ([]DeployedModel, error) {
+	searchBody := map[string]any{
+		"size":    maxDeployedModels,
+		"_source": []string{"name", "model_state", "algorithm", "model_version", "model_group_id"},
+		"query": map[string]any{
+			"term": map[string]any{
+				"model_state": "DEPLOYED",
+			},
+		},
+	}
+
+	bodyBytes, err := json.Marshal(searchBody)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling search query: %w", err)
+	}
+
+	req, err := c.newAuthenticatedRequest(http.MethodPost, "/_plugins/_ml/models/_search", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("error executing search request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("search request failed with status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	var searchResp modelSearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return nil, fmt.Errorf("error decoding search response: %w", err)
+	}
+
+	models := make([]DeployedModel, 0, len(searchResp.Hits.Hits))
+	for _, hit := range searchResp.Hits.Hits {
+		models = append(models, DeployedModel{
+			ID:           hit.ID,
+			Name:         hit.Source.Name,
+			Algorithm:    hit.Source.Algorithm,
+			ModelVersion: hit.Source.ModelVersion,
+			ModelGroupID: hit.Source.ModelGroupID,
+		})
+	}
+
+	return models, nil
+}
+
 // getModelState retrieves the current state of a model.
 func (c *OpenSearchClient) getModelState(ctx context.Context, modelID string) (string, error) {
 	req, err := c.newAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/_plugins/_ml/models/%s", modelID), nil)
@@ -553,6 +621,7 @@ type modelSearchResponse struct {
 				ModelVersion string `json:"model_version"`
 				ModelGroupID string `json:"model_group_id"`
 				ModelState   string `json:"model_state"`
+				Algorithm    string `json:"algorithm"`
 			} `json:"_source"`
 		} `json:"hits"`
 	} `json:"hits"`

@@ -20,34 +20,13 @@ Remote/HTTPS exposure is intentionally **not** part of this surface: the listene
 
 ## Quick start: from install to a first answer
 
-This is the full path for a fresh install of the latest snap: enable the loopback listener,
-give the daemon a chat API key, open the UI, and ask a question.
+For the full path from a fresh install to a working UI — installing the snap, configuring
+backends, secrets, and enabling the loopback listener — see
+**[INSTALL.md](../INSTALL.md#enable-the-browser-ui)**.
+
+Once configured, opening the UI is just:
 
 ```bash
-# 1. Install the snap (use the exact filename, not a glob — an older snap in the
-#    same directory will otherwise be matched).
-sudo snap install --dangerous ./rag-cli_0.0.4_amd64.snap
-
-# 2. Enable the loopback listener and configure the chat backend.
-sudo rag-cli.rag set api.loopback.enabled=true
-sudo rag-cli.rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
-sudo rag-cli.rag set --package chat.http.port="443"
-sudo rag-cli.rag set --package chat.http.tls="true"
-sudo rag-cli.rag set --package chat.http.path="openai/v1"
-
-# 3. Give the *daemon* the chat API key (see the section below for why a shell
-#    `export` is not enough). The drop-in is root-only (0600) so the key is
-#    never world-readable. Replace $YOUR_KEY with a real key.
-sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$YOUR_KEY" | \
-  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf >/dev/null
-sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
-
-# 4. Reload systemd and (re)start the daemon so it picks up both the listener and the key.
-sudo systemctl daemon-reload
-sudo snap restart rag-cli.ragd
-
-# 5. Open the UI. This fetches the current loopback URL + token and opens your browser.
 rag-cli.rag ui
 ```
 
@@ -62,8 +41,8 @@ from the chips at the top of the page to ground answers in your documents.
 ## Navigating the UI
 
 The UI is a multi-page application with a persistent dark navigation rail on the left. The
-rail lists the app's sections; **Chat** and **Prompts** are shipped today, and the remaining
-entries (Knowledge bases, Search, Answer RFPs, Status) show a **Soon** badge until their features
+rail lists the app's sections; **Chat**, **Prompts**, and **Status** are shipped today, and the
+remaining entries (Knowledge bases, Search, Answer RFPs) show a **Soon** badge until their features
 land. The active section is marked with an orange left-border indicator, and the browser tab title
 tracks the section you are on. On narrow windows the rail collapses to an icon-only strip; hover a
 icon for its label.
@@ -115,6 +94,38 @@ Prompts are held by the **daemon**, so what you save here is exactly what `rag-c
 *starts*, which is why the confirmation reads "New chats and batch runs will use it" — work
 already in flight keeps the prompts it began with.
 
+### Status
+
+The **Status** page (pinned to the bottom of the rail) is the browser equivalent of
+`rag-cli.rag status` and `rag-cli.rag get`/`set`. It has two zones.
+
+**Services** shows one card per service — OpenSearch, the inference server, Tika, and the ragd
+daemon — each with its state (**Running**, **Unreachable**, or **Not configured** — the word is
+always shown, never colour alone), its endpoint, and its own details:
+
+- **OpenSearch** lists the configured embedding and rerank **model IDs** (copyable, as `knowledge
+  init` prints them) *and* the models OpenSearch actually has **deployed**. If a configured model
+  is not deployed, the card says so — that combination breaks retrieval, and without this you would
+  not find out until a search failed. Fix it with `rag-cli.rag knowledge init`.
+- **Inference** shows the LLM it serves, **Tika** its version, and **ragd** its API version and
+  listeners.
+
+The daemon probes the services when you ask, not on a timer: the page checks on load and on
+**Refresh**, and shows when it last checked. An unreachable service degrades on its own card,
+with the CLI command to try next — it never takes the page down.
+
+**Configuration** lists the effective configuration. Each key shows its value and a **layer** chip:
+`package` (shipped with the snap) or `user` (your override). Filter the keys with the search box,
+edit a value in place with the pencil, and **Revert** a `user` value back to the packaged one
+(the confirmation shows both values). Saving writes the **user** layer, exactly as
+`sudo rag-cli.rag set <key>=<value>` does, and the same rules apply: you can override existing
+keys but not invent new ones. Changing a key that feeds a service connection prompts you to
+re-check Status above.
+
+Secret values are never shown. The service credentials are environment variables, not
+configuration, and the one config key that *is* a secret (`gdrive.client.secret`) is redacted by
+the daemon — it renders as `••••` and can be written but never read back.
+
 ---
 
 ## Enabling the listener
@@ -163,34 +174,38 @@ the UI is served by the **`ragd` systemd service**, which has its own environmen
 `Authorization` header and the backend replies `401 Unauthorized` (e.g. Bedrock:
 `"Authorization header is missing"`).
 
-Give the key to the daemon with a **root-only systemd drop-in** (the snap's auto-generated
-unit is regenerated on every restart and must not be edited directly). The same recipe is in
-[the REST API guide](rest-api.md):
+Give the daemon its secrets — the chat key, and your real OpenSearch credentials if your
+cluster doesn't use the `admin`/`admin` default — with a **root-only systemd drop-in** (the
+snap's auto-generated unit is regenerated on every restart and must not be edited directly).
+The same recipe is in [the REST API guide](rest-api.md):
 
 ```bash
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-printf '[Service]\nEnvironment=CHAT_API_KEY=%s\n' "$YOUR_KEY" | \
-  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf >/dev/null
-sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-chat-key.conf
+printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\n' \
+  "$YOUR_CHAT_KEY" "$YOUR_OPENSEARCH_USER" "$YOUR_OPENSEARCH_PASSWORD" | \
+  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf >/dev/null
+sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
 sudo systemctl daemon-reload
 sudo snap restart rag-cli.ragd
 ```
 
-The drop-in is `root:root 0600`, so the secret is never world-readable and never passes
+The drop-in is `root:root 0600`, so the secrets are never world-readable and never pass
 through the `snapctl` config store or the `GET /1.0` config summary.
 
-Confirm the running daemon actually has the key (checks the live process, not just the unit):
+Confirm the running daemon actually has them (checks the live process, not just the unit):
 
 ```bash
-sudo tr '\0' '\n' < /proc/$(pgrep -x ragd)/environ | grep CHAT_API_KEY
+sudo tr '\0' '\n' < /proc/$(pgrep -x ragd)/environ | grep -E 'CHAT_API_KEY|OPENSEARCH_USERNAME|OPENSEARCH_PASSWORD'
 ```
 
 The drop-in directory survives `snap restart` and `snap install --dangerous` of the same
 build. A full `snap remove` clears it, so re-apply the drop-in after a clean reinstall.
 
-> **Note:** the snap deliberately does **not** declare `CHAT_API_KEY` in its own metadata.
-> Declaring it (even as an empty string) would make snapd apply that value over whatever the
-> systemd unit provides, so the drop-in could never take effect.
+> **Note:** the snap deliberately declares no `environment:` values for `CHAT_API_KEY`,
+> `OPENSEARCH_USERNAME`, or `OPENSEARCH_PASSWORD` in its own metadata. Hardcoding any of them
+> (even as an empty string) would make snapd apply that value over whatever the systemd unit
+> provides, so the drop-in could never take effect — this is what lets a non-default OpenSearch
+> username/password work the same way as the chat key.
 
 ---
 
@@ -247,8 +262,9 @@ credentials do not exist for TCP connections, so the loopback listener authentic
 
 **`unknown command "ui"` from `rag-cli.rag ui`.** The installed snap predates the UI command.
 Confirm the version with `snap list rag-cli` and reinstall the latest build, naming the file
-explicitly (`sudo snap install --dangerous ./rag-cli_0.0.4_amd64.snap`) — a `rag-cli_*.snap`
-glob can match an older snap left in the directory.
+explicitly (e.g. `sudo snap install --dangerous ./rag-cli_<version>_amd64.snap`, using the exact
+filename from `ls rag-cli_*.snap`) — a `rag-cli_*.snap` glob can match an older snap left in the
+directory.
 
 **The old UI URL no longer loads after a restart.** Expected. With the default
 `api.loopback.address=127.0.0.1:0` the OS assigns a fresh port on every start, so a bookmarked
@@ -262,3 +278,8 @@ via the systemd drop-in, not a shell `export`.
 **`chat operation did not return a websocket URL/secret`.** The UI bundle is older than the
 daemon. Rebuild the snap so the embedded UI matches (`make ui` then `snapcraft`), reinstall,
 restart the daemon, and hard-reload the browser (Ctrl+Shift+R) to bypass the cached bundle.
+
+**A knowledge base fails to load, or search/ingest errors with `opensearch not available`, even
+though the CLI works fine against the same cluster.** The daemon doesn't have your OpenSearch
+credentials. Give it `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD` the same way as `CHAT_API_KEY` —
+see [Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key).
