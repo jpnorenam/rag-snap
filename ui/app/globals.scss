@@ -747,6 +747,19 @@ $sidebar-accent: #e95420; // Ubuntu orange
   word-break: break-all;
 }
 
+// A worked example of setting a key, sitting above the editable table.
+.status__config-example {
+  margin-bottom: 1.5rem;
+
+  p {
+    margin-bottom: 0.5rem;
+  }
+
+  .p-code-snippet {
+    max-width: 32rem;
+  }
+}
+
 .status__filter {
   max-width: 24rem;
   margin-bottom: 1rem;
@@ -811,4 +824,94 @@ $sidebar-accent: #e95420; // Ubuntu orange
   display: flex;
   gap: 0.25rem;
   justify-content: flex-end;
+}
+
+// ---------------------------------------------------------------------------
+// Search page  --- search ---
+// ---------------------------------------------------------------------------
+
+.search__bar {
+  margin-bottom: 1rem;
+}
+
+// Scope row: KB chips + the Results (top-k) select, wrapping on narrow widths.
+.search__scope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.search__scope-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--vf-color-text-muted);
+}
+
+.search__scope-hint {
+  color: var(--vf-color-text-muted);
+}
+
+.search__topk {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+
+  select {
+    margin-bottom: 0;
+    min-width: 4.5rem;
+  }
+}
+
+.search__count {
+  min-height: 1.25rem; // reserve the line so announcing results doesn't shift layout
+}
+
+.search__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.search-result {
+  padding: 1rem;
+  background-color: var(--vf-color-background-alt);
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.125rem;
+  margin-bottom: 1rem;
+}
+
+.search-result__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.search-result__source {
+  word-break: break-all;
+}
+
+// Score sits right-aligned in the header; tabular digits keep ranks comparable.
+.search-result__score {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+// Full chunk text, paragraph breaks preserved, never truncated. Long unbroken
+// tokens wrap rather than forcing the page to scroll horizontally.
+.search-result__body {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 0.75rem 0;
+}
+
+.search-result__footer {
+  margin: 0;
+  word-break: break-all;
 }

@@ -26,7 +26,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: "chat", label: "Chat", icon: "chat", href: "/", enabled: true },
   { id: "knowledge", label: "Knowledge bases", icon: "knowledge", href: "/knowledge/" },
-  { id: "search", label: "Search", icon: "search", href: "/search/" },
+  { id: "search", label: "Search", icon: "search", href: "/search/", enabled: true },
   { id: "answer", label: "Answer RFPs", icon: "rfp", href: "/answer/" },
   { id: "prompts", label: "Prompts", icon: "prompt", href: "/prompts/", enabled: true },
 ];
