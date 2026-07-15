@@ -37,4 +37,4 @@
 
 - [x] 5.1 Update usage docs for the new surface: `docs/usage.md` chat section (slash commands, store locations, daemon/daemonless split), chat command `--help` text where it lists in-chat commands, and `apps/completion.bash` if it enumerates slash commands
 - [x] 5.2 Run `make all` (tidy fmt vet lint test build) and the UI build/lint — tidy/fmt/vet/test/build all pass and the UI static export builds; new Go code is golangci-lint-clean (remaining lint hits are pre-existing baseline in untouched files)
-- [ ] 5.3 Build the snap, install with `--dangerous`, and validate end-to-end: save/history/resume in the remote REPL and UI sharing one store, daemonless direct REPL using the local store, chats surviving a snap refresh, and delete from the UI panel — **manual QA step (requires snapcraft build + `sudo snap install`); not run autonomously**
+- [x] 5.3 Build the snap, install with `--dangerous`, and validate end-to-end: save/history/resume in the remote REPL and UI sharing one store, daemonless direct REPL using the local store, chats surviving a snap refresh, and delete from the UI panel — validated manually (built, installed, tested)
