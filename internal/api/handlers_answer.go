@@ -148,7 +148,9 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 					op.UpdateMetadata(map[string]any{"questions_total": total, "questions_done": i + 1})
 				},
 			}
-			out, err := chat.RunBatch(ctx, baseURL, knowledgeClient, embeddingModelID, manifest, prompts, temperature, hooks, s.ctx.Verbose)
+			// kapa.ai retrieval is not yet wired into the daemon backend/client
+			// config, so batch answers served over the REST API run without it.
+			out, err := chat.RunBatch(ctx, baseURL, knowledgeClient, nil, embeddingModelID, manifest, prompts, temperature, hooks, s.ctx.Verbose)
 			if err != nil {
 				return err
 			}

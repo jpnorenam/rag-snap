@@ -32,6 +32,14 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 snapctl set config.package.gdrive.client.id=""
 snapctl set config.package.gdrive.client.secret=""
 
+# Register Kapa AI keys so users can configure them with:
+#   sudo rag set kapa.enabled=false
+#   sudo rag set kapa.api.key=<key>
+#   sudo rag set kapa.project.id=<id>
+snapctl set config.package.kapa.enabled="true"
+snapctl set config.package.kapa.api.key=""
+snapctl set config.package.kapa.project.id=""
+
 # Register the REST API daemon (ragd) socket keys. Members of api.socket.group
 # (plus root) may access the local unix socket; access is enforced by the daemon's
 # SO_PEERCRED check, not by the socket's file ownership (under strict confinement

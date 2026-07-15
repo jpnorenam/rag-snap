@@ -96,11 +96,12 @@ type BatchQuestion struct {
 
 // BatchManifest is the top-level structure of a batch chat YAML file.
 type BatchManifest struct {
-	Version        string          `yaml:"version"`
-	Model          string          `yaml:"model,omitempty"`
-	KnowledgeBases []string        `yaml:"knowledge_bases,omitempty"`
-	Prompt         string          `yaml:"prompt,omitempty"`
-	Questions      []BatchQuestion `yaml:"questions"`
+	Version          string          `yaml:"version"`
+	Model            string          `yaml:"model,omitempty"`
+	KnowledgeBases   []string        `yaml:"knowledge_bases,omitempty"`
+	KapaSourceGroups []string        `yaml:"kapa_source_groups,omitempty"`
+	Prompt           string          `yaml:"prompt,omitempty"`
+	Questions        []BatchQuestion `yaml:"questions"`
 }
 
 // BatchResult holds the answer for a single question.
@@ -183,6 +184,7 @@ func RunBatch(
 	ctx context.Context,
 	baseURL string,
 	knowledgeClient *knowledge.OpenSearchClient,
+	kapaClient *knowledge.KapaClient,
 	embeddingModelID string,
 	manifest *BatchManifest,
 	prompts PromptConfig,
@@ -211,8 +213,10 @@ func RunBatch(
 
 	session := &Session{
 		KnowledgeClient:  knowledgeClient,
+		KapaClient:       kapaClient,
 		EmbeddingModelID: embeddingModelID,
 		ActiveIndexes:    activeIndexes,
+		ActiveKapaGroups: manifest.KapaSourceGroups,
 	}
 
 	defaultSystemPrompt := prompts.AnswerSystemPrompt
@@ -298,6 +302,7 @@ func RunBatch(
 func ProcessBatchChat(
 	baseURL string,
 	knowledgeClient *knowledge.OpenSearchClient,
+	kapaClient *knowledge.KapaClient,
 	embeddingModelID string,
 	manifest *BatchManifest,
 	prompts PromptConfig,
@@ -318,7 +323,7 @@ func ProcessBatchChat(
 		},
 	}
 
-	out, err := RunBatch(context.Background(), baseURL, knowledgeClient, embeddingModelID, manifest, prompts, temperature, hooks, verbose)
+	out, err := RunBatch(context.Background(), baseURL, knowledgeClient, kapaClient, embeddingModelID, manifest, prompts, temperature, hooks, verbose)
 	if err != nil {
 		return err
 	}
