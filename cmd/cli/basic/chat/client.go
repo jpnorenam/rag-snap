@@ -131,6 +131,11 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 		ActiveIndexes:    []string{knowledge.DefaultIndexName()},
 	}
 
+	// Saved-chat history is stored client-locally in daemonless mode. chatID pins
+	// the record this session saves to, so a second /save updates it in place.
+	chatStore, _ := localChatStore()
+	var chatID string
+
 	for {
 		prompt, err := rl.Readline()
 		clearSlashHints()
@@ -147,10 +152,25 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, embeddi
 			break
 		}
 
-		// Handle slash commands (e.g. /active-context) without sending to the LLM.
+		// Handle slash commands without sending to the LLM. Readline is torn down
+		// and recreated around them because /use-knowledge and /history drive the
+		// terminal via huh, which conflicts with an active readline.
 		if strings.HasPrefix(prompt, "/") {
 			rl.Close()
-			handleSlashCommand(prompt, session)
+			verb, args, _ := strings.Cut(strings.TrimSpace(prompt), " ")
+			switch verb {
+			case cmdSave:
+				if id, ok := saveDirectChat(chatStore, chatID, args, llmModelName, session, params.Messages); ok {
+					chatID = id
+				}
+			case cmdHistory:
+				if msgs, id, ok := resumeDirectChat(chatStore, initialSystemPrompt, session); ok {
+					params.Messages = msgs
+					chatID = id
+				}
+			default:
+				handleSlashCommand(prompt, session)
+			}
 			rl, err = readline.NewEx(rlConfig)
 			if err != nil {
 				return fmt.Errorf("error reinitializing readline: %w", err)

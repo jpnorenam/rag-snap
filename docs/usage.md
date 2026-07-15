@@ -856,6 +856,41 @@ descending.
 If no knowledge bases are active, `/search` tells you to select some with `/use-knowledge` first; an
 empty query or an invalid `-k` prints a short usage line.
 
+#### `/save`
+
+Saves the current conversation locally so you can return to it later, the way Claude Code keeps
+per-session transcripts. A second `/save` in the same session (including after resuming one)
+updates the same saved chat in place rather than creating a duplicate.
+
+```
+» /save [title]
+```
+
+- `[title]` — an optional title. When omitted, the title is derived from your first prompt.
+
+Saving before you have asked anything is rejected with a short note — there is nothing to save yet.
+
+#### `/history`
+
+Lists your saved chats newest-first in a filterable menu; type to narrow by title or content, then
+pick one to resume. Resuming restores the conversation history (so follow-up questions can refer to
+earlier turns) and the knowledge bases that were active when it was saved. A saved base that no
+longer exists is skipped with a note. Esc/Ctrl-C leaves the current session unchanged.
+
+```
+» /history
+
+  Resume a saved chat
+  > Rotating the OpenSearch admin password  ·  2h ago  ·  4 turns
+    Bedrock inference setup                 ·  1d ago  ·  6 turns
+```
+
+**Where saved chats live.** When you chat through a running `ragd` daemon — the browser UI and the
+CLI when the daemon is up — saved chats are stored by the daemon under `$SNAP_COMMON/ragd/chats/`,
+so the UI and the CLI share one history. When you chat without a daemon (direct mode), they are
+stored client-locally under your config directory (`~/.config/rag-cli/chats/`); that store is
+separate from the daemon's. Either way the transcripts never leave the machine.
+
 ---
 
 ### How RAG works in chat

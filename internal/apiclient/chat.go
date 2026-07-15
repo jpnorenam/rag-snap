@@ -7,6 +7,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/jpnorenam/rag-snap/internal/chatstore"
 )
 
 // ChatControl is a client→server control frame on the chat websocket.
@@ -14,34 +15,60 @@ type ChatControl struct {
 	Type    string   `json:"type"`
 	Content string   `json:"content,omitempty"`
 	Bases   []string `json:"bases,omitempty"`
+	Title   string   `json:"title,omitempty"`
 }
 
-// ChatServerMessage is a server→client frame on the chat websocket.
+// ChatServerMessage is a server→client frame on the chat websocket. ID and Title
+// carry the saved-chat identity on a "saved" frame.
 type ChatServerMessage struct {
 	Type    string   `json:"type"`
 	Content string   `json:"content,omitempty"`
 	Bases   []string `json:"bases,omitempty"`
 	Error   string   `json:"error,omitempty"`
+	ID      string   `json:"id,omitempty"`
+	Title   string   `json:"title,omitempty"`
 }
 
-// ChatSession is an open chat websocket plus the resolved model.
+// RestoredChat is the transcript and knowledge-base context recovered when a
+// session is started by resuming a saved chat.
+type RestoredChat struct {
+	ID           string           `json:"id"`
+	Title        string           `json:"title"`
+	Turns        []chatstore.Turn `json:"turns"`
+	Bases        []string         `json:"bases"`
+	DroppedBases []string         `json:"dropped_bases"`
+}
+
+// ChatSession is an open chat websocket plus the resolved model. Restored is set
+// only when the session was started from a saved chat via ResumeChat.
 type ChatSession struct {
-	conn  *websocket.Conn
-	Model string
+	conn     *websocket.Conn
+	Model    string
+	Restored *RestoredChat
 }
 
 // StartChat creates a chat session via POST /1.0/chat and dials the resulting
 // websocket operation, returning a live session. bases/model are optional.
 func (c *Client) StartChat(ctx context.Context, model string, bases []string, temperature float64) (*ChatSession, error) {
-	body := map[string]any{}
+	body := map[string]any{"temperature": temperature}
 	if model != "" {
 		body["model"] = model
 	}
 	if len(bases) > 0 {
 		body["bases"] = bases
 	}
-	body["temperature"] = temperature
+	return c.openChat(ctx, body)
+}
 
+// ResumeChat starts a chat session seeded from the saved chat with id, returning
+// the live session with Restored populated from the daemon's session metadata.
+func (c *Client) ResumeChat(ctx context.Context, id string) (*ChatSession, error) {
+	return c.openChat(ctx, map[string]any{"resume": id})
+}
+
+// openChat posts the chat-start body, dials the returned websocket operation, and
+// parses the resolved model plus any restored-chat metadata.
+func (c *Client) openChat(ctx context.Context, body map[string]any) (*ChatSession, error) {
 	env, err := c.doJSON(ctx, "POST", "/1.0/chat", body)
 	if err != nil {
 		return nil, err
@@ -62,6 +89,18 @@ func (c *Client) StartChat(ctx context.Context, model string, bases []string, te
 	}
 	resolvedModel := op.MetadataString("model")
 
+	// The restored transcript/bases are carried in the operation's own metadata
+	// under "chat" when this was a resume.
+	var restored *RestoredChat
+	if raw, ok := op.Metadata["chat"]; ok {
+		if b, err := json.Marshal(raw); err == nil {
+			var rc RestoredChat
+			if json.Unmarshal(b, &rc) == nil {
+				restored = &rc
+			}
+		}
+	}
+
 	// Dial over the same unix socket. The host in the URL is ignored by the
 	// unix dialer; the path carries the operation websocket endpoint.
 	dialURL := fakeHost + wsURL + "?secret=" + secret
@@ -73,12 +112,18 @@ func (c *Client) StartChat(ctx context.Context, model string, bases []string, te
 		_ = resp.Body.Close()
 	}
 	conn.SetReadLimit(1 << 20)
-	return &ChatSession{conn: conn, Model: resolvedModel}, nil
+	return &ChatSession{conn: conn, Model: resolvedModel, Restored: restored}, nil
 }
 
 // Prompt sends a prompt frame.
 func (s *ChatSession) Prompt(ctx context.Context, text string) error {
 	return wsjson.Write(ctx, s.conn, ChatControl{Type: "prompt", Content: text})
+}
+
+// Save sends a save control frame; the daemon replies with a "saved" or "error"
+// frame the caller reads next.
+func (s *ChatSession) Save(ctx context.Context, title string) error {
+	return wsjson.Write(ctx, s.conn, ChatControl{Type: "save", Title: title})
 }
 
 // SetActiveBases sends a set-active-kbs control frame.

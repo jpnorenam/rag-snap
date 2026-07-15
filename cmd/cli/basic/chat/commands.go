@@ -15,6 +15,8 @@ import (
 const (
 	cmdUseKnowledge = "/use-knowledge"
 	cmdSearch       = "/search"
+	cmdSave         = "/save"
+	cmdHistory      = "/history"
 )
 
 // slashCommand describes a registered slash command and its argument syntax.
@@ -27,6 +29,8 @@ type slashCommand struct {
 var slashCommands = []slashCommand{
 	{name: cmdUseKnowledge},
 	{name: cmdSearch, syntax: "[-k N] <query>"},
+	{name: cmdSave, syntax: "[title]"},
+	{name: cmdHistory},
 }
 
 // syntaxHint returns the argument syntax to show as dimmed ghost text when

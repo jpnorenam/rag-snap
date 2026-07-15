@@ -76,7 +76,8 @@ definitions:
         description: |-
             chatStartRequest is the body of POST /1.0/chat. All fields are optional: the
             model falls back to config/server lookup, and the active bases and
-            temperature default to the chat REPL's behaviour.
+            temperature default to the chat REPL's behaviour. Resume, when set, seeds the
+            session from the saved chat with that id (its transcript and active bases).
         properties:
             bases:
                 items:
@@ -86,6 +87,9 @@ definitions:
             model:
                 type: string
                 x-go-name: Model
+            resume:
+                type: string
+                x-go-name: Resume
             temperature:
                 format: double
                 type: number
@@ -299,6 +303,56 @@ paths:
             summary: Start a chat session.
             tags:
                 - chat
+    /1.0/chats:
+        get:
+            description: |-
+                Returns saved chat summaries newest-first by last-updated time, without the
+                full transcript. An optional `search` query parameter filters by
+                case-insensitive substring match against title and transcript content.
+            operationId: chatsList
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: List saved chats.
+            tags:
+                - chats
+    /1.0/chats/{id}:
+        delete:
+            description: |-
+                Removes the saved chat. A live session resumed from it is unaffected; a later
+                save from such a session recreates the record under the same id.
+            operationId: chatDelete
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Delete a saved chat.
+            tags:
+                - chats
+        get:
+            description: Returns the full saved chat, including its ordered transcript.
+            operationId: chatGet
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Return one saved chat.
+            tags:
+                - chats
     /1.0/config:
         get:
             description: |-

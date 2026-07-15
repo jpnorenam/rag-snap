@@ -137,6 +137,17 @@ $sidebar-accent: #e95420; // Ubuntu orange
   color: rgba(255, 255, 255, 0.6);
 }
 
+// Trailing external-link glyph on the Documentation entry: muted, brightens with
+// the row on hover.
+.app-sidebar__external {
+  flex-shrink: 0;
+  color: rgba(255, 255, 255, 0.5);
+
+  .app-sidebar__item:hover & {
+    color: #fff;
+  }
+}
+
 .app-sidebar__footer {
   border-top: 1px solid rgba(255, 255, 255, 0.12);
   padding: 0.25rem 0;
@@ -194,7 +205,8 @@ $sidebar-accent: #e95420; // Ubuntu orange
 
   .app-sidebar__title,
   .app-sidebar__label,
-  .app-sidebar__soon {
+  .app-sidebar__soon,
+  .app-sidebar__external {
     display: none;
   }
 
@@ -348,6 +360,132 @@ $sidebar-accent: #e95420; // Ubuntu orange
   gap: 0.5rem;
   font-size: 0.875rem;
   color: var(--vf-color-text-muted);
+}
+
+.chat__history-toggle {
+  margin-right: 0.5rem;
+}
+
+// ---------------------------------------------------------------------------
+// Chat: slash-command hints and saved-chat history panel
+// ---------------------------------------------------------------------------
+
+.chat__composer-wrap {
+  position: sticky;
+  bottom: 0;
+  background-color: var(--vf-color-background-default);
+}
+
+// Filtering hint list shown above the composer while typing a slash command.
+.chat-hints {
+  list-style: none;
+  margin: 0 0 0.25rem;
+  padding: 0.25rem;
+  border: 1px solid var(--vf-color-border-low-contrast);
+  border-radius: 0.25rem;
+  background-color: var(--vf-color-background-alt);
+}
+
+.chat-hints__item {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.125rem;
+  cursor: pointer;
+
+  &.is-active {
+    background-color: var(--vf-color-background-hover);
+  }
+}
+
+.chat-hints__name {
+  font-family: unquote(vanilla-framework.$font-monospace);
+}
+
+.chat-hints__syntax {
+  font-size: 0.875rem;
+}
+
+// Saved-chat history panel: anchored to the top-right, above the chat content.
+.chat-history {
+  position: fixed;
+  top: 3.5rem;
+  right: 1rem;
+  z-index: 40;
+  width: min(24rem, calc(100vw - 2rem));
+  max-height: calc(100vh - 5rem);
+  display: flex;
+  flex-direction: column;
+  padding: 1rem;
+  border: 1px solid var(--vf-color-border-low-contrast);
+  border-radius: 0.25rem;
+  background-color: var(--vf-color-background-default);
+  box-shadow: 0 0.25rem 1rem rgba(0, 0, 0, 0.2);
+}
+
+.chat-history__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.chat-history__close {
+  padding: 0;
+}
+
+.chat-history__search {
+  margin-bottom: 0.75rem;
+}
+
+.chat-history__body {
+  overflow-y: auto;
+  min-height: 3rem;
+}
+
+.chat-history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.chat-history__row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--vf-color-border-low-contrast);
+}
+
+.chat-history__resume {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.375rem 0.5rem;
+  border: none;
+  border-radius: 0.125rem;
+  text-align: left;
+  background: none;
+  cursor: pointer;
+
+  &:hover {
+    background-color: var(--vf-color-background-hover);
+  }
+}
+
+.chat-history__title {
+  font-weight: 400;
+}
+
+.chat-history__meta {
+  display: block;
+}
+
+.chat-history__delete {
+  flex: 0 0 auto;
+  padding: 0.25rem;
 }
 
 // ---------------------------------------------------------------------------

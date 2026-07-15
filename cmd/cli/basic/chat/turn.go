@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
+	"github.com/jpnorenam/rag-snap/internal/chatstore"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 )
@@ -40,6 +41,13 @@ type LiveSession struct {
 	params  openai.ChatCompletionNewParams
 	session *Session
 	verbose bool
+	// systemPrompt is the resolved system prompt the session started with, kept
+	// so Restore can rebuild history under the same prompt.
+	systemPrompt string
+	// chatID pins the saved-chat record this session persists to, so a second
+	// save updates in place rather than creating a duplicate. Empty until the
+	// session is resumed from a saved chat or saved for the first time.
+	chatID string
 }
 
 // NewLiveSession creates a session against the inference server at baseURL.
@@ -75,13 +83,35 @@ func NewLiveSession(baseURL, model string, knowledgeClient *knowledge.OpenSearch
 			EmbeddingModelID: embeddingModelID,
 			ActiveIndexes:    indexes,
 		},
-		verbose: verbose,
+		verbose:      verbose,
+		systemPrompt: systemPrompt,
 	}
 	return ls, nil
 }
 
 // Model returns the resolved chat model name.
 func (ls *LiveSession) Model() string { return ls.params.Model }
+
+// Restore seeds the session with a saved conversation, keeping the system prompt
+// resolved at construction, and pins the chat id so a later Save updates the same
+// record. It is called before the session's websocket is driven.
+func (ls *LiveSession) Restore(turns []chatstore.Turn, chatID string) {
+	ls.params.Messages = turnsToHistory(ls.systemPrompt, turns)
+	ls.chatID = chatID
+}
+
+// Turns returns the conversation so far as store turns (system prompt excluded),
+// ready to persist.
+func (ls *LiveSession) Turns() []chatstore.Turn {
+	return historyToTurns(ls.params.Messages)
+}
+
+// ChatID returns the pinned saved-chat id, or empty if this session has not been
+// resumed from or saved to a record yet.
+func (ls *LiveSession) ChatID() string { return ls.chatID }
+
+// SetChatID pins the saved-chat id, so the next save updates that record.
+func (ls *LiveSession) SetChatID(id string) { ls.chatID = id }
 
 // SetActiveBases replaces the session's active knowledge bases (by name); they
 // are resolved to index names. Retrieval for subsequent prompts uses this set.

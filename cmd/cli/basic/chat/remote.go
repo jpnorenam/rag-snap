@@ -30,7 +30,9 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 	if err != nil {
 		return fmt.Errorf("starting chat session: %w", err)
 	}
-	defer session.Close()
+	// A closure (not defer session.Close()) so a session swapped in by /history is
+	// the one closed at exit, and the original was already closed at the swap.
+	defer func() { session.Close() }()
 
 	if session.Model != "" {
 		fmt.Printf("Using model %v (via ragd)\n", session.Model)
@@ -104,6 +106,29 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 		// query plus the locally-tracked active bases and renders the hits.
 		if verb, args, _ := strings.Cut(strings.TrimSpace(prompt), " "); verb == cmdSearch {
 			remoteSearch(ctx, dc, args, activeBases)
+			continue
+		}
+		// /save persists the daemon-owned session to the shared chat store.
+		if verb, args, _ := strings.Cut(strings.TrimSpace(prompt), " "); verb == cmdSave {
+			remoteSave(ctx, session, args)
+			continue
+		}
+		// /history lists the shared store and, on selection, closes this session
+		// and starts a fresh one resumed from the chosen chat. Readline is torn
+		// down around the huh picker, as for /use-knowledge.
+		if verb, _, _ := strings.Cut(strings.TrimSpace(prompt), " "); verb == cmdHistory {
+			rl.Close()
+			newSession, newBases, ok := remoteHistory(ctx, dc)
+			if ok {
+				session.Close()
+				session = newSession
+				activeBases = newBases
+			}
+			rl, err = readline.NewEx(rlConfig)
+			if err != nil {
+				return fmt.Errorf("error reinitializing readline: %w", err)
+			}
+			log.SetOutput(rl.Stderr())
 			continue
 		}
 		if strings.HasPrefix(prompt, "/") {
@@ -201,6 +226,66 @@ func remoteSelectBasesMenu(ctx context.Context, dc *apiclient.Client, current []
 		return nil, false, nil
 	}
 	return selected, true, nil
+}
+
+// remoteSave sends a save control frame and prints the daemon's acknowledgement.
+// The daemon owns the transcript, so the REPL only forwards the optional title.
+func remoteSave(ctx context.Context, session *apiclient.ChatSession, args string) {
+	if err := session.Save(ctx, strings.TrimSpace(args)); err != nil {
+		fmt.Printf("Could not save chat: %v\n", err)
+		return
+	}
+	msg, err := session.Read(ctx)
+	if err != nil {
+		fmt.Printf("Could not save chat: %v\n", err)
+		return
+	}
+	switch msg.Type {
+	case "saved":
+		fmt.Printf("Saved chat as %q.\n", msg.Title)
+	case "error":
+		fmt.Println(msg.Error)
+	default:
+		fmt.Printf("Unexpected response while saving: %s\n", msg.Type)
+	}
+}
+
+// remoteHistory lists the shared chat store, lets the user pick a chat, and
+// resumes it as a new session. It returns the new session and its restored active
+// bases; ok is false when the user cancelled or nothing could be resumed. On
+// success the caller closes the previous session.
+func remoteHistory(ctx context.Context, dc *apiclient.Client) (*apiclient.ChatSession, []string, bool) {
+	stop := common.StartProgressSpinner("Fetching saved chats")
+	summaries, err := dc.ListChats(ctx, "")
+	stop()
+	if err != nil {
+		fmt.Printf("Saved chats are not available over this ragd (it may be an older version): %v\n", err)
+		return nil, nil, false
+	}
+
+	picked, ok := pickSavedChat(summaries)
+	if !ok {
+		return nil, nil, false
+	}
+
+	stop = common.StartProgressSpinner("Resuming chat")
+	session, err := dc.ResumeChat(ctx, picked.ID)
+	stop()
+	if err != nil {
+		fmt.Printf("Could not resume chat: %v\n", err)
+		return nil, nil, false
+	}
+
+	var bases []string
+	if session.Restored != nil {
+		renderTranscript(session.Restored.Turns)
+		bases = session.Restored.Bases
+		if len(session.Restored.DroppedBases) > 0 {
+			fmt.Printf("Note: skipping knowledge base(s) that no longer exist: %s\n", strings.Join(session.Restored.DroppedBases, ", "))
+		}
+		fmt.Printf("Resumed %q. Continue the conversation below.\n", session.Restored.Title)
+	}
+	return session, bases, true
 }
 
 // remoteSearch implements /search over the daemon: it parses the optional

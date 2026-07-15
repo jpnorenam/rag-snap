@@ -9,7 +9,11 @@ import { usePathname } from "next/navigation";
 // §9: non-navigable items are never links or buttons). The dark-mode toggle
 // lives in the footer, and Status is pinned just above it.
 
-type IconName = "chat" | "prompt" | "knowledge" | "search" | "rfp" | "status";
+type IconName = "chat" | "prompt" | "knowledge" | "search" | "rfp" | "status" | "docs";
+
+// External documentation for the snap, opened in a new tab from the footer
+// (mirroring lxd-ui's bottom-of-rail Documentation link).
+const DOCS_URL = "https://github.com/jpnorenam/rag-snap/tree/main/docs";
 
 interface NavItem {
   id: string;
@@ -82,6 +86,18 @@ export default function Sidebar({ darkMode, onToggleDark }: Props) {
       </ul>
 
       <div className="app-sidebar__footer">
+        <a
+          href={DOCS_URL}
+          className="app-sidebar__item"
+          target="_blank"
+          rel="noreferrer noopener"
+          aria-label="Documentation (opens in a new tab)"
+          title="Documentation"
+        >
+          <NavIcon name="docs" />
+          <span className="app-sidebar__label">Documentation</span>
+          <ExternalIcon />
+        </a>
         <NavEntry item={STATUS_ITEM} current={current} />
         <button
           type="button"
@@ -196,5 +212,33 @@ function NavIcon({ name }: { name: IconName }) {
           <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
         </svg>
       );
+    case "docs":
+      return (
+        <svg {...common}>
+          <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+          <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+        </svg>
+      );
   }
+}
+
+// ExternalIcon is the small arrow-out-of-box glyph marking a link that opens off
+// the app (in a new tab), pinned to the end of the row like the "Soon" badge.
+function ExternalIcon() {
+  return (
+    <svg
+      className="app-sidebar__external"
+      width={14}
+      height={14}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M15 3h6v6M10 14 21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </svg>
+  );
 }
