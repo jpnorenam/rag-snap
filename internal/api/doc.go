@@ -122,6 +122,18 @@ type knowledgeExportBody struct {
 	Body exportRequest
 }
 
+// swagger:parameters gdriveResolve
+type gdriveResolveBody struct {
+	// in: body
+	Body gdriveResolveRequest
+}
+
+// swagger:parameters gdriveImport
+type gdriveImportBody struct {
+	// in: body
+	Body gdriveImportRequest
+}
+
 // swagger:parameters sourcesIngest
 type sourcesIngestBody struct {
 	// in: body

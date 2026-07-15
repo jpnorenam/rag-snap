@@ -15,12 +15,25 @@ import (
 
 const driveAPIBase = "https://www.googleapis.com/drive/v3/files"
 
+// ArchiveStem derives a knowledge-base name from an archive filename by
+// stripping the archive extension and any "-export" suffix, mirroring the name
+// the CLI derives during Drive import.
+func ArchiveStem(name string) string {
+	name = strings.TrimSuffix(name, ".tar.gz")
+	name = strings.TrimSuffix(name, ".tgz")
+	name = strings.TrimSuffix(name, "-export")
+	return name
+}
+
 // DriveArchive describes a .tar.gz file discovered in a Google Drive folder.
 type DriveArchive struct {
 	ID   string
 	Name string
 	// Size is the file size in bytes as reported by the Drive API, or -1 when unavailable.
 	Size int64
+	// Modified is the file's last-modified time (RFC 3339) as reported by the
+	// Drive API, or "" when unavailable.
+	Modified string
 }
 
 // DriveURLKind distinguishes a Drive folder URL from a single-file URL.
@@ -63,13 +76,25 @@ func ParseDriveURL(rawURL string) (DriveURLKind, string, error) {
 
 // driveFilesPage is the JSON envelope from Drive API files.list.
 type driveFilesPage struct {
-	Files []struct {
-		ID   string `json:"id"`
-		Name string `json:"name"`
-		// The Drive API encodes file size as a decimal string, not a JSON number.
-		Size string `json:"size"`
-	} `json:"files"`
-	NextPageToken string `json:"nextPageToken"`
+	Files         []driveFileMeta `json:"files"`
+	NextPageToken string          `json:"nextPageToken"`
+}
+
+// driveFileMeta is the metadata Drive returns for a single file.
+type driveFileMeta struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	// The Drive API encodes file size as a decimal string, not a JSON number.
+	Size         string `json:"size"`
+	ModifiedTime string `json:"modifiedTime"`
+}
+
+// toArchive converts Drive file metadata into a DriveArchive, parsing the
+// decimal-string size best-effort.
+func (m driveFileMeta) toArchive() DriveArchive {
+	var size int64 = -1
+	fmt.Sscanf(m.Size, "%d", &size) //nolint:errcheck // size is best-effort
+	return DriveArchive{ID: m.ID, Name: m.Name, Size: size, Modified: m.ModifiedTime}
 }
 
 // driveGET performs an authenticated GET against the Drive API.
@@ -96,7 +121,7 @@ func ListDriveArchives(ctx context.Context, folderID, accessToken string) ([]Dri
 			"'%s' in parents and name contains '.tar.gz' and trashed = false",
 			folderID,
 		))
-		q.Set("fields", "nextPageToken,files(id,name,size)")
+		q.Set("fields", "nextPageToken,files(id,name,size,modifiedTime)")
 		q.Set("pageSize", "100")
 		if pageToken != "" {
 			q.Set("pageToken", pageToken)
@@ -122,9 +147,7 @@ func ListDriveArchives(ctx context.Context, folderID, accessToken string) ([]Dri
 		resp.Body.Close()
 
 		for _, f := range page.Files {
-			var size int64 = -1
-			fmt.Sscanf(f.Size, "%d", &size) //nolint:errcheck // size is best-effort
-			all = append(all, DriveArchive{ID: f.ID, Name: f.Name, Size: size})
+			all = append(all, f.toArchive())
 		}
 
 		if page.NextPageToken == "" {
@@ -160,22 +183,66 @@ func DownloadDriveArchive(ctx context.Context, archive DriveArchive, accessToken
 	return streamToTempFile(resp.Body, archive.Name)
 }
 
-// driveFileMetadata is the JSON response from Drive API files.get.
-type driveFileMetadata struct {
-	Name string `json:"name"`
-}
-
 // GetDriveFileName fetches the filename of a single Drive file by ID.
 // accessToken must be a valid OAuth2 access token with drive.readonly scope.
 func GetDriveFileName(ctx context.Context, fileID, accessToken string) (string, error) {
+	archive, err := GetDriveFile(ctx, fileID, accessToken)
+	if err != nil {
+		return "", err
+	}
+	return archive.Name, nil
+}
+
+// GetDriveFile fetches a single Drive file's metadata (name, size, modified) by
+// ID. accessToken must be a valid OAuth2 access token with drive.readonly scope.
+func GetDriveFile(ctx context.Context, fileID, accessToken string) (DriveArchive, error) {
 	q := url.Values{}
-	q.Set("fields", "name")
+	q.Set("fields", "id,name,size,modifiedTime")
 	apiURL := fmt.Sprintf("%s/%s?%s", driveAPIBase, fileID, q.Encode())
 
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := driveGET(ctx, client, apiURL, accessToken)
 	if err != nil {
-		return "", fmt.Errorf("fetching file metadata: %w", err)
+		return DriveArchive{}, fmt.Errorf("fetching file metadata: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return DriveArchive{}, fmt.Errorf("Drive API returned HTTP %d: %s",
+			resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+
+	var meta driveFileMeta
+	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
+		return DriveArchive{}, fmt.Errorf("decoding file metadata: %w", err)
+	}
+	if meta.ID == "" {
+		meta.ID = fileID
+	}
+	return meta.toArchive(), nil
+}
+
+// driveAboutResponse is the JSON response from Drive API about.get.
+type driveAboutResponse struct {
+	User struct {
+		EmailAddress string `json:"emailAddress"`
+		DisplayName  string `json:"displayName"`
+	} `json:"user"`
+}
+
+// GetDriveAccountEmail returns the email address of the authenticated account,
+// best-effort. It uses the Drive about.get endpoint, which the drive.readonly
+// scope already permits. Returns ("", nil) when the email is unavailable.
+func GetDriveAccountEmail(ctx context.Context, accessToken string) (string, error) {
+	q := url.Values{}
+	q.Set("fields", "user(emailAddress,displayName)")
+	apiURL := "https://www.googleapis.com/drive/v3/about?" + q.Encode()
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := driveGET(ctx, client, apiURL, accessToken)
+	if err != nil {
+		return "", fmt.Errorf("fetching account info: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -185,11 +252,11 @@ func GetDriveFileName(ctx context.Context, fileID, accessToken string) (string, 
 			resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
-	var meta driveFileMetadata
-	if err := json.NewDecoder(resp.Body).Decode(&meta); err != nil {
-		return "", fmt.Errorf("decoding file metadata: %w", err)
+	var about driveAboutResponse
+	if err := json.NewDecoder(resp.Body).Decode(&about); err != nil {
+		return "", fmt.Errorf("decoding account info: %w", err)
 	}
-	return meta.Name, nil
+	return about.User.EmailAddress, nil
 }
 
 // streamToTempFile copies r into a new temporary .tar.gz file and returns the

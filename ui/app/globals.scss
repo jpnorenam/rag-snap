@@ -734,3 +734,89 @@ $sidebar-accent: #e95420; // Ubuntu orange
     grid-template-columns: 1fr;
   }
 }
+
+// ---------------------------------------------------------------------------
+// Google Drive import  --- gdrive import ---
+// ---------------------------------------------------------------------------
+.gdrive-import {
+  margin-top: 0.5rem;
+}
+
+// Connected-account bar shown above the locate/pick steps.
+.gdrive-import__account {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
+  border-bottom: 1px solid var(--vf-color-border-default);
+}
+
+.gdrive-import__loading,
+.gdrive-import__waiting {
+  padding: 0.5rem 0;
+}
+
+// Connect card: centered icon + one sentence + the connect action.
+.gdrive-import__connect-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  text-align: center;
+  padding: 1.5rem 1rem;
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.125rem;
+  background-color: var(--vf-color-background-alt);
+}
+
+.gdrive-import__icon {
+  color: var(--vf-color-text-muted);
+}
+
+// Archive checkbox group: scrolls within its own box when long.
+.gdrive-import__list {
+  margin: 0 0 1rem;
+  padding: 0;
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.125rem;
+  max-height: 18rem;
+  overflow-y: auto;
+}
+
+// Select-all header row: a single-line Vanilla checkbox with a divider under it.
+.gdrive-import__selectall {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--vf-color-border-default);
+  font-weight: 500;
+}
+
+// Archive row: the checkbox (name) on the left, meta pushed to the right. The
+// checkbox keeps a single-line Vanilla label so its box + tick render correctly.
+.gdrive-import__item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.5rem 0.75rem;
+
+  &:not(:last-child) {
+    border-bottom: 1px solid var(--vf-color-border-default);
+  }
+}
+
+.gdrive-import__item-check {
+  margin: 0;
+  min-width: 0;
+
+  .p-checkbox__label {
+    word-break: break-word;
+  }
+}
+
+.gdrive-import__meta {
+  flex-shrink: 0;
+  white-space: nowrap;
+}

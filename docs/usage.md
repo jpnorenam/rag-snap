@@ -642,6 +642,13 @@ rag-cli.rag knowledge import project-docs-staging \
     --url "https://drive.google.com/file/d/FILE_ID/view"
 ```
 
+> **Browser UI:** the local UI's **Import** dialog can also import from Google Drive (choose
+> **From Google Drive**), reaching parity with `import --url`. There, the daemon mediates the OAuth
+> consent (it opens Google's consent screen in a new tab and stores the token on the machine), so the
+> UI's Drive connection is **independent of the CLI's** cached token — connecting in one does not
+> connect the other. The daemon path requires `gdrive.client.id` and `gdrive.client.secret` to be set
+> in package config.
+
 > **Note on authentication:** `knowledge import --url` requires a Google account that has at least
 > viewer access to the Drive resource. The OAuth token is cached at
 > `~/.config/rag-cli/gdrive-token.json` (or `$SNAP_USER_DATA/gdrive-token.json` when running as a

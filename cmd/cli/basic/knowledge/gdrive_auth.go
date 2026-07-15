@@ -167,15 +167,57 @@ func openBrowser(rawURL string) {
 	_ = exec.Command(cmd, args...).Start()
 }
 
-// runLoopbackFlow executes the OAuth2 Authorization Code flow with PKCE using a
-// loopback redirect URI. It starts a temporary HTTP server on a random localhost
-// port, opens the user's browser, waits for the callback, then exchanges the
-// authorization code for tokens.
+// driveFlowTimeout bounds how long a loopback OAuth flow waits for the user to
+// complete Google's consent screen before giving up.
+const driveFlowTimeout = 5 * time.Minute
+
+// callbackResult carries the authorization code (or an error) from the loopback
+// callback handler back to the awaiting caller.
+type callbackResult struct {
+	code string
+	err  error
+}
+
+// DriveOAuthFlow is an in-progress OAuth2 Authorization-Code-with-PKCE loopback
+// flow. It binds an ephemeral loopback callback listener and builds Google's
+// consent URL; the caller opens that URL in a browser and then blocks on Await
+// for the redirect. The flow is single-use: Await releases the listener.
 //
-// This flow is required for the drive.readonly scope, which Google does not
-// permit via the device authorization grant. Use a "Desktop app" OAuth2 client.
-func runLoopbackFlow(ctx context.Context, clientID, clientSecret string) (*DriveToken, error) {
+// This loopback flow is required for the drive.readonly scope, which Google does
+// not permit via the device authorization grant. Use a "Desktop app" client.
+type DriveOAuthFlow struct {
+	clientID     string
+	clientSecret string
+	verifier     string
+	state        string
+	redirectURI  string
+	consentURL   string
+	srv          *http.Server
+	resultCh     chan callbackResult
+}
+
+// StartDriveOAuthFlow resolves the configured client credentials and starts a
+// loopback OAuth flow: it binds an ephemeral 127.0.0.1 callback listener, builds
+// the consent URL, and begins serving the callback in the background. The daemon
+// uses this to mediate consent on behalf of the browser; the CLI uses the
+// lower-level startDriveOAuthFlow directly.
+func StartDriveOAuthFlow(cfg storage.Config) (*DriveOAuthFlow, error) {
+	clientID, clientSecret, err := resolveClientCredentials(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return startDriveOAuthFlow(clientID, clientSecret)
+}
+
+// startDriveOAuthFlow binds the callback listener, generates the PKCE verifier
+// and a state nonce, builds the consent URL, and starts serving the callback.
+func startDriveOAuthFlow(clientID, clientSecret string) (*DriveOAuthFlow, error) {
 	verifier, err := pkceVerifier()
+	if err != nil {
+		return nil, err
+	}
+	// The state nonce guards the callback against cross-flow/CSRF confusion.
+	state, err := pkceVerifier()
 	if err != nil {
 		return nil, err
 	}
@@ -195,79 +237,128 @@ func runLoopbackFlow(ctx context.Context, clientID, clientSecret string) (*Drive
 		"scope":                 {driveScope},
 		"access_type":           {"offline"},
 		"prompt":                {"consent"}, // ensures a refresh token is returned
+		"state":                 {state},
 		"code_challenge":        {pkceChallenge(verifier)},
 		"code_challenge_method": {"S256"},
 	}
-	fullAuthURL := driveAuthURL + "?" + authParams.Encode()
 
-	fmt.Printf("\nTo authenticate with Google Drive, open the following URL in your browser:\n\n")
-	fmt.Printf("  %s\n\n", fullAuthURL)
-	fmt.Printf("Attempting to open your browser automatically...\n")
-	openBrowser(fullAuthURL)
-	fmt.Printf("Waiting for authorization")
-
-	// codeCh receives the authorization code from the callback handler.
-	type callbackResult struct {
-		code string
-		err  error
+	f := &DriveOAuthFlow{
+		clientID:     clientID,
+		clientSecret: clientSecret,
+		verifier:     verifier,
+		state:        state,
+		redirectURI:  redirectURI,
+		consentURL:   driveAuthURL + "?" + authParams.Encode(),
+		resultCh:     make(chan callbackResult, 1),
 	}
-	resultCh := make(chan callbackResult, 1)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if errParam := r.URL.Query().Get("error"); errParam != "" {
-			desc := r.URL.Query().Get("error_description")
-			http.Error(w, "Authentication failed: "+errParam, http.StatusBadRequest)
-			resultCh <- callbackResult{err: fmt.Errorf("authorization denied: %s (%s)", errParam, desc)}
-			return
+	mux.HandleFunc("/", f.handleCallback)
+	f.srv = &http.Server{Handler: mux}
+	go f.srv.Serve(ln) //nolint:errcheck
+
+	return f, nil
+}
+
+// handleCallback validates the state nonce and extracts the authorization code
+// (or an error) from Google's redirect, forwarding it to Await via resultCh.
+func (f *DriveOAuthFlow) handleCallback(w http.ResponseWriter, r *http.Request) {
+	if st := r.URL.Query().Get("state"); st != f.state {
+		http.Error(w, "Invalid state parameter", http.StatusBadRequest)
+		f.resultCh <- callbackResult{err: fmt.Errorf("callback state mismatch")}
+		return
+	}
+	if errParam := r.URL.Query().Get("error"); errParam != "" {
+		desc := r.URL.Query().Get("error_description")
+		http.Error(w, "Authentication failed: "+errParam, http.StatusBadRequest)
+		f.resultCh <- callbackResult{err: fmt.Errorf("authorization denied: %s (%s)", errParam, desc)}
+		return
+	}
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		http.Error(w, "Missing authorization code", http.StatusBadRequest)
+		f.resultCh <- callbackResult{err: fmt.Errorf("callback received no authorization code")}
+		return
+	}
+	w.Header().Set("Content-Type", "text/html")
+	fmt.Fprint(w, "<html><body><h2>Authentication successful!</h2><p>You may close this window and return to the application.</p></body></html>")
+	f.resultCh <- callbackResult{code: code}
+}
+
+// ConsentURL is the Google consent URL to open in a browser. It carries no
+// client secret (PKCE keeps that server-side) and is safe to hand to the UI.
+func (f *DriveOAuthFlow) ConsentURL() string { return f.consentURL }
+
+// Close shuts down the callback listener. It is safe to call more than once.
+func (f *DriveOAuthFlow) Close() {
+	if f.srv != nil {
+		_ = f.srv.Shutdown(context.Background())
+	}
+}
+
+// Await blocks until the callback is received, the context is cancelled, or the
+// timeout elapses, then exchanges the authorization code for a token. It always
+// releases the callback listener before returning.
+func (f *DriveOAuthFlow) Await(ctx context.Context, timeout time.Duration) (*DriveToken, error) {
+	defer f.Close()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	var code string
+	select {
+	case res := <-f.resultCh:
+		if res.err != nil {
+			return nil, res.err
 		}
-		code := r.URL.Query().Get("code")
-		if code == "" {
-			http.Error(w, "Missing authorization code", http.StatusBadRequest)
-			resultCh <- callbackResult{err: fmt.Errorf("callback received no authorization code")}
-			return
-		}
-		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprint(w, "<html><body><h2>Authentication successful!</h2><p>You may close this window and return to the terminal.</p></body></html>")
-		resultCh <- callbackResult{code: code}
-	})
-
-	srv := &http.Server{Handler: mux}
-	go srv.Serve(ln) //nolint:errcheck
-
-	// Poll for the dot animation while waiting.
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	timeout := time.NewTimer(5 * time.Minute)
-	defer timeout.Stop()
-
-	var authCode string
-	for {
-		select {
-		case res := <-resultCh:
-			fmt.Println(" authorized.")
-			_ = srv.Shutdown(context.Background())
-			if res.err != nil {
-				return nil, res.err
-			}
-			authCode = res.code
-			goto exchange
-		case <-ticker.C:
-			fmt.Print(".")
-		case <-timeout.C:
-			_ = srv.Shutdown(context.Background())
-			fmt.Println()
-			return nil, fmt.Errorf("authentication timed out — no response received within 5 minutes")
-		case <-ctx.Done():
-			_ = srv.Shutdown(context.Background())
-			fmt.Println()
-			return nil, ctx.Err()
-		}
+		code = res.code
+	case <-timer.C:
+		return nil, fmt.Errorf("authentication timed out — no response received within %s", timeout)
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 
-exchange:
-	return exchangeCode(ctx, authCode, redirectURI, verifier, clientID, clientSecret)
+	return exchangeCode(ctx, code, f.redirectURI, f.verifier, f.clientID, f.clientSecret)
+}
+
+// runLoopbackFlow drives the loopback OAuth flow interactively for the CLI:
+// it prints the consent URL, opens the browser, animates a wait, then blocks
+// for the callback.
+func runLoopbackFlow(ctx context.Context, clientID, clientSecret string) (*DriveToken, error) {
+	flow, err := startDriveOAuthFlow(clientID, clientSecret)
+	if err != nil {
+		return nil, err
+	}
+
+	fmt.Printf("\nTo authenticate with Google Drive, open the following URL in your browser:\n\n")
+	fmt.Printf("  %s\n\n", flow.ConsentURL())
+	fmt.Printf("Attempting to open your browser automatically...\n")
+	openBrowser(flow.ConsentURL())
+	fmt.Printf("Waiting for authorization")
+
+	// Animate dots on a ticker until Await returns.
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				fmt.Print(".")
+			}
+		}
+	}()
+
+	tok, err := flow.Await(ctx, driveFlowTimeout)
+	close(done)
+	if err != nil {
+		fmt.Println()
+		return nil, err
+	}
+	fmt.Println(" authorized.")
+	return tok, nil
 }
 
 // exchangeCode trades an authorization code for an access + refresh token pair.
@@ -388,4 +479,57 @@ func LoadOrAuthenticateDrive(ctx context.Context, cfg storage.Config) (string, e
 	}
 	_ = saveDriveToken(newTok)
 	return newTok.AccessToken, nil
+}
+
+// SaveDriveToken persists a Drive token to the on-disk cache. The daemon calls
+// this after completing an OAuth flow.
+func SaveDriveToken(tok *DriveToken) error { return saveDriveToken(tok) }
+
+// DriveConfigured reports whether Drive OAuth client credentials are available
+// (env vars or gdrive.client.id / gdrive.client.secret config).
+func DriveConfigured(cfg storage.Config) bool {
+	_, _, err := resolveClientCredentials(cfg)
+	return err == nil
+}
+
+// DriveAccessToken returns a valid Drive access token using only the cache and a
+// silent refresh — it never starts a browser flow. It returns ("", nil) when no
+// usable token is stored, so callers can distinguish "not connected" (empty
+// string, nil error) from a hard failure (non-nil error). Credentials must be
+// configured; an unconfigured daemon gets the resolve error.
+func DriveAccessToken(ctx context.Context, cfg storage.Config) (string, error) {
+	clientID, clientSecret, err := resolveClientCredentials(cfg)
+	if err != nil {
+		return "", err
+	}
+
+	tok, err := loadCachedDriveToken()
+	if err != nil {
+		return "", err
+	}
+	if tok.valid() {
+		return tok.AccessToken, nil
+	}
+	if tok != nil && tok.RefreshToken != "" {
+		refreshed, err := refreshDriveToken(ctx, tok, clientID, clientSecret)
+		if err == nil {
+			_ = saveDriveToken(refreshed)
+			return refreshed.AccessToken, nil
+		}
+		// Refresh token revoked or expired — treat as not connected.
+	}
+	return "", nil
+}
+
+// DeleteDriveToken removes the cached Drive token, disconnecting the account. A
+// missing token is not an error.
+func DeleteDriveToken() error {
+	path, err := driveTokenCachePath()
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("deleting token cache: %w", err)
+	}
+	return nil
 }

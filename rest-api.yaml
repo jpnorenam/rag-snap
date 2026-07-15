@@ -126,6 +126,34 @@ definitions:
         title: exportRequest is the body of POST /1.0/knowledge/{name}/export.
         type: object
         x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    gdriveImportRequest:
+        description: |-
+            gdriveImportRequest is the body of POST /1.0/knowledge/gdrive/import. Each
+            call imports one archive; the UI issues one call per selected archive so each
+            becomes an independently tracked operation.
+        properties:
+            force:
+                type: boolean
+                x-go-name: Force
+            id:
+                type: string
+                x-go-name: ID
+            name:
+                type: string
+                x-go-name: Name
+            target:
+                type: string
+                x-go-name: Target
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    gdriveResolveRequest:
+        properties:
+            url:
+                type: string
+                x-go-name: URL
+        title: gdriveResolveRequest is the body of POST /1.0/knowledge/gdrive/resolve.
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
     importRequest:
         properties:
             force:
@@ -592,11 +620,112 @@ paths:
             summary: Return source metadata.
             tags:
                 - knowledge
+    /1.0/knowledge/gdrive/connect:
+        post:
+            description: |-
+                Starts a loopback OAuth flow in the background and returns the Google consent
+                URL for the UI to open in a new tab. Does not block for consent; the UI polls
+                status for completion.
+            operationId: gdriveConnect
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "412":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Start the Google Drive OAuth flow.
+            tags:
+                - knowledge
+    /1.0/knowledge/gdrive/disconnect:
+        post:
+            description: Deletes the stored Drive token, disconnecting the account.
+            operationId: gdriveDisconnect
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Disconnect Google Drive.
+            tags:
+                - knowledge
+    /1.0/knowledge/gdrive/import:
+        post:
+            description: |-
+                Downloads a single Drive archive and imports it as a tracked async operation.
+                The UI issues one call per selected archive so each is tracked independently.
+            operationId: gdriveImport
+            parameters:
+                - in: body
+                  name: Body
+                  schema:
+                    $ref: '#/definitions/gdriveImportRequest'
+            responses:
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "412":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Import a Google Drive archive.
+            tags:
+                - knowledge
+    /1.0/knowledge/gdrive/resolve:
+        post:
+            description: |-
+                Resolves a Drive folder or file URL into the list of discovered .tar.gz
+                archives, distinguishing not found, no access, and unrecognised-URL errors.
+            operationId: gdriveResolve
+            parameters:
+                - in: body
+                  name: Body
+                  schema:
+                    $ref: '#/definitions/gdriveResolveRequest'
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "412":
+                    $ref: '#/responses/errorResponse'
+                "502":
+                    $ref: '#/responses/errorResponse'
+            summary: Resolve a Google Drive URL into archives.
+            tags:
+                - knowledge
+    /1.0/knowledge/gdrive/status:
+        get:
+            description: |-
+                Reports whether Drive import is configured, whether a valid token is stored,
+                whether an OAuth flow is pending, and the connected account when available.
+                The token itself is never returned.
+            operationId: gdriveStatus
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+            summary: Report Google Drive connection status.
+            tags:
+                - knowledge
     /1.0/knowledge/import:
         post:
             description: |-
-                Imports a base from a previously exported artifact as an async operation. The
-                interactive Google Drive auth flow is intentionally not exposed.
+                Imports a base from a previously exported artifact as an async operation. This
+                endpoint handles local uploads; Google Drive import has its own endpoints under
+                1.0/knowledge/gdrive (see handlers_gdrive.go).
             operationId: knowledgeImport
             parameters:
                 - in: body

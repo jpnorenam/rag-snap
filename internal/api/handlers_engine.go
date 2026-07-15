@@ -191,8 +191,9 @@ type importRequest struct {
 //
 // Import a knowledge base.
 //
-// Imports a base from a previously exported artifact as an async operation. The
-// interactive Google Drive auth flow is intentionally not exposed.
+// Imports a base from a previously exported artifact as an async operation. This
+// endpoint handles local uploads; Google Drive import has its own endpoints under
+// /1.0/knowledge/gdrive (see handlers_gdrive.go).
 //
 //	Responses:
 //	  202: asyncResponse

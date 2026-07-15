@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
@@ -62,6 +63,10 @@ type Server struct {
 	// resolved listen address, set when the loopback listener is enabled.
 	loopbackSrv        *http.Server
 	loopbackListenAddr string
+	// gdrive holds at most one in-progress Google Drive OAuth flow, guarded by
+	// gdriveMu. See handlers_gdrive.go.
+	gdriveMu sync.Mutex
+	gdrive   gdriveFlowState
 }
 
 // Options configure a Server.
@@ -285,6 +290,13 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /1.0/knowledge/{name}", s.requireAuth(s.handleKnowledgeDelete))
 	mux.HandleFunc("POST /1.0/knowledge/{name}/export", s.requireAuth(s.handleKnowledgeExport))
 	mux.HandleFunc("GET /1.0/knowledge/{name}/export/{opId}/archive", s.requireAuth(s.handleKnowledgeExportDownload))
+
+	// Google Drive import (OAuth lifecycle, resolution, and archive import).
+	mux.HandleFunc("GET /1.0/knowledge/gdrive/status", s.requireAuth(s.handleGdriveStatus))
+	mux.HandleFunc("POST /1.0/knowledge/gdrive/connect", s.requireAuth(s.handleGdriveConnect))
+	mux.HandleFunc("POST /1.0/knowledge/gdrive/disconnect", s.requireAuth(s.handleGdriveDisconnect))
+	mux.HandleFunc("POST /1.0/knowledge/gdrive/resolve", s.requireAuth(s.handleGdriveResolve))
+	mux.HandleFunc("POST /1.0/knowledge/gdrive/import", s.requireAuth(s.handleGdriveImport))
 
 	// Sources.
 	mux.HandleFunc("GET /1.0/knowledge/{name}/sources", s.requireAuth(s.handleSourcesList))
