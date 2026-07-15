@@ -33,6 +33,8 @@ var apiExtensions = []string{
 	"chat_websocket",
 	"batch_answer",
 	"prompts",
+	"status",
+	"config",
 }
 
 // Server is the ragd HTTP API server. It owns the configuration snapshot, the
@@ -304,6 +306,14 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /1.0/prompts/{name}", s.requireAuth(s.handlePromptGet))
 	mux.HandleFunc("PUT /1.0/prompts/{name}", s.requireAuth(s.handlePromptUpdate))
 	mux.HandleFunc("DELETE /1.0/prompts/{name}", s.requireAuth(s.handlePromptReset))
+
+	// Service status (live probes of the three backends plus the daemon itself).
+	mux.HandleFunc("GET /1.0/status", s.requireAuth(s.handleStatus))
+
+	// Configuration (snapctl-backed; writes land in the user layer).
+	mux.HandleFunc("GET /1.0/config", s.requireAuth(s.handleConfigList))
+	mux.HandleFunc("PUT /1.0/config/{key}", s.requireAuth(s.handleConfigSet))
+	mux.HandleFunc("DELETE /1.0/config/{key}", s.requireAuth(s.handleConfigUnset))
 }
 
 // swagger:route GET / server apiRoot

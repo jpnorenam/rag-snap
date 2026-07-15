@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -41,6 +42,29 @@ func (c *clientCache) openSearchClient() (*knowledge.OpenSearchClient, error) {
 		return nil, fmt.Errorf("OpenSearch backend URL is not configured")
 	}
 	client, err := knowledge.NewClient(url)
+	if err != nil {
+		return nil, fmt.Errorf("knowledge backend unavailable: %w", err)
+	}
+	c.openSearch = client
+	return client, nil
+}
+
+// openSearchClientNoWait is openSearchClient for callers that must not block: it
+// builds the client with a single ctx-bounded readiness check instead of
+// knowledge.NewClient's wait-for-ready loop, which retries for a minute against a
+// down server. The status probe needs to report "unreachable" in seconds, not stall
+// the request until the loop gives up. A client built either way is cached and shared.
+func (c *clientCache) openSearchClientNoWait(ctx context.Context) (*knowledge.OpenSearchClient, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.openSearch != nil {
+		return c.openSearch, nil
+	}
+	url := c.urls[backendOpenSearch]
+	if url == "" {
+		return nil, fmt.Errorf("OpenSearch backend URL is not configured")
+	}
+	client, err := knowledge.NewClientNoWait(ctx, url)
 	if err != nil {
 		return nil, fmt.Errorf("knowledge backend unavailable: %w", err)
 	}

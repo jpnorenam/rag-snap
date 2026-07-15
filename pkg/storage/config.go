@@ -7,11 +7,12 @@ import (
 )
 
 type Config interface {
-	Set(key, value string, confType configType) error
-	SetDocument(key string, value any, confType configType) error
+	Set(key, value string, confType ConfigType) error
+	SetDocument(key string, value any, confType ConfigType) error
 	Get(key string) (map[string]any, error)
 	GetAll() (map[string]any, error)
-	Unset(key string, confType configType) error
+	GetAllFromLayer(confType ConfigType) (map[string]any, error)
+	Unset(key string, confType ConfigType) error
 }
 
 type config struct {
@@ -26,22 +27,25 @@ func NewConfig() Config {
 
 const configKeyPrefix = "config"
 
-type configType string
+// ConfigType names a configuration layer. It is exported because it appears in the
+// Config interface's method signatures: an unexported layer type would make Config
+// unimplementable outside this package.
+type ConfigType string
 
 // config precedence, from lowest to highest
-var confPrecedence = []configType{
+var confPrecedence = []ConfigType{
 	PackageConfig, // values set by the package
 	UserConfig,    // values set by the user, overriding all others
 }
 
 // config types
 const (
-	PackageConfig configType = "package"
-	UserConfig    configType = "user"
+	PackageConfig ConfigType = "package"
+	UserConfig    ConfigType = "user"
 )
 
 // Set sets a configuration value
-func (c *config) Set(key, value string, confType configType) error {
+func (c *config) Set(key, value string, confType ConfigType) error {
 	// User configs are overrides, reject unknown keys
 	if confType == UserConfig {
 		valMap, err := c.Get(key)
@@ -57,7 +61,7 @@ func (c *config) Set(key, value string, confType configType) error {
 }
 
 // SetDocument sets a configuration value that is primitive or an object
-func (c *config) SetDocument(key string, value any, confType configType) error {
+func (c *config) SetDocument(key string, value any, confType ConfigType) error {
 	return c.storage.SetDocument(c.nestKeys(confType, key), value)
 }
 
@@ -86,7 +90,30 @@ func (c *config) GetAll() (map[string]any, error) {
 	return c.loadConfigs()
 }
 
-func (c *config) Unset(key string, confType configType) error {
+// GetAllFromLayer returns the configurations of a single layer as a flattened map,
+// without applying precedence. Callers use it to tell where an effective value comes
+// from: a key present in the user layer is an override, everything else is a package
+// value. A layer that has never been written is not an error, it is empty.
+func (c *config) GetAllFromLayer(confType ConfigType) (map[string]any, error) {
+	values, err := c.storage.Get(configKeyPrefix)
+	if err != nil {
+		return nil, err
+	}
+
+	layer, found := values[string(confType)]
+	if !found {
+		return map[string]any{}, nil
+	}
+
+	layerMap, ok := layer.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("unexpected type %T for config layer %q", layer, confType)
+	}
+
+	return c.flattenMap(layerMap), nil
+}
+
+func (c *config) Unset(key string, confType ConfigType) error {
 	return c.storage.Unset(c.nestKeys(confType, key))
 }
 
@@ -136,7 +163,7 @@ func (c *config) flattenMap(input map[string]any) map[string]any {
 }
 
 // nestKeys creates a dot-separated key with the expected prefix
-func (c *config) nestKeys(confType configType, key string) string {
+func (c *config) nestKeys(confType ConfigType, key string) string {
 	if key == "." { // special case, referencing the parent
 		return strings.Join([]string{configKeyPrefix, string(confType)}, ".")
 	} else {

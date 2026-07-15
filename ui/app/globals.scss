@@ -257,6 +257,20 @@ $sidebar-accent: #e95420; // Ubuntu orange
   &.is-cancelled {
     background-color: var(--vf-color-text-muted);
   }
+
+  // Service health states (status page). Kept distinct from the operation
+  // states above: a reachable service is positive, not caution.
+  &.is-reachable {
+    background-color: var(--vf-color-border-positive);
+  }
+
+  &.is-unreachable {
+    background-color: var(--vf-color-border-negative);
+  }
+
+  &.is-unconfigured {
+    background-color: var(--vf-color-text-muted);
+  }
 }
 
 .chat__messages {
@@ -596,4 +610,205 @@ $sidebar-accent: #e95420; // Ubuntu orange
 // it is guarded by a confirm dialog.
 .prompt-card__reset {
   margin-left: auto;
+}
+
+// ---------------------------------------------------------------------------
+// Status & configuration
+// ---------------------------------------------------------------------------
+
+.status__zone {
+  margin-bottom: 2.5rem;
+}
+
+.status__zone-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.status__zone-title {
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vf-color-text-muted);
+  margin-bottom: 1rem;
+}
+
+.status__refresh {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+// Cards sit on a responsive grid: one column when the rail collapses, two when
+// there is room. The page itself never scrolls horizontally.
+.status__services {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.status-card {
+  padding: 1rem;
+  background-color: var(--vf-color-background-alt);
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.125rem;
+  margin: 0;
+}
+
+.status-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.status-card__title {
+  font-size: 1rem;
+  margin: 0;
+}
+
+.status-card__state {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  white-space: nowrap;
+}
+
+.status-card__role {
+  margin: 0.25rem 0 0.75rem;
+}
+
+.status-card__endpoint .p-code-snippet__block {
+  font-size: 0.75rem;
+}
+
+// The diagnostic shown on an unreachable service: what to check next.
+.status-card__hint {
+  margin: 0.75rem 0 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--vf-color-border-caution);
+  color: var(--vf-color-text-muted);
+}
+
+.status-card__detail {
+  margin-top: 1rem;
+}
+
+.status-card__detail-label {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vf-color-text-muted);
+  margin: 0 0 0.5rem;
+}
+
+.status-card__model {
+  margin-bottom: 0.75rem;
+
+  .p-code-snippet__block {
+    font-size: 0.75rem;
+  }
+}
+
+// A configured model that OpenSearch has not deployed: retrieval is broken and
+// nothing else says so, so it is called out rather than left to be inferred.
+.status-card__warning {
+  margin: 0.5rem 0 0;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--vf-color-border-negative);
+  color: var(--vf-color-text-muted);
+}
+
+.status-card__models {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+
+  li {
+    margin-bottom: 0.25rem;
+  }
+}
+
+.status-card__model-name {
+  font-family: unquote(vanilla-framework.$font-monospace);
+  word-break: break-all;
+}
+
+.status-card__line {
+  margin: 0 0 0.25rem;
+  word-break: break-all;
+}
+
+.status__filter {
+  max-width: 24rem;
+  margin-bottom: 1rem;
+}
+
+// Wide tables scroll inside their own wrapper, never the page.
+.config-table__wrapper {
+  overflow-x: auto;
+}
+
+.config-table {
+  width: 100%;
+  // Honour the column widths below rather than letting content (a long value or
+  // an endpoint) stretch a column past its share.
+  table-layout: fixed;
+
+  td,
+  th {
+    vertical-align: top;
+  }
+}
+
+.config-table__key code {
+  word-break: break-all;
+}
+
+// Value gets the room: it holds what the user is here to read and edit. Layer and
+// the controls need only fit a chip and two buttons, so they take fixed widths and
+// hand the rest of the table back to Value.
+.config-table__col--key {
+  width: 30%;
+}
+
+.config-table__col--value {
+  width: auto;
+}
+
+.config-table__col--layer {
+  width: 6rem;
+}
+
+.config-table__col--actions {
+  width: 7rem;
+}
+
+.config-table__shown {
+  word-break: break-all;
+}
+
+.config-table__redacted {
+  color: var(--vf-color-text-muted);
+  letter-spacing: 0.125em;
+}
+
+.config-table__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.config-table__controls {
+  display: flex;
+  gap: 0.25rem;
+  justify-content: flex-end;
 }

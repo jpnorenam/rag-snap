@@ -32,7 +32,13 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 // Status is a utility entry pinned to the bottom of the rail (above the toggle).
-const STATUS_ITEM: NavItem = { id: "status", label: "Status", icon: "status", href: "/status/" };
+const STATUS_ITEM: NavItem = {
+  id: "status",
+  label: "Status",
+  icon: "status",
+  href: "/status/",
+  enabled: true,
+};
 
 // normalizePath strips a trailing slash (but keeps root "/") so paths from
 // usePathname() compare equal regardless of the export's trailing-slash style.

@@ -63,14 +63,23 @@ func (c *fileConfig) GetAll() (map[string]any, error) {
 	return result, nil
 }
 
-func (c *fileConfig) Set(key, value string, confType configType) error {
+// GetAllFromLayer reports every value as a package value: the debug file is flat and
+// read-only, so nothing in it can be a user override.
+func (c *fileConfig) GetAllFromLayer(confType ConfigType) (map[string]any, error) {
+	if confType != PackageConfig {
+		return map[string]any{}, nil
+	}
+	return c.GetAll()
+}
+
+func (c *fileConfig) Set(key, value string, confType ConfigType) error {
 	return fmt.Errorf("config is read-only in debug mode")
 }
 
-func (c *fileConfig) SetDocument(key string, value any, confType configType) error {
+func (c *fileConfig) SetDocument(key string, value any, confType ConfigType) error {
 	return fmt.Errorf("config is read-only in debug mode")
 }
 
-func (c *fileConfig) Unset(key string, confType configType) error {
+func (c *fileConfig) Unset(key string, confType ConfigType) error {
 	return fmt.Errorf("config is read-only in debug mode")
 }

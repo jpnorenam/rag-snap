@@ -60,12 +60,6 @@ func startTestServer(t *testing.T, urls map[string]string) (string, *Server) {
 func startTestServerWithConfig(t *testing.T, urls map[string]string, configLines []string) (string, *Server) {
 	t.Helper()
 	dir := t.TempDir()
-	sock := filepath.Join(dir, "ragd", "unix.socket")
-
-	// Route daemon state ($SNAP_COMMON-rooted: the prompt store, the token) under
-	// this test's temp dir, so tests neither pollute a shared /tmp path nor see
-	// each other's prompt customizations.
-	t.Setenv("SNAP_COMMON", dir)
 
 	// Back the server with a read-only file config so handlers that read config
 	// keys (e.g. the chat model) operate without panicking on a nil Context.
@@ -82,6 +76,21 @@ func startTestServerWithConfig(t *testing.T, urls map[string]string, configLines
 	if err != nil {
 		t.Fatalf("loading test config: %v", err)
 	}
+
+	return startTestServerWithStore(t, dir, urls, cfg)
+}
+
+// startTestServerWithStore is startTestServerWithConfig with the config store given
+// directly, for handlers that write config (the file config is read-only) or that
+// need layered package/user values.
+func startTestServerWithStore(t *testing.T, dir string, urls map[string]string, cfg storage.Config) (string, *Server) {
+	t.Helper()
+	sock := filepath.Join(dir, "ragd", "unix.socket")
+
+	// Route daemon state ($SNAP_COMMON-rooted: the prompt store, the token) under
+	// this test's temp dir, so tests neither pollute a shared /tmp path nor see
+	// each other's prompt customizations.
+	t.Setenv("SNAP_COMMON", dir)
 
 	srv := New(Options{
 		Context:     &common.Context{Config: cfg},

@@ -67,12 +67,47 @@ func (c *OpenSearchClient) CreateIndex(ctx context.Context, indexName string) er
 	return c.getOrCreateIndex(ctx, indexName)
 }
 
-// NewClient creates and validates an OpenSearch client connection.
+// NewClient creates and validates an OpenSearch client connection. It waits for the
+// server to become ready (see checkServer), so it suits callers that can afford to
+// block while a starting OpenSearch comes up — ingest, search, init.
 func NewClient(baseUrl string) (*OpenSearchClient, error) {
 	if err := handshake(baseUrl); err != nil {
 		return nil, err
 	}
 
+	client, err := newClient(baseUrl)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := checkServer(client.client); err != nil {
+		return nil, err
+	}
+
+	return client, nil
+}
+
+// NewClientNoWait creates an OpenSearch client and checks readiness exactly once,
+// bounded by ctx. Unlike NewClient it never waits for a starting server: a caller
+// that must answer promptly — a status probe, where "unreachable" is a valid answer
+// and a minute-long stall is not — cannot use NewClient's retry-until-ready loop.
+func NewClientNoWait(ctx context.Context, baseURL string) (*OpenSearchClient, error) {
+	client, err := newClient(baseURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := client.Ping(ctx); err != nil {
+		return nil, err
+	}
+
+	return client, nil
+}
+
+// newClient builds the client from the environment credentials without contacting
+// the server. Reachability is the caller's decision: see NewClient (wait) and
+// NewClientNoWait (fail fast).
+func newClient(baseURL string) (*OpenSearchClient, error) {
 	username, found := os.LookupEnv(envOpenSearchUsername)
 	if !found {
 		return nil, fmt.Errorf("%q env var is not set", envOpenSearchUsername)
@@ -82,20 +117,16 @@ func NewClient(baseUrl string) (*OpenSearchClient, error) {
 		return nil, fmt.Errorf("%q env var is not set", envOpenSearchPassword)
 	}
 
-	osClient, err := newOpenSearchClient(baseUrl, username, password)
+	osClient, err := newOpenSearchClient(baseURL, username, password)
 	if err != nil {
 		return nil, fmt.Errorf("error creating OpenSearch client: %w", err)
-	}
-
-	if err := checkServer(osClient); err != nil {
-		return nil, err
 	}
 
 	return &OpenSearchClient{
 		client:   osClient,
 		username: username,
 		password: password,
-		url:      baseUrl,
+		url:      baseURL,
 	}, nil
 }
 
@@ -337,6 +368,29 @@ func (c *OpenSearchClient) CountDocuments(ctx context.Context, indexName string)
 		return 0, fmt.Errorf("decoding count response: %w", err)
 	}
 	return countResp.Count, nil
+}
+
+// Ping reports whether OpenSearch answers an authenticated request. It is an
+// HTTP-level health check: unlike a TCP dial it also proves the server is serving
+// and the credentials are accepted, which is what a status view needs to claim the
+// knowledge store is usable.
+func (c *OpenSearchClient) Ping(ctx context.Context) error {
+	req, err := c.newAuthenticatedRequest(http.MethodGet, "/", nil)
+	if err != nil {
+		return fmt.Errorf("creating ping request: %w", err)
+	}
+
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	if err != nil {
+		return fmt.Errorf("pinging OpenSearch: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("ping failed with status %d: %s", resp.StatusCode, string(body))
+	}
+	return nil
 }
 
 // newAuthenticatedRequest creates an HTTP request with basic authentication.

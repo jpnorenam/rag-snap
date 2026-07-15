@@ -2,12 +2,32 @@ package config
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/jpnorenam/rag-snap/pkg/storage"
 	"github.com/spf13/cobra"
 )
 
 const groupID = "config"
+
+// deprecatedConfig lists configurations the user no longer sets. They are still
+// consumed by the engines, so they are hidden from listings and rejected on write
+// rather than deleted. Consumers outside this package go through IsDeprecated.
+var deprecatedConfig = []string{
+	"model",
+	"model-name",
+	"multimodel-projector",
+	"server",
+	"target-device",
+	"http.base-path",
+}
+
+// IsDeprecated reports whether a config key is deprecated. The CLI hides these keys
+// from `config get` and rejects them in `config set`; the daemon's config API applies
+// the same rule, so both surfaces stay in step from one list.
+func IsDeprecated(key string) bool {
+	return slices.Contains(deprecatedConfig, key)
+}
 
 func Group(title string) *cobra.Group {
 	return &cobra.Group{
