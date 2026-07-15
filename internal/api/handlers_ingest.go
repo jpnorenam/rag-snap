@@ -9,19 +9,24 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/processing"
 )
 
-// ingestItem describes a single source to ingest. Exactly one of File (a
-// staged upload path) or URL is set per item.
+// ingestItem describes a single source to ingest. For URL items URL is set; for
+// repo items Type is "github"/"gitea" and Source carries the repo reference; for
+// uploaded files filePath is the staged path.
 type ingestItem struct {
-	SourceID string `json:"source_id"`
-	URL      string `json:"url,omitempty"`
-	filePath string // server-side path to the staged upload; not from JSON
-	cleanup  func() // optional cleanup for crawled/uploaded temp files
+	SourceID   string   `json:"source_id"`
+	URL        string   `json:"url,omitempty"`
+	Type       string   `json:"type,omitempty"`       // "", "url", "github", "gitea", "file"
+	Source     string   `json:"source,omitempty"`     // repo reference for github/gitea
+	Branch     string   `json:"branch,omitempty"`     // repo branch (github/gitea)
+	Path       string   `json:"path,omitempty"`       // repo subpath (github/gitea)
+	Extensions []string `json:"extensions,omitempty"` // repo file extensions (github/gitea)
+	filePath   string   // server-side path to the staged upload; not from JSON
+	cleanup    func()   // optional cleanup for crawled/uploaded temp files
 }
 
 // ingestRequest is the JSON body for URL or batch ingestion of
@@ -29,6 +34,7 @@ type ingestItem struct {
 type ingestRequest struct {
 	SourceID string       `json:"source_id,omitempty"`
 	URL      string       `json:"url,omitempty"`
+	Force    bool         `json:"force,omitempty"`
 	Batch    []ingestItem `json:"batch,omitempty"`
 }
 
@@ -68,7 +74,7 @@ func (s *Server) handleSourcesIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	items, err := s.collectIngestItems(r)
+	items, force, err := s.collectIngestItems(r)
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
@@ -78,6 +84,16 @@ func (s *Server) handleSourcesIngest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Synchronous duplicate pre-check for a single non-repo ingest, so the client
+	// gets a conflict it can surface inline instead of a failed async operation.
+	if len(items) == 1 && !force && isSingleFileOrURL(items[0]) {
+		if id := effectiveSourceID(items[0]); id != "" && client.SourceCompleted(r.Context(), id) {
+			cleanupItems(items)
+			respondError(w, http.StatusConflict, fmt.Sprintf("source %q already exists; re-ingest with force to replace it", id))
+			return
+		}
+	}
+
 	tikaURL := s.clients.tikaURL()
 	resources := map[string][]string{"knowledge": {"/1.0/knowledge/" + name}}
 
@@ -85,14 +101,8 @@ func (s *Server) handleSourcesIngest(w http.ResponseWriter, r *http.Request) {
 		fmt.Sprintf("Ingesting %d source(s) into %q", len(items), name),
 		resources, true,
 		func(ctx context.Context, op *Operation) error {
-			defer func() {
-				for _, it := range items {
-					if it.cleanup != nil {
-						it.cleanup()
-					}
-				}
-			}()
-			return runIngest(ctx, op, client, tikaURL, index, items)
+			defer cleanupItems(items)
+			return runIngest(ctx, op, client, tikaURL, index, items, force)
 		},
 	)
 	if err != nil {
@@ -102,9 +112,45 @@ func (s *Server) handleSourcesIngest(w http.ResponseWriter, r *http.Request) {
 	respondAsync(w, op.url(), op.view())
 }
 
-// collectIngestItems parses the request into ingest items, staging any uploaded
-// file to a temp path. The caller arranges cleanup via item.cleanup.
-func (s *Server) collectIngestItems(r *http.Request) ([]ingestItem, error) {
+// cleanupItems runs any staged-file cleanups on the given items.
+func cleanupItems(items []ingestItem) {
+	for _, it := range items {
+		if it.cleanup != nil {
+			it.cleanup()
+		}
+	}
+}
+
+// isSingleFileOrURL reports whether the item is an individual file or URL source
+// (as opposed to a repo that expands into many sources).
+func isSingleFileOrURL(it ingestItem) bool {
+	switch it.Type {
+	case "github", "gitea":
+		return false
+	default:
+		return true
+	}
+}
+
+// effectiveSourceID returns the source id an item will ingest under, mirroring
+// the defaults IngestSource applies.
+func effectiveSourceID(it ingestItem) string {
+	if it.SourceID != "" {
+		return it.SourceID
+	}
+	if it.URL != "" {
+		return it.URL
+	}
+	if it.filePath != "" {
+		return filepath.Base(it.filePath)
+	}
+	return ""
+}
+
+// collectIngestItems parses the request into ingest items plus the force flag,
+// staging any uploaded file to a temp path. The caller arranges cleanup via
+// item.cleanup.
+func (s *Server) collectIngestItems(r *http.Request) ([]ingestItem, bool, error) {
 	contentType := r.Header.Get("Content-Type")
 
 	if strings.HasPrefix(contentType, "multipart/form-data") {
@@ -113,36 +159,37 @@ func (s *Server) collectIngestItems(r *http.Request) ([]ingestItem, error) {
 
 	var req ingestRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		return nil, fmt.Errorf("invalid request body: %w", err)
+		return nil, false, fmt.Errorf("invalid request body: %w", err)
 	}
 	if len(req.Batch) > 0 {
-		return req.Batch, nil
+		return req.Batch, req.Force, nil
 	}
 	if req.URL != "" {
-		return []ingestItem{{SourceID: req.SourceID, URL: req.URL}}, nil
+		return []ingestItem{{SourceID: req.SourceID, URL: req.URL, Type: "url"}}, req.Force, nil
 	}
-	return nil, nil
+	return nil, req.Force, nil
 }
 
 // collectUploadedItems stages an uploaded file to a temp path.
-func (s *Server) collectUploadedItems(r *http.Request) ([]ingestItem, error) {
+func (s *Server) collectUploadedItems(r *http.Request) ([]ingestItem, bool, error) {
 	if err := r.ParseMultipartForm(processing.MaxIngestFileSize); err != nil {
-		return nil, fmt.Errorf("parsing upload: %w", err)
+		return nil, false, fmt.Errorf("parsing upload: %w", err)
 	}
+	force := r.FormValue("force") == "true"
 	file, header, err := r.FormFile("file")
 	if err != nil {
-		return nil, fmt.Errorf("missing file upload field %q: %w", "file", err)
+		return nil, false, fmt.Errorf("missing file upload field %q: %w", "file", err)
 	}
 	defer file.Close()
 
 	tmp, err := os.CreateTemp("", "ragd-upload-*"+filepath.Ext(header.Filename))
 	if err != nil {
-		return nil, fmt.Errorf("staging upload: %w", err)
+		return nil, false, fmt.Errorf("staging upload: %w", err)
 	}
 	if _, err := io.Copy(tmp, file); err != nil {
 		tmp.Close()
 		_ = os.Remove(tmp.Name())
-		return nil, fmt.Errorf("staging upload: %w", err)
+		return nil, false, fmt.Errorf("staging upload: %w", err)
 	}
 	tmp.Close()
 
@@ -153,16 +200,15 @@ func (s *Server) collectUploadedItems(r *http.Request) ([]ingestItem, error) {
 	path := tmp.Name()
 	return []ingestItem{{
 		SourceID: sourceID,
+		Type:     "file",
 		filePath: path,
 		cleanup:  func() { _ = os.Remove(path) },
-	}}, nil
+	}}, force, nil
 }
 
-// runIngest processes each item through the download → Tika → chunk → index
-// pipeline, updating operation progress and honouring cancellation between
-// items. It mirrors the CLI ingest wiring (metadata written before bulk index;
-// status moved to completed/failed).
-func runIngest(ctx context.Context, op *Operation, client *knowledge.OpenSearchClient, tikaURL, index string, items []ingestItem) error {
+// runIngest processes each item, updating operation progress and honouring
+// cancellation between items. Repo items expand into many files server-side.
+func runIngest(ctx context.Context, op *Operation, client *knowledge.OpenSearchClient, tikaURL, index string, items []ingestItem, force bool) error {
 	total := len(items)
 	op.UpdateMetadata(map[string]any{"sources_total": total, "sources_done": 0})
 
@@ -170,82 +216,114 @@ func runIngest(ctx context.Context, op *Operation, client *knowledge.OpenSearchC
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := ingestOne(ctx, client, tikaURL, index, &items[i]); err != nil {
-			return fmt.Errorf("ingesting %q: %w", items[i].SourceID, err)
+		if err := ingestOneItem(ctx, client, tikaURL, index, items[i], force); err != nil {
+			return fmt.Errorf("ingesting %q: %w", effectiveSourceID(items[i]), err)
 		}
 		op.UpdateMetadata(map[string]any{"sources_total": total, "sources_done": i + 1})
 	}
 	return nil
 }
 
-// ingestOne ingests a single source. For URL items it crawls first; for file
-// items it uses the staged path.
-func ingestOne(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index string, item *ingestItem) error {
-	filePath := item.filePath
-	metadataPath := filePath
-	var crawlCleanup func()
-	if item.URL != "" {
+// ingestOneItem dispatches one item by type. github/gitea items expand into
+// multiple files; url/file items ingest a single source. In batch context an
+// already-completed source is skipped unless force is set.
+func ingestOneItem(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index string, item ingestItem, force bool) error {
+	switch item.Type {
+	case "github":
+		return ingestGitHubRepo(ctx, client, tikaURL, index, item, force)
+	case "gitea":
+		return ingestGiteaRepo(ctx, client, tikaURL, index, item, force)
+	case "url":
 		path, _, cleanup, err := processing.CrawlURL(item.URL)
 		if err != nil {
 			return fmt.Errorf("crawling URL: %w", err)
 		}
-		crawlCleanup = cleanup
-		filePath = path
-		metadataPath = item.URL
-		if item.SourceID == "" {
-			item.SourceID = item.URL
+		defer cleanup()
+		sourceID := item.SourceID
+		if sourceID == "" {
+			sourceID = item.URL
 		}
+		return ingestResolvedFile(ctx, client, tikaURL, index, path, sourceID, item.URL, force)
+	default: // staged file upload
+		if item.filePath == "" {
+			if item.Type == "file" {
+				return fmt.Errorf("batch %q entries referencing local paths are not supported over the API; upload the file directly instead", "file")
+			}
+			return fmt.Errorf("no file or URL provided")
+		}
+		sourceID := item.SourceID
+		if sourceID == "" {
+			sourceID = filepath.Base(item.filePath)
+		}
+		return ingestResolvedFile(ctx, client, tikaURL, index, item.filePath, sourceID, item.filePath, force)
 	}
-	if crawlCleanup != nil {
-		defer crawlCleanup()
-	}
-	if filePath == "" {
-		return fmt.Errorf("no file or URL provided")
-	}
-	if item.SourceID == "" {
-		item.SourceID = filepath.Base(filePath)
-	}
+}
 
-	result, err := processing.Ingest(tikaURL, filePath, item.SourceID)
+// ingestResolvedFile skips an already-completed source unless force is set, then
+// runs the shared ingest core.
+func ingestResolvedFile(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index, filePath, sourceID, metadataPath string, force bool) error {
+	if !force && client.SourceCompleted(ctx, sourceID) {
+		return nil
+	}
+	return client.IngestSource(ctx, tikaURL, knowledge.IngestOptions{
+		FilePath:     filePath,
+		SourceID:     sourceID,
+		MetadataPath: metadataPath,
+		TargetIndex:  index,
+		Force:        force,
+	})
+}
+
+// ingestGitHubRepo lists a GitHub repo's matching files and ingests each. A
+// missing token fails the whole repo entry with the exact env-var hint.
+func ingestGitHubRepo(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index string, item ingestItem, force bool) error {
+	owner, repo, err := processing.ParseGitHubSource(item.Source)
 	if err != nil {
-		return fmt.Errorf("extracting content: %w", err)
+		return fmt.Errorf("parsing GitHub source: %w", err)
 	}
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		return fmt.Errorf("GitHub ingestion requires the GITHUB_TOKEN environment variable")
+	}
+	entries, err := processing.ListGitHubRepoFiles(owner, repo, item.Branch, item.Path, item.Extensions, token)
+	if err != nil {
+		return fmt.Errorf("listing repository files: %w", err)
+	}
+	return ingestRepoEntries(ctx, client, tikaURL, index, entries, token, force)
+}
 
-	now := time.Now().UTC().Format(knowledge.DateFormat)
-	meta := knowledge.SourceMetadata{
-		SourceID:      item.SourceID,
-		FileName:      filepath.Base(filePath),
-		FilePath:      metadataPath,
-		Checksum:      result.Checksum,
-		IndexName:     index,
-		ChunkCount:    len(result.Chunks),
-		ChunkSize:     processing.DefaultChunkSize,
-		ChunkOverlap:  processing.DefaultChunkOverlap,
-		ContentLength: result.ContentLength,
-		Status:        knowledge.StatusProcessing,
-		IngestedAt:    now,
-		UpdatedAt:     now,
+// ingestGiteaRepo mirrors ingestGitHubRepo for Gitea.
+func ingestGiteaRepo(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index string, item ingestItem, force bool) error {
+	baseURL, owner, repo, err := processing.ParseGiteaSource(item.Source)
+	if err != nil {
+		return fmt.Errorf("parsing Gitea source: %w", err)
 	}
-	if result.TikaMetadata != nil {
-		meta.ContentType = result.TikaMetadata.ContentType
-		meta.Title = result.TikaMetadata.Title
-		meta.Author = result.TikaMetadata.Author
-		meta.Language = result.TikaMetadata.Language
+	token := os.Getenv("GITEA_TOKEN")
+	if token == "" {
+		return fmt.Errorf("Gitea ingestion requires the GITEA_TOKEN environment variable")
 	}
-	if err := client.IndexSourceMetadata(ctx, meta); err != nil {
-		return fmt.Errorf("writing source metadata: %w", err)
+	entries, err := processing.ListGiteaRepoFiles(baseURL, owner, repo, item.Branch, item.Path, item.Extensions, token)
+	if err != nil {
+		return fmt.Errorf("listing repository files: %w", err)
 	}
+	return ingestRepoEntries(ctx, client, tikaURL, index, entries, token, force)
+}
 
-	docs := make([]knowledge.Document, len(result.Chunks))
-	for i, c := range result.Chunks {
-		docs[i] = knowledge.Document{Content: c.Content, SourceID: c.SourceID, CreatedAt: c.CreatedAt}
-	}
-	if _, err := client.BulkIndex(ctx, index, docs); err != nil {
-		_ = client.UpdateSourceStatus(ctx, item.SourceID, knowledge.StatusFailed)
-		return fmt.Errorf("indexing chunks: %w", err)
-	}
-	if err := client.UpdateSourceStatus(ctx, item.SourceID, knowledge.StatusCompleted); err != nil {
-		return fmt.Errorf("updating source status: %w", err)
+// ingestRepoEntries fetches and ingests each repo file, honouring cancellation.
+func ingestRepoEntries(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index string, entries []processing.RepoEntry, token string, force bool) error {
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		tempPath, cleanup, err := processing.FetchRepoFile(entry.RawURL, entry.Path, token)
+		if err != nil {
+			return fmt.Errorf("fetching %q: %w", entry.Path, err)
+		}
+		err = ingestResolvedFile(ctx, client, tikaURL, index, tempPath, entry.Path, entry.Path, force)
+		cleanup()
+		if err != nil {
+			return fmt.Errorf("ingesting %q: %w", entry.Path, err)
+		}
 	}
 	return nil
 }

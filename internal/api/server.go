@@ -9,7 +9,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
+	"github.com/jpnorenam/rag-snap/cmd/cli/config"
 	"github.com/jpnorenam/rag-snap/internal/webui"
 )
 
@@ -282,6 +284,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /1.0/knowledge/{name}", s.requireAuth(s.handleKnowledgeGet))
 	mux.HandleFunc("DELETE /1.0/knowledge/{name}", s.requireAuth(s.handleKnowledgeDelete))
 	mux.HandleFunc("POST /1.0/knowledge/{name}/export", s.requireAuth(s.handleKnowledgeExport))
+	mux.HandleFunc("GET /1.0/knowledge/{name}/export/{opId}/archive", s.requireAuth(s.handleKnowledgeExportDownload))
 
 	// Sources.
 	mux.HandleFunc("GET /1.0/knowledge/{name}/sources", s.requireAuth(s.handleSourcesList))
@@ -382,6 +385,16 @@ func (s *Server) configSummary() map[string]any {
 		}
 	}
 	summary["loopback"] = loopback
+
+	// Report whether the knowledge engine has been initialized, so the UI can
+	// show its init gate. Both model IDs being set is the signal that
+	// `knowledge init` (or POST /1.0/knowledge-engine) has run. Model IDs are not
+	// secrets, but only their presence is reported here.
+	embedding, _ := config.GetString(s.ctx.Config, knowledge.ConfEmbeddingModelID)
+	rerank, _ := config.GetString(s.ctx.Config, knowledge.ConfRerankModelID)
+	summary["knowledge"] = map[string]any{
+		"initialized": embedding != "" && rerank != "",
+	}
 
 	return summary
 }

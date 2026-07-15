@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/processing"
 	"gopkg.in/yaml.v3"
@@ -164,70 +163,18 @@ func processGiteaRepoJob(ctx context.Context, client *OpenSearchClient, tikaURL 
 	return nil
 }
 
-// ingestAndIndex runs the Tika extraction + chunking pipeline and bulk-indexes the result.
-// When force is false, sources already marked as completed are skipped without re-ingesting.
+// ingestAndIndex is the CLI-side wrapper over the shared IngestSource core. When
+// force is false, sources already marked as completed are skipped (batch policy);
+// when force is set, IngestSource replaces the existing source's chunks.
 func ingestAndIndex(ctx context.Context, client *OpenSearchClient, tikaURL, filePath, sourceID, targetIndex string, force bool) error {
-	if !force {
-		existing, err := client.GetSourceMetadata(ctx, sourceID)
-		if err == nil && existing.Status == StatusCompleted {
-			fmt.Printf("  already ingested, skipping: %s\n", sourceID)
-			return nil
-		}
+	if !force && client.SourceCompleted(ctx, sourceID) {
+		fmt.Printf("  already ingested, skipping: %s\n", sourceID)
+		return nil
 	}
-
-	ingestResult, err := processing.Ingest(tikaURL, filePath, sourceID)
-	if err != nil {
-		return fmt.Errorf("ingest pipeline failed: %w", err)
-	}
-
-	now := time.Now().UTC().Format(DateFormat)
-	meta := SourceMetadata{
-		SourceID:      sourceID,
-		FileName:      filepath.Base(filePath),
-		FilePath:      filePath,
-		Checksum:      ingestResult.Checksum,
-		IndexName:     targetIndex,
-		ChunkCount:    len(ingestResult.Chunks),
-		ChunkSize:     processing.DefaultChunkSize,
-		ChunkOverlap:  processing.DefaultChunkOverlap,
-		ContentLength: ingestResult.ContentLength,
-		Status:        StatusProcessing,
-		IngestedAt:    now,
-		UpdatedAt:     now,
-	}
-	if ingestResult.TikaMetadata != nil {
-		meta.ContentType = ingestResult.TikaMetadata.ContentType
-		meta.Title = ingestResult.TikaMetadata.Title
-		meta.Author = ingestResult.TikaMetadata.Author
-		meta.Language = ingestResult.TikaMetadata.Language
-	}
-	if err := client.IndexSourceMetadata(ctx, meta); err != nil {
-		return fmt.Errorf("writing source metadata: %w", err)
-	}
-
-	var docs []Document
-	for _, chunk := range ingestResult.Chunks {
-		docs = append(docs, Document{
-			Content:   chunk.Content,
-			SourceID:  sourceID,
-			CreatedAt: chunk.CreatedAt,
-		})
-	}
-
-	result, err := client.BulkIndex(ctx, targetIndex, docs)
-	if err != nil {
-		_ = client.UpdateSourceStatus(ctx, sourceID, StatusFailed)
-		return fmt.Errorf("indexing failed: %w", err)
-	}
-
-	if result.Errors > 0 {
-		_ = client.UpdateSourceStatus(ctx, sourceID, StatusFailed)
-		return fmt.Errorf("partial indexing failure: %d/%d documents failed: %s", result.Errors, result.Total, result.FirstError)
-	}
-
-	if err := client.UpdateSourceStatus(ctx, sourceID, StatusCompleted); err != nil {
-		return fmt.Errorf("updating source status: %w", err)
-	}
-
-	return nil
+	return client.IngestSource(ctx, tikaURL, IngestOptions{
+		FilePath:    filePath,
+		SourceID:    sourceID,
+		TargetIndex: targetIndex,
+		Force:       force,
+	})
 }

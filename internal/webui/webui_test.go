@@ -5,7 +5,32 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
+
+// TestResolvePath verifies route resolution: real files serve as-is, per-route
+// directories resolve to their index.html (bug: a reload on /knowledge/ used to
+// fall through to the root chat page), and unknown paths hit the SPA index.
+func TestResolvePath(t *testing.T) {
+	assets := fstest.MapFS{
+		"index.html":           {Data: []byte("<html>root</html>")},
+		"knowledge/index.html": {Data: []byte("<html>kb</html>")},
+		"favicon.ico":          {Data: []byte("icon")},
+	}
+	cases := []struct{ in, want string }{
+		{"index.html", "index.html"},   // exact file
+		{"favicon.ico", "favicon.ico"}, // exact asset
+		{"knowledge/", "/knowledge/"},  // route dir with trailing slash
+		{"knowledge", "/knowledge/"},   // route dir without trailing slash
+		{"search/", "/"},               // unknown route → SPA index
+		{"some/deep/link", "/"},        // unknown deep link → SPA index
+	}
+	for _, tc := range cases {
+		if got := resolvePath(assets, tc.in); got != tc.want {
+			t.Errorf("resolvePath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
 
 // TestHandlerServesIndex verifies the embedded index.html is served at the root.
 func TestHandlerServesIndex(t *testing.T) {

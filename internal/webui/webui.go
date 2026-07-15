@@ -45,16 +45,36 @@ func Handler() (http.Handler, error) {
 			upath = "index.html"
 		}
 
-		// If the requested path is a real embedded file, serve it. Otherwise
-		// fall back to the SPA index so client-side routing works on deep links
-		// and reloads. We rewrite to "/" (not "/index.html") because
-		// http.FileServer 301-redirects an explicit /index.html to /.
-		if !assetExists(assets, upath) {
+		if resolved := resolvePath(assets, upath); resolved != upath {
 			r = r.Clone(r.Context())
-			r.URL.Path = "/"
+			r.URL.Path = resolved
 		}
 		fileServer.ServeHTTP(w, r)
 	}), nil
+}
+
+// resolvePath decides which asset path http.FileServer should serve for a
+// requested (slash-trimmed) path, so that statically-exported routes survive a
+// deep link or reload:
+//   - a real file           → serve it as-is;
+//   - a route directory      → serve that directory's index.html (returned with a
+//     trailing slash so http.FileServer serves the index without a 301 redirect
+//     that would drop the /ui prefix);
+//   - anything else          → the SPA root index.html for client-side routing.
+//
+// The returned value is a slash-rooted URL path (or the input unchanged when the
+// file exists as-is). Next.js emits per-route directories like
+// knowledge/index.html, which is why a bare directory must not fall straight
+// through to the root index.
+func resolvePath(assets fs.FS, upath string) string {
+	if assetExists(assets, upath) {
+		return upath
+	}
+	dir := strings.TrimSuffix(upath, "/")
+	if dir != "" && assetExists(assets, dir+"/index.html") {
+		return "/" + dir + "/"
+	}
+	return "/"
 }
 
 // assetExists reports whether name (slash-rooted, no leading slash) resolves to

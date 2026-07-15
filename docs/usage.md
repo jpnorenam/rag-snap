@@ -154,7 +154,7 @@ rag-cli.rag knowledge ingest <knowledge_base_name> <source_id> (--file <path> | 
 | `--url` | `-u` | one of three | URL of a static HTML page to fetch and extract |
 | `--batch` | `-B` | one of three | YAML batch config file — ingest multiple documents at once |
 | `--format` | | No | Input format. Use `rfp` to ingest a CSV of question/answer/source rows (requires `--file`). Default auto-detects via Tika. |
-| `--force` | | No | Re-ingest the source even if it is already recorded as `completed` |
+| `--force` | | No | Re-ingest the source even if it is already recorded as `completed`. The source's existing chunks are removed before re-indexing, so a forced re-ingest **replaces** the source rather than leaving duplicate chunks behind. |
 
 `<source_id>` is a human-readable identifier you choose (e.g. `snap-docs`, `rag-wiki`). It is used
 to reference the source in `metadata`, `forget`, and search results. It must be unique within the
@@ -249,7 +249,7 @@ rag-cli.rag knowledge ingest --batch <config.yaml> [--force]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--force` | `false` | Re-ingest sources that are already present in the knowledge base. By default, any source whose `source_id` is already recorded with status `completed` is skipped silently. Pass `--force` to override this and re-ingest regardless. |
+| `--force` | `false` | Re-ingest sources that are already present in the knowledge base. By default, any source whose `source_id` is already recorded with status `completed` is skipped silently. Pass `--force` to override this and re-ingest regardless — the existing chunks are removed first, so the source is replaced rather than duplicated. |
 
 > **Default deduplication behaviour:** Each source is identified by its `source_id` (the file path,
 > URL, or repository file path). On every run the system checks whether that ID is already marked

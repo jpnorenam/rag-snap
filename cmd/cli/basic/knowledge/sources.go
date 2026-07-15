@@ -310,6 +310,67 @@ func (c *OpenSearchClient) listSourceMetadata(ctx context.Context, indexName str
 	return sources, nil
 }
 
+// SourceCountsByIndex returns the number of source metadata documents per index
+// name, via a terms aggregation. Unlike listing (which is capped at a page
+// size), the aggregation counts every source, so callers get exact per-base
+// totals without an N+1 fan-out.
+func (c *OpenSearchClient) SourceCountsByIndex(ctx context.Context) (map[string]int, error) {
+	query := map[string]any{
+		"size": 0,
+		"aggs": map[string]any{
+			"by_index": map[string]any{
+				"terms": map[string]any{
+					"field": "index_name",
+					"size":  10000,
+				},
+			},
+		},
+	}
+	bodyBytes, err := json.Marshal(query)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling aggregation query: %w", err)
+	}
+
+	path := fmt.Sprintf("/%s/_search", sourcesIndexName)
+	req, err := c.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("error aggregating source metadata: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return map[string]int{}, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("aggregate source metadata failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var aggResp struct {
+		Aggregations struct {
+			ByIndex struct {
+				Buckets []struct {
+					Key      string `json:"key"`
+					DocCount int    `json:"doc_count"`
+				} `json:"buckets"`
+			} `json:"by_index"`
+		} `json:"aggregations"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&aggResp); err != nil {
+		return nil, fmt.Errorf("error decoding aggregation response: %w", err)
+	}
+
+	counts := make(map[string]int, len(aggResp.Aggregations.ByIndex.Buckets))
+	for _, b := range aggResp.Aggregations.ByIndex.Buckets {
+		counts[b.Key] = b.DocCount
+	}
+	return counts, nil
+}
+
 // DeleteSourceMetadata deletes a source metadata document by ID.
 func (c *OpenSearchClient) DeleteSourceMetadata(ctx context.Context, sourceID string) error {
 	return c.deleteSourceMetadata(ctx, sourceID)

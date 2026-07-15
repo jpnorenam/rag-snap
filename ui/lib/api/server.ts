@@ -21,3 +21,11 @@ export function getApiRoot(): Promise<ServerInfo> {
 export function getServerInfo(): Promise<ServerInfo> {
   return getSync<ServerInfo>("/1.0");
 }
+
+// knowledgeInitialized reports whether the knowledge engine has been initialized,
+// read from the server info config summary (config.knowledge.initialized).
+export async function knowledgeInitialized(): Promise<boolean> {
+  const info = await getServerInfo();
+  const cfg = info.config as { knowledge?: { initialized?: boolean } } | undefined;
+  return cfg?.knowledge?.initialized === true;
+}

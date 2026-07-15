@@ -597,3 +597,140 @@ $sidebar-accent: #e95420; // Ubuntu orange
 .prompt-card__reset {
   margin-left: auto;
 }
+
+// ---------------------------------------------------------------------------
+// Knowledge bases  --- knowledge ---
+// ---------------------------------------------------------------------------
+
+.kb__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.kb__intro {
+  max-width: 40rem;
+  margin: 0;
+}
+
+.kb__actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+// Tables scroll inside their own wrapper so the page never scrolls sideways.
+.kb__table-wrap {
+  overflow-x: auto;
+}
+
+// List row-action cell (Open/Export/Delete): a right-aligned horizontal row,
+// vertically centered and evenly spaced.
+.kb-actions-cell {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+// Detail row-action stack (Metadata/Forget): the buttons stack vertically and
+// stretch to equal width, so their left and right edges line up. inline-flex so
+// the stack shrinks to the widest button rather than filling the whole cell.
+.kb-actions-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+// Bordered row-action buttons (Open/Export/Delete, Metadata/Forget). A visible
+// border makes them read as buttons; hover uses Vanilla's neutral highlight
+// token so it reads correctly in both themes. Text is centered within the
+// equal-width stacked buttons.
+.kb-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.125rem;
+
+  &:hover {
+    background-color: var(--vf-color-background-hover);
+  }
+}
+
+.kb-detail__breadcrumb {
+  margin-bottom: 0.5rem;
+}
+
+.kb-detail__progress {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.5rem;
+}
+
+// Ingest source tabs: the two radio choices sit in a row, vertically aligned,
+// with the default per-radio bottom margin removed so they line up.
+.kb-ingest__tabs {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+
+  .p-radio {
+    margin-bottom: 0;
+  }
+}
+
+// Metadata definition list: label/value rows.
+.kb-meta__list {
+  margin: 0 0 1rem;
+}
+
+.kb-meta__row {
+  display: grid;
+  grid-template-columns: 10rem 1fr;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+
+  dd {
+    margin: 0;
+    word-break: break-word;
+  }
+}
+
+// Unsupported batch entries are muted to read as excluded.
+.kb-batch__row--skip {
+  opacity: 0.6;
+}
+
+// Dropzone: a dashed drop area wrapping a native file input. The native input is
+// the real keyboard/AT path; hover/drag gives a positive border cue.
+.app-dropzone {
+  border: 1px dashed var(--vf-color-border-default);
+  border-radius: 0.125rem;
+  padding: 1rem;
+  text-align: center;
+
+  &.is-over {
+    border-color: var(--vf-color-border-positive);
+  }
+}
+
+.app-dropzone__label {
+  display: block;
+  font-weight: 400;
+}
+
+.app-dropzone__hint {
+  margin: 0.5rem 0 0;
+}
+
+@media (max-width: 620px) {
+  .kb-meta__row {
+    grid-template-columns: 1fr;
+  }
+}

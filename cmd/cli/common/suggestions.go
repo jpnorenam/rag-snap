@@ -10,30 +10,22 @@ func SuggestServerStartup() string {
 	return "Try again when the server is ready."
 }
 
-func SuggestServerLogs() string {
-
+// daemonServiceName returns the snap service name of the ragd daemon
+// (e.g. "rag-cli.ragd"), falling back to a placeholder outside a snap.
+func daemonServiceName() string {
 	instanceName := env.SnapInstanceName()
 	if instanceName == "" { // not a snap
 		instanceName = "<snap-instance-name>"
 	}
+	return instanceName + ".ragd"
+}
 
-	// TODO: get app name dynamically
-	serviceName := instanceName + ".server"
-
-	return fmt.Sprintf("Run \"snap logs %s\" to see the server logs.", serviceName)
+func SuggestServerLogs() string {
+	return fmt.Sprintf("Run \"snap logs %s\" to see the server logs.", daemonServiceName())
 }
 
 func SuggestStartServer() string {
-
-	instanceName := env.SnapInstanceName()
-	if instanceName == "" { // not a snap
-		instanceName = "<snap-instance-name>"
-	}
-
-	// TODO: get app name dynamically
-	serviceName := instanceName + ".server"
-
-	return fmt.Sprintf("Run \"sudo snap start %s\" to start the server.", serviceName)
+	return fmt.Sprintf("Run \"sudo snap start %s\" to start the server.", daemonServiceName())
 }
 
 func SuggestServiceManagement() string {

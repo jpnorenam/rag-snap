@@ -4,22 +4,9 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiError } from "@/lib/api/envelope";
 import { isTerminal, statusOf, type OperationView } from "@/lib/api/operations";
 import { useOperations } from "@/lib/useOperations";
+import { relativeTime } from "@/lib/relativeTime";
 import ConfirmModal from "./ConfirmModal";
 import EmptyState from "./EmptyState";
-
-// relativeTime renders a coarse "N units ago" label for a timestamp.
-function relativeTime(iso: string): string {
-  const then = new Date(iso).getTime();
-  if (Number.isNaN(then)) return "";
-  const secs = Math.max(0, Math.round((Date.now() - then) / 1000));
-  if (secs < 45) return "just now";
-  const mins = Math.round(secs / 60);
-  if (mins < 60) return `${mins} min ago`;
-  const hrs = Math.round(mins / 60);
-  if (hrs < 24) return `${hrs} hr ago`;
-  const days = Math.round(hrs / 24);
-  return `${days} day${days === 1 ? "" : "s"} ago`;
-}
 
 // progressPercent derives a 0–100 progress value from paired `*_total`/`*_done`
 // metadata fields the daemon reports (e.g. sources_total/sources_done). Returns

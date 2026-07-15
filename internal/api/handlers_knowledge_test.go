@@ -60,6 +60,45 @@ func TestCreateKnowledgeValidation(t *testing.T) {
 	}
 }
 
+// TestImportValidation verifies a JSON import with no input_dir is rejected with
+// 400 before any backend interaction.
+func TestImportValidation(t *testing.T) {
+	sock, _ := startTestServer(t, map[string]string{
+		backendOpenSearch: "http://127.0.0.1:1",
+	})
+	client := dialSocket(sock)
+
+	buf, _ := json.Marshal(map[string]any{"name": "kb"})
+	resp, err := client.Post("http://unix/1.0/knowledge/import", "application/json", bytes.NewReader(buf))
+	if err != nil {
+		t.Fatalf("POST /1.0/knowledge/import: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		body, _ := io.ReadAll(resp.Body)
+		t.Errorf("status = %d, want 400; body=%s", resp.StatusCode, body)
+	}
+}
+
+// TestExportDownloadUnknownOperation verifies the archive download for an unknown
+// operation id is a 404, independent of any backend.
+func TestExportDownloadUnknownOperation(t *testing.T) {
+	sock, _ := startTestServer(t, map[string]string{
+		backendOpenSearch: "http://127.0.0.1:1",
+	})
+	client := dialSocket(sock)
+
+	resp, err := client.Get("http://unix/1.0/knowledge/kb/export/does-not-exist/archive")
+	if err != nil {
+		t.Fatalf("GET export archive: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		body, _ := io.ReadAll(resp.Body)
+		t.Errorf("status = %d, want 404; body=%s", resp.StatusCode, body)
+	}
+}
+
 // TestProvenanceLabel verifies the provenance tag derives from the index name.
 func TestProvenanceLabel(t *testing.T) {
 	if got := provenanceLabel("rag-snap-context-upstream-docs"); got != "upstream" {

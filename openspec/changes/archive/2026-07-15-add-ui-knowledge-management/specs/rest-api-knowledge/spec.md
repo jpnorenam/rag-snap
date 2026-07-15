@@ -1,13 +1,4 @@
-# rest-api-knowledge Specification
-
-## Purpose
-
-Expose knowledge-base and source management plus hybrid search over the REST API, covering the
-operations currently available through the `rag-cli.rag knowledge` (`k`) subcommands. Read and
-quick-write actions are synchronous; long-running actions (model deploy, ingest, export, import)
-are asynchronous operations.
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: List and create knowledge bases
 
@@ -32,50 +23,6 @@ do not need a per-base fan-out.
 
 - **WHEN** a client creates a base whose name already exists
 - **THEN** the API returns a conflict error
-
-### Requirement: Inspect and delete a knowledge base
-
-The API SHALL provide `GET /1.0/knowledge/<name>` to return a base's detail and
-`DELETE /1.0/knowledge/<name>` to delete a base and its source metadata. Both SHALL be
-synchronous. Deletion SHALL NOT require an interactive confirmation at the API layer (the
-confirmation is a CLI-client concern).
-
-#### Scenario: Inspecting a knowledge base
-
-- **WHEN** a client requests `GET /1.0/knowledge/<name>` for an existing base
-- **THEN** the response returns its detail synchronously
-
-#### Scenario: Deleting a knowledge base
-
-- **WHEN** a client sends `DELETE /1.0/knowledge/<name>` for an existing base
-- **THEN** the base and its source metadata are removed and the response is synchronous
-
-#### Scenario: Operating on a missing knowledge base
-
-- **WHEN** a client targets a base name that does not exist
-- **THEN** the API returns a `404` error
-
-### Requirement: List, inspect, and forget sources
-
-The API SHALL provide `GET /1.0/knowledge/<name>/sources` to list ingested sources,
-`GET /1.0/knowledge/<name>/sources/<id>` to return a source's metadata, and
-`DELETE /1.0/knowledge/<name>/sources/<id>` to forget a source (remove its chunks and
-metadata). These SHALL be synchronous.
-
-#### Scenario: Listing sources
-
-- **WHEN** a client requests `GET /1.0/knowledge/<name>/sources`
-- **THEN** the response lists the source documents ingested into the base
-
-#### Scenario: Inspecting source metadata
-
-- **WHEN** a client requests `GET /1.0/knowledge/<name>/sources/<id>`
-- **THEN** the response returns that source's metadata, including its ingestion status
-
-#### Scenario: Forgetting a source
-
-- **WHEN** a client sends `DELETE /1.0/knowledge/<name>/sources/<id>`
-- **THEN** the source's chunks and metadata are removed and the response is synchronous
 
 ### Requirement: Ingest sources as an operation
 
@@ -134,33 +81,6 @@ The operation's metadata SHALL convey ingestion progress, and the operation SHAL
 
 - **WHEN** a client cancels a running ingest operation
 - **THEN** ingestion stops cooperatively and the operation reports cancellation
-
-### Requirement: Hybrid search
-
-The API SHALL provide `POST /1.0/search` (or an equivalent search endpoint) that runs the
-existing hybrid retrieval pipeline (BM25 + neural + rerank) over one or more named knowledge
-bases and returns scored hits synchronously. The request SHALL accept the query, the target
-bases, and an optional result count. Each hit SHALL include its score, originating base, source
-identifier, creation date, provenance tag, and content.
-
-Search SHALL require the embedding model to be available; when it is not, the API SHALL return
-an error stating retrieval is unavailable.
-
-#### Scenario: Searching across bases
-
-- **WHEN** a client posts a query and a set of target bases
-- **THEN** the response synchronously returns scored hits ordered by relevance
-- **AND** each hit includes its score, base, source id, creation date, provenance tag, and content
-
-#### Scenario: Limiting result count
-
-- **WHEN** a client includes a result count in the search request
-- **THEN** the response returns at most that many hits
-
-#### Scenario: Embedding model unavailable
-
-- **WHEN** a search is requested but the embedding model is not available
-- **THEN** the API returns an error stating retrieval is unavailable
 
 ### Requirement: Initialize the knowledge engine as an operation
 

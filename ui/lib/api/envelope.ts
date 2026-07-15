@@ -124,3 +124,80 @@ export async function postAsync<T>(
   }
   return { operation: env.operation, metadata: env.metadata as T };
 }
+
+// requestForm performs a multipart/form-data POST. The browser sets the
+// Content-Type (with boundary) from the FormData, so we must not set it here.
+async function requestForm<T>(path: string, form: FormData): Promise<ApiEnvelope<T>> {
+  captureTokenFromUrl();
+  let resp: Response;
+  try {
+    resp = await fetch(apiUrl(path), {
+      method: "POST",
+      headers: { ...authHeaders() },
+      credentials: "include",
+      body: form,
+    });
+  } catch (e) {
+    throw new ApiError(`network error contacting the API: ${String(e)}`, 0);
+  }
+  let env: ApiEnvelope<T>;
+  try {
+    env = (await resp.json()) as ApiEnvelope<T>;
+  } catch {
+    throw new ApiError(`unexpected non-JSON response (HTTP ${resp.status})`, resp.status);
+  }
+  if (env.type === "error") {
+    throw new ApiError(env.error ?? `request failed`, env.error_code ?? resp.status);
+  }
+  return env;
+}
+
+// postAsyncForm uploads a multipart form and expects an async operation (used by
+// file-upload ingest and archive import).
+export async function postAsyncForm<T>(
+  path: string,
+  form: FormData
+): Promise<{ operation: string; metadata: T }> {
+  const env = await requestForm<T>(path, form);
+  if (!env.operation) {
+    throw new ApiError(`expected an async operation but got a "${env.type}" response`, 0);
+  }
+  return { operation: env.operation, metadata: env.metadata as T };
+}
+
+// downloadFile fetches a binary response with auth and saves it via the browser,
+// so a protected download works whether auth is the loopback cookie or a Bearer
+// header. Errors surface as an ApiError like the JSON verbs.
+export async function downloadFile(path: string, filename: string): Promise<void> {
+  captureTokenFromUrl();
+  let resp: Response;
+  try {
+    resp = await fetch(apiUrl(path), {
+      method: "GET",
+      headers: { ...authHeaders() },
+      credentials: "include",
+    });
+  } catch (e) {
+    throw new ApiError(`network error contacting the API: ${String(e)}`, 0);
+  }
+  if (!resp.ok) {
+    // A failed download is returned as the JSON error envelope.
+    let message = `download failed (HTTP ${resp.status})`;
+    try {
+      const env = (await resp.json()) as ApiEnvelope;
+      if (env.error) message = env.error;
+    } catch {
+      /* keep the generic message */
+    }
+    throw new ApiError(message, resp.status);
+  }
+  const blob = await resp.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

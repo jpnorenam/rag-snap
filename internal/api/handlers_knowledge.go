@@ -11,12 +11,13 @@ import (
 // knowledgeBaseSummary is the API view of a knowledge base, derived from its
 // backing index.
 type knowledgeBaseSummary struct {
-	Name      string `json:"name"`
-	Index     string `json:"index"`
-	Health    string `json:"health"`
-	Status    string `json:"status"`
-	DocsCount string `json:"docs_count"`
-	StoreSize string `json:"store_size"`
+	Name        string `json:"name"`
+	Index       string `json:"index"`
+	Health      string `json:"health"`
+	Status      string `json:"status"`
+	DocsCount   string `json:"docs_count"`
+	StoreSize   string `json:"store_size"`
+	SourceCount int    `json:"source_count"`
 }
 
 // createKnowledgeRequest is the body of POST /1.0/knowledge.
@@ -43,16 +44,25 @@ func (s *Server) handleKnowledgeList(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+
+	// Exact source counts per index via a single terms aggregation (listing is
+	// page-capped, so it would under-count large bases and starve others).
+	sourceCounts, err := client.SourceCountsByIndex(r.Context())
+	if err != nil {
+		sourceCounts = map[string]int{}
+	}
+
 	bases := make([]knowledgeBaseSummary, 0, len(indexes))
 	for _, idx := range indexes {
 		name, _ := knowledge.KnowledgeBaseNameFromIndex(idx.Name)
 		bases = append(bases, knowledgeBaseSummary{
-			Name:      name,
-			Index:     idx.Name,
-			Health:    idx.Health,
-			Status:    idx.Status,
-			DocsCount: idx.DocsCount,
-			StoreSize: idx.StoreSize,
+			Name:        name,
+			Index:       idx.Name,
+			Health:      idx.Health,
+			Status:      idx.Status,
+			DocsCount:   idx.DocsCount,
+			StoreSize:   idx.StoreSize,
+			SourceCount: sourceCounts[idx.Name],
 		})
 	}
 	respondSync(w, bases)
@@ -135,7 +145,7 @@ func (s *Server) handleKnowledgeGet(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	sources, err := client.ListSourceMetadata(r.Context(), index)
+	sourceCounts, err := client.SourceCountsByIndex(r.Context())
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -144,7 +154,7 @@ func (s *Server) handleKnowledgeGet(w http.ResponseWriter, r *http.Request) {
 		"name":         name,
 		"index":        index,
 		"chunk_count":  count,
-		"source_count": len(sources),
+		"source_count": sourceCounts[index],
 	})
 }
 

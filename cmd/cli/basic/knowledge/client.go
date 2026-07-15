@@ -43,6 +43,16 @@ func (c *OpenSearchClient) URL() string {
 	return c.url
 }
 
+// EmbeddingModelID returns the embedding model id resolved during Init, if any.
+func (c *OpenSearchClient) EmbeddingModelID() string {
+	return c.embeddingModelID
+}
+
+// RerankModelID returns the rerank model id resolved during Init, if any.
+func (c *OpenSearchClient) RerankModelID() string {
+	return c.rerankModelID
+}
+
 // headerTransport wraps an http.RoundTripper and adds default headers to all requests.
 type headerTransport struct {
 	transport http.RoundTripper
