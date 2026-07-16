@@ -19,6 +19,7 @@ type batchManifestJSON struct {
 	Model          string              `json:"model,omitempty"`
 	KnowledgeBases []string            `json:"knowledge_bases,omitempty"`
 	Prompt         string              `json:"prompt,omitempty"`
+	PromptRef      string              `json:"prompt_ref,omitempty"`
 	Temperature    *float64            `json:"temperature,omitempty"`
 	Questions      []batchQuestionJSON `json:"questions"`
 }
@@ -63,6 +64,7 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 		Model:          manifest.Model,
 		KnowledgeBases: manifest.KnowledgeBases,
 		Prompt:         manifest.Prompt,
+		PromptRef:      manifest.PromptRef,
 		Temperature:    &temp,
 		Questions:      questions,
 	}

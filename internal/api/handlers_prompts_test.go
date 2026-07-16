@@ -523,3 +523,141 @@ func TestPromptsSeedChatAndBatch(t *testing.T) {
 		t.Errorf("next session would use %q, want the updated prompt", got)
 	}
 }
+
+// decodeVariantView decodes the metadata of a single-variant response.
+func decodeVariantView(t *testing.T, env map[string]any) variantView {
+	t.Helper()
+	raw, err := json.Marshal(env["metadata"])
+	if err != nil {
+		t.Fatalf("re-encoding metadata: %v", err)
+	}
+	var v variantView
+	if err := json.Unmarshal(raw, &v); err != nil {
+		t.Fatalf("decoding variant view: %v", err)
+	}
+	return v
+}
+
+// TestVariantEndpointsLifecycle drives create → list → save → activate → delete
+// over HTTP, plus the 409s, so the routes and error mapping are exercised end to
+// end.
+func TestVariantEndpointsLifecycle(t *testing.T) {
+	sock, _ := startTestServer(t, testBackends())
+	const slot = "chat_system_prompt"
+	base := "/1.0/prompts/" + slot + "/variants"
+
+	// Create.
+	status, env := promptRequest(t, sock, http.MethodPost, base,
+		map[string]string{"name": "presales-call", "value": "v1 text"})
+	if status != http.StatusOK {
+		t.Fatalf("POST create: status = %d, want 200", status)
+	}
+	if v := decodeVariantView(t, env); v.Name != "presales-call" || v.Version != 1 {
+		t.Errorf("create view = %+v, want presales-call@1", v)
+	}
+
+	// Duplicate create → 409.
+	if status, _ := promptRequest(t, sock, http.MethodPost, base,
+		map[string]string{"name": "presales-call", "value": "again"}); status != http.StatusConflict {
+		t.Errorf("duplicate create: status = %d, want 409", status)
+	}
+
+	// Reserved name → 400.
+	if status, _ := promptRequest(t, sock, http.MethodPost, base,
+		map[string]string{"name": "default", "value": "x"}); status != http.StatusBadRequest {
+		t.Errorf("reserved-name create: status = %d, want 400", status)
+	}
+
+	// List shows the variant.
+	status, env = promptRequest(t, sock, http.MethodGet, base, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET variants: status = %d, want 200", status)
+	}
+	rawList, _ := json.Marshal(env["metadata"])
+	var summaries []variantSummary
+	if err := json.Unmarshal(rawList, &summaries); err != nil {
+		t.Fatalf("decoding summaries: %v", err)
+	}
+	if len(summaries) != 1 || summaries[0].Name != "presales-call" {
+		t.Fatalf("variants list = %+v, want one presales-call", summaries)
+	}
+
+	// Save a new version.
+	if status, env := promptRequest(t, sock, http.MethodPut, base+"/presales-call",
+		map[string]string{"value": "v2 text"}); status != http.StatusOK {
+		t.Errorf("PUT save: status = %d, want 200", status)
+	} else if v := decodeVariantView(t, env); v.Version != 2 {
+		t.Errorf("saved head version = %d, want 2", v.Version)
+	}
+
+	// Activate via PATCH on the slot; the slot view now reflects it.
+	status, env = promptRequest(t, sock, http.MethodPatch, "/1.0/prompts/"+slot,
+		map[string]string{"active": "presales-call"})
+	if status != http.StatusOK {
+		t.Fatalf("PATCH activate: status = %d, want 200", status)
+	}
+	if v := promptOne(t, env); v.Active != "presales-call" || !v.Customized {
+		t.Errorf("slot view after activate = %+v, want active presales-call customized", v)
+	}
+
+	// The active variant cannot be deleted → 409.
+	if status, _ := promptRequest(t, sock, http.MethodDelete, base+"/presales-call", nil); status != http.StatusConflict {
+		t.Errorf("delete active: status = %d, want 409", status)
+	}
+
+	// Deactivate, then delete succeeds.
+	if status, _ := promptRequest(t, sock, http.MethodPatch, "/1.0/prompts/"+slot,
+		map[string]string{"active": ""}); status != http.StatusOK {
+		t.Fatalf("PATCH deactivate: status != 200")
+	}
+	if status, _ := promptRequest(t, sock, http.MethodDelete, base+"/presales-call", nil); status != http.StatusOK {
+		t.Errorf("delete: status = %d, want 200", status)
+	}
+	if status, _ := promptRequest(t, sock, http.MethodGet, base+"/presales-call", nil); status != http.StatusNotFound {
+		t.Errorf("get after delete: status = %d, want 404", status)
+	}
+}
+
+// TestVariantRestoreEndpoint checks the restore route appends a new head.
+func TestVariantRestoreEndpoint(t *testing.T) {
+	sock, _ := startTestServer(t, testBackends())
+	base := "/1.0/prompts/answer_system_prompt/variants"
+
+	if status, _ := promptRequest(t, sock, http.MethodPost, base,
+		map[string]string{"name": "rfp", "value": "one"}); status != http.StatusOK {
+		t.Fatalf("create: status != 200")
+	}
+	if status, _ := promptRequest(t, sock, http.MethodPut, base+"/rfp",
+		map[string]string{"value": "two"}); status != http.StatusOK {
+		t.Fatalf("save two: status != 200")
+	}
+
+	status, env := promptRequest(t, sock, http.MethodPost, base+"/rfp/restore",
+		map[string]int{"version": 1})
+	if status != http.StatusOK {
+		t.Fatalf("restore: status = %d, want 200", status)
+	}
+	if v := decodeVariantView(t, env); v.Value != "one" || v.Version != 3 {
+		t.Errorf("restored head = %+v, want value one at version 3", v)
+	}
+
+	// Unknown version → 404.
+	if status, _ := promptRequest(t, sock, http.MethodPost, base+"/rfp/restore",
+		map[string]int{"version": 99}); status != http.StatusNotFound {
+		t.Errorf("restore unknown version: status = %d, want 404", status)
+	}
+}
+
+// TestVariantsRejectedOnSourceRulesEndpoint checks the guardrail slot exposes no
+// variant routes.
+func TestVariantsRejectedOnSourceRulesEndpoint(t *testing.T) {
+	sock, _ := startTestServer(t, testBackends())
+
+	if status, _ := promptRequest(t, sock, http.MethodGet, "/1.0/prompts/source_rules/variants", nil); status != http.StatusNotFound {
+		t.Errorf("GET source_rules variants: status = %d, want 404", status)
+	}
+	if status, _ := promptRequest(t, sock, http.MethodPost, "/1.0/prompts/source_rules/variants",
+		map[string]string{"name": "x", "value": "y"}); status != http.StatusNotFound {
+		t.Errorf("POST source_rules variant: status = %d, want 404", status)
+	}
+}

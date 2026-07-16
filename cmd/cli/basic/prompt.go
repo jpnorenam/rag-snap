@@ -36,7 +36,15 @@ func PromptCommand(ctx *common.Context) *cobra.Command {
 	}
 
 	addDebugFlags(cobraCmd, ctx)
+	// Fixed order: the interactive front door first, then the scriptable
+	// variant-management subcommands.
 	cobraCmd.AddCommand(cmd.initCommand())
+	cobraCmd.AddCommand(cmd.listCommand())
+	cobraCmd.AddCommand(cmd.saveCommand())
+	cobraCmd.AddCommand(cmd.useCommand())
+	cobraCmd.AddCommand(cmd.historyCommand())
+	cobraCmd.AddCommand(cmd.restoreCommand())
+	cobraCmd.AddCommand(cmd.deleteCommand())
 
 	return cobraCmd
 }
@@ -109,6 +117,14 @@ func runPromptInitDaemon(dc *apiclient.Client) error {
 	current := findPrompt(prompts, selected)
 	if current == nil {
 		return fmt.Errorf("daemon does not know the prompt %q", selected)
+	}
+
+	// Generation slots have named variants: hand off to the variant flow (pick a
+	// variant / create one / use the default → edit, activate, restore). The
+	// source_rules guardrail has only a single override, so it keeps the simple
+	// edit/reset flow below.
+	if isGenerationSlot(string(selected)) {
+		return runVariantInit(dc, selected)
 	}
 
 	// A customized prompt can be edited or put back to its built-in default.

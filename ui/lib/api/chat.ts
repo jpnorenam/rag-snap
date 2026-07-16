@@ -40,12 +40,15 @@ export interface ChatSession {
 }
 
 // ChatStartOptions mirror the optional POST /1.0/chat request body. resume seeds
-// the session from the saved chat with that id.
+// the session from the saved chat with that id; prompt selects a named
+// chat_system_prompt variant for this session (the reserved name "default"
+// forces the built-in default), overriding the slot's active pointer.
 export interface ChatStartOptions {
   model?: string;
   bases?: string[];
   temperature?: number;
   resume?: string;
+  prompt?: string;
 }
 
 // startChat issues POST /1.0/chat and resolves the websocket URL (with the

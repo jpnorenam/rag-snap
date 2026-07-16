@@ -63,6 +63,12 @@ type Chat struct {
 	Model     string    `json:"model"`
 	Bases     []string  `json:"bases"`
 	Turns     []Turn    `json:"turns"`
+	// Prompt records which chat_system_prompt resolution the session ran on, as a
+	// "variant@version" reference (empty for the built-in default). It is
+	// informational provenance: resuming re-resolves the prompt fresh rather than
+	// pinning this value, and records saved before the field existed decode it as
+	// empty (omitempty keeps their shape unchanged).
+	Prompt string `json:"prompt,omitempty"`
 }
 
 // Summary is the transcript-free view returned by List: enough to render a
@@ -75,6 +81,8 @@ type Summary struct {
 	Model     string    `json:"model"`
 	Bases     []string  `json:"bases"`
 	TurnCount int       `json:"turn_count"`
+	// Prompt is the chat's prompt provenance reference (see Chat.Prompt).
+	Prompt string `json:"prompt,omitempty"`
 }
 
 // Store persists chats as one JSON file per id under dir. When dir is empty the
@@ -321,6 +329,7 @@ func summaryOf(c Chat) Summary {
 		Model:     c.Model,
 		Bases:     c.Bases,
 		TurnCount: len(c.Turns),
+		Prompt:    c.Prompt,
 	}
 }
 

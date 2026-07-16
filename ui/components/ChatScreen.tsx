@@ -6,6 +6,12 @@ import ChatHistoryPanel from "@/components/ChatHistoryPanel";
 import { ApiError, errorMessage } from "@/lib/api/envelope";
 import { startChat, ChatConnection, type ChatFrame, type ChatStartOptions } from "@/lib/api/chat";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
+import { listPrompts } from "@/lib/api/prompts";
+
+// DEFAULT_PROMPT is the dropdown value that forces the built-in chat_system_prompt
+// for the session, regardless of which variant is active on the slot. It matches
+// the daemon's reserved variant name.
+const DEFAULT_PROMPT = "default";
 
 type ConnState = "idle" | "connecting" | "connected" | "closed" | "error";
 
@@ -41,6 +47,13 @@ export default function ChatScreen() {
   const [kbState, setKbState] = useState<"loading" | "connected" | "unavailable">("loading");
   const [activeBases, setActiveBases] = useState<string[]>([]);
   const [model, setModel] = useState<string>("");
+  // The chat_system_prompt variants offered in the selector, and the choice for
+  // the next session. "" means "use the slot's active prompt" (the daemon
+  // default); DEFAULT_PROMPT forces the built-in default; any other value names
+  // a variant. Blank until loaded so the control does not flicker.
+  const [promptVariants, setPromptVariants] = useState<string[] | null>(null);
+  const [activePrompt, setActivePrompt] = useState<string>("");
+  const [promptChoice, setPromptChoice] = useState<string>("");
   const [historyOpen, setHistoryOpen] = useState(false);
   // Highlighted index in the composer's slash-command hint list (-1 = none).
   const [hintIndex, setHintIndex] = useState(-1);
@@ -73,6 +86,22 @@ export default function ChatScreen() {
         if (e instanceof ApiError && e.code === 0) setError(errorMessage(e));
         setKbState("unavailable");
       });
+  }, []);
+
+  // Load the chat_system_prompt variants for the session selector, pre-selecting
+  // whatever the slot has active so the default behaviour matches the daemon's.
+  // The prompt store is daemon-owned; a failure here (older daemon, transient)
+  // just leaves the selector out — chat still works on the daemon's active prompt.
+  useEffect(() => {
+    listPrompts()
+      .then((prompts) => {
+        const chat = prompts.find((p) => p.name === "chat_system_prompt");
+        setPromptVariants(chat?.variants ?? []);
+        setActivePrompt(chat?.active ?? "");
+        // The active variant name, or DEFAULT_PROMPT when the built-in is active.
+        setPromptChoice(chat?.active ? chat.active : DEFAULT_PROMPT);
+      })
+      .catch(() => setPromptVariants([]));
   }, []);
 
   // Append streamed content to the in-flight assistant turn.
@@ -157,12 +186,17 @@ export default function ChatScreen() {
 
     setConnState("connecting");
     setError(null);
-    const { conn, session } = await openConnection({ bases: activeBases });
+    // promptChoice is a start-time control: the daemon snapshots the prompt when
+    // the session begins, so an empty choice defers to the slot's active prompt.
+    const { conn, session } = await openConnection({
+      bases: activeBases,
+      ...(promptChoice ? { prompt: promptChoice } : {}),
+    });
     connRef.current = conn;
     setModel(session.model);
     setConnState("connected");
     return conn;
-  }, [activeBases, connState, openConnection]);
+  }, [activeBases, connState, openConnection, promptChoice]);
 
   // resumeChat starts a new session seeded from a saved chat, replacing the
   // transcript and active-base selection with the restored state.
@@ -387,6 +421,39 @@ export default function ChatScreen() {
             </button>
           ))}
         </div>
+
+        {/* System-prompt selector. Only shown when the slot has stored variants
+            to choose between. The prompt is fixed for the whole session (the
+            daemon snapshots it at start), so the control is locked once a session
+            is live and applies to the next fresh session otherwise. */}
+        {promptVariants && promptVariants.length > 0 && (
+          <div className="prompt-selector">
+            <label className="prompt-selector__label" htmlFor="chat-prompt">
+              System prompt:
+            </label>
+            <select
+              id="chat-prompt"
+              value={promptChoice}
+              disabled={connState === "connecting" || connState === "connected"}
+              onChange={(e) => setPromptChoice(e.target.value)}
+            >
+              <option value={DEFAULT_PROMPT}>
+                Built-in default{!activePrompt ? " (active)" : ""}
+              </option>
+              {promptVariants.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                  {name === activePrompt ? " (active)" : ""}
+                </option>
+              ))}
+            </select>
+            <span className="u-text--muted p-text--small u-no-margin--bottom">
+              {connState === "connecting" || connState === "connected"
+                ? "Fixed for this session"
+                : "Applies to the next chat"}
+            </span>
+          </div>
+        )}
 
         {notice && (
           <div className={`p-notification--${notice.type}`} role="status">

@@ -19,12 +19,15 @@ const defaultBatchTemperature = 0.1
 // decoupled from the YAML on-disk format. The interactive document-to-manifest
 // "build" flow is intentionally CLI-only (see the rest-api-answer spec).
 type batchManifestRequest struct {
-	Version        string                 `json:"version,omitempty"`
-	Model          string                 `json:"model,omitempty"`
-	KnowledgeBases []string               `json:"knowledge_bases,omitempty"`
-	Prompt         string                 `json:"prompt,omitempty"`
-	Temperature    *float64               `json:"temperature,omitempty"`
-	Questions      []batchQuestionRequest `json:"questions"`
+	Version        string   `json:"version,omitempty"`
+	Model          string   `json:"model,omitempty"`
+	KnowledgeBases []string `json:"knowledge_bases,omitempty"`
+	Prompt         string   `json:"prompt,omitempty"`
+	// PromptRef names a stored answer_system_prompt variant to run this batch on.
+	// It is mutually exclusive with the inline Prompt.
+	PromptRef   string                 `json:"prompt_ref,omitempty"`
+	Temperature *float64               `json:"temperature,omitempty"`
+	Questions   []batchQuestionRequest `json:"questions"`
 }
 
 // batchQuestionRequest is a single question in a posted manifest.
@@ -78,6 +81,11 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "manifest contains no questions")
 		return
 	}
+	if req.Prompt != "" && req.PromptRef != "" {
+		respondError(w, http.StatusBadRequest,
+			"manifest may set either 'prompt' or 'prompt_ref', not both")
+		return
+	}
 	for i, q := range req.Questions {
 		if strings.TrimSpace(q.Question) == "" {
 			respondError(w, http.StatusBadRequest, fmt.Sprintf("question %d has an empty question field", i+1))
@@ -114,8 +122,27 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 		temperature = *req.Temperature
 	}
 	// Resolved before the operation starts, so a customization saved while a
-	// batch is running does not change the run in flight.
+	// batch is running does not change the run in flight. An explicit prompt_ref
+	// selects a named answer_system_prompt variant (replacing the slot value); an
+	// unknown one fails the request. promptRef is the provenance recorded in the
+	// results: the variant that drove the run, or empty for the built-in default
+	// or an inline custom prompt.
 	prompts := s.prompts.resolve()
+	var promptRef string
+	switch {
+	case req.PromptRef != "":
+		value, ref, err := s.prompts.resolveSlot(promptAnswerSystem, req.PromptRef)
+		if err != nil {
+			respondError(w, http.StatusNotFound, "unknown prompt variant: "+req.PromptRef)
+			return
+		}
+		prompts.AnswerSystemPrompt = value
+		promptRef = ref
+	case manifest.Prompt == "":
+		// No explicit selection and no inline prompt: record the active
+		// answer_system_prompt provenance.
+		_, promptRef, _ = s.prompts.resolveSlot(promptAnswerSystem, "")
+	}
 
 	resources := map[string][]string{}
 	if len(manifest.KnowledgeBases) > 0 {
@@ -154,11 +181,13 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return err
 			}
+			out.Prompt = promptRef
 			// Publish the structured results on the operation so a client can
 			// retrieve them once the operation completes.
 			op.UpdateMetadata(map[string]any{
 				"generated_at": out.GeneratedAt,
 				"model":        out.Model,
+				"prompt":       out.Prompt,
 				"results":      out.Results,
 			})
 			return nil
