@@ -197,8 +197,8 @@ preserved). Resetting a prompt already at its default SHALL succeed as a no-op.
 
 ### Requirement: Prompt customizations persist across daemon restarts
 
-Variants, their version histories, the per-slot active pointers, and the `source_rules` override
-SHALL be persisted by the daemon under its `$SNAP_COMMON` state directory so they survive daemon
+Variants, their version histories, the per-slot active pointers, and the `source_rules` override SHALL
+be persisted by the daemon under its `$SNAP_COMMON` state directory so they survive daemon
 restarts and snap refreshes. Each variant SHALL be persisted as its own record so a corrupt
 record loses only that variant, never the store; the built-in default SHALL never be persisted —
 a slot with no active variant always resolves to the built-in default of the running release. A
