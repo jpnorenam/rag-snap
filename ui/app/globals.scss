@@ -750,6 +750,121 @@ $sidebar-accent: #e95420; // Ubuntu orange
   margin-left: auto;
 }
 
+// Per-card feedback banner: rendered inside the card the user acted on, so the
+// confirmation appears where they are looking.
+.prompt-card__notice {
+  margin-bottom: 0.75rem;
+}
+
+// Active-prompt radio group on a generation-slot card: one radio per stored
+// variant (choosing activates), the built-in default last, with quiet
+// per-variant actions on each real-variant row.
+.prompt-card__variants {
+  margin: 0 0 1rem;
+  padding: 0;
+  border: none;
+}
+
+.prompt-card__variants-title,
+.prompt-card__preview-caption {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vf-color-text-muted);
+  margin: 0 0 0.5rem;
+  padding: 0;
+}
+
+.prompt-card__variant-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem 0.75rem;
+  // Actions wrap under the radio at narrow widths — never horizontal scroll.
+  flex-wrap: wrap;
+  padding: 0.15rem 0;
+  border-bottom: 1px solid var(--vf-color-border-low-contrast);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.prompt-card__variant-choice {
+  // The Vanilla radio label carries the name + version tag inline.
+  margin-bottom: 0;
+}
+
+.prompt-card__variant-name {
+  font-family: var(--vf-font-family-mono, monospace);
+  overflow-wrap: anywhere;
+}
+
+.prompt-card__variant-version {
+  margin-left: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--vf-color-text-muted);
+}
+
+.prompt-card__variant-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+// Variant version history, shown in a modal: newest-first list with a restore
+// action per non-current version.
+.variant-history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 24rem;
+  overflow-y: auto;
+}
+
+.variant-history__item {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--vf-color-border-low-contrast);
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.variant-history__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.variant-history__version {
+  font-family: var(--vf-font-family-mono, monospace);
+  font-weight: 600;
+}
+
+.variant-history__current {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vf-color-text-muted);
+}
+
+.variant-history__preview {
+  margin: 0.25rem 0 0.5rem;
+}
+
+.variant-history__full {
+  margin-bottom: 0.5rem;
+
+  summary {
+    font-size: 0.875rem;
+    color: var(--vf-color-text-muted);
+    cursor: pointer;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Knowledge bases  --- knowledge ---
 // ---------------------------------------------------------------------------

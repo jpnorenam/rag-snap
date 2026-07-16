@@ -38,6 +38,7 @@ var apiExtensions = []string{
 	"chat_history",
 	"batch_answer",
 	"prompts",
+	"prompt_variants",
 	"status",
 	"config",
 }
@@ -327,11 +328,21 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	// Batch answering (prepared manifest, async operation).
 	mux.HandleFunc("POST /1.0/answer/batch", s.requireAuth(s.handleAnswerBatch))
 
-	// Prompt templates (daemon-owned; seed chat sessions and batch runs).
+	// Prompt slots (daemon-owned; seed chat sessions and batch runs). The
+	// slot-level endpoints keep their pre-variants semantics; the nested variant
+	// endpoints add named variants and version history on the generation slots.
 	mux.HandleFunc("GET /1.0/prompts", s.requireAuth(s.handlePromptsList))
 	mux.HandleFunc("GET /1.0/prompts/{name}", s.requireAuth(s.handlePromptGet))
 	mux.HandleFunc("PUT /1.0/prompts/{name}", s.requireAuth(s.handlePromptUpdate))
 	mux.HandleFunc("DELETE /1.0/prompts/{name}", s.requireAuth(s.handlePromptReset))
+	mux.HandleFunc("PATCH /1.0/prompts/{slot}", s.requireAuth(s.handleSlotActivate))
+	mux.HandleFunc("GET /1.0/prompts/{slot}/variants", s.requireAuth(s.handleVariantsList))
+	mux.HandleFunc("POST /1.0/prompts/{slot}/variants", s.requireAuth(s.handleVariantCreate))
+	mux.HandleFunc("GET /1.0/prompts/{slot}/variants/{name}", s.requireAuth(s.handleVariantGet))
+	mux.HandleFunc("PUT /1.0/prompts/{slot}/variants/{name}", s.requireAuth(s.handleVariantUpdate))
+	mux.HandleFunc("DELETE /1.0/prompts/{slot}/variants/{name}", s.requireAuth(s.handleVariantDelete))
+	mux.HandleFunc("GET /1.0/prompts/{slot}/variants/{name}/versions", s.requireAuth(s.handleVariantVersions))
+	mux.HandleFunc("POST /1.0/prompts/{slot}/variants/{name}/restore", s.requireAuth(s.handleVariantRestore))
 
 	// Service status (live probes of the three backends plus the daemon itself).
 	mux.HandleFunc("GET /1.0/status", s.requireAuth(s.handleStatus))

@@ -96,12 +96,18 @@ type BatchQuestion struct {
 
 // BatchManifest is the top-level structure of a batch chat YAML file.
 type BatchManifest struct {
-	Version          string          `yaml:"version"`
-	Model            string          `yaml:"model,omitempty"`
-	KnowledgeBases   []string        `yaml:"knowledge_bases,omitempty"`
-	KapaSourceGroups []string        `yaml:"kapa_source_groups,omitempty"`
-	Prompt           string          `yaml:"prompt,omitempty"`
-	Questions        []BatchQuestion `yaml:"questions"`
+	Version          string   `yaml:"version"`
+	Model            string   `yaml:"model,omitempty"`
+	KnowledgeBases   []string `yaml:"knowledge_bases,omitempty"`
+	KapaSourceGroups []string `yaml:"kapa_source_groups,omitempty"`
+	Prompt           string   `yaml:"prompt,omitempty"`
+	// PromptRef names a stored answer_system_prompt variant to run this batch on
+	// (resolved by the daemon). It is mutually exclusive with the inline Prompt
+	// and requires a running daemon; a daemonless run with PromptRef set is an
+	// error. Unlike Prompt, it replaces the answer system prompt outright rather
+	// than being combined with the source rules.
+	PromptRef string          `yaml:"prompt_ref,omitempty"`
+	Questions []BatchQuestion `yaml:"questions"`
 }
 
 // BatchResult holds the answer for a single question.
@@ -115,9 +121,14 @@ type BatchResult struct {
 // generation timestamp, and the per-question answers. It is the same shape the
 // CLI writes to its JSON results file and the daemon exposes over the API.
 type BatchOutput struct {
-	GeneratedAt string        `json:"generated_at"`
-	Model       string        `json:"model"`
-	Results     []BatchResult `json:"results"`
+	GeneratedAt string `json:"generated_at"`
+	Model       string `json:"model"`
+	// Prompt records which answer_system_prompt resolution drove the run, as a
+	// "variant@version" reference (empty for the built-in default or an inline
+	// custom prompt). It is the RFP audit trail: which prompt produced these
+	// answers.
+	Prompt  string        `json:"prompt,omitempty"`
+	Results []BatchResult `json:"results"`
 }
 
 // noContextAnswer is the fixed response emitted when retrieval returns nothing,

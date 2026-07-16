@@ -203,3 +203,61 @@ func TestChatConnectRejectsBadSecret(t *testing.T) {
 		_ = hresp.Body.Close()
 	}
 }
+
+// TestChatRecordsPromptProvenance verifies a session started on a named variant
+// records that variant@version as provenance on the saved chat, and that an
+// unknown variant fails the start request.
+func TestChatRecordsPromptProvenance(t *testing.T) {
+	inference := stubInference(t)
+	sock, srv := startTestServer(t, chatBackends(inference))
+	client := dialSocket(sock)
+
+	// Create and save a chat_system_prompt variant (two versions → head is v2).
+	if status, _ := promptRequest(t, sock, http.MethodPost, "/1.0/prompts/chat_system_prompt/variants",
+		map[string]string{"name": "pirate", "value": "Arr, v1."}); status != http.StatusOK {
+		t.Fatalf("create variant: status = %d", status)
+	}
+	if status, _ := promptRequest(t, sock, http.MethodPut, "/1.0/prompts/chat_system_prompt/variants/pirate",
+		map[string]string{"value": "Arr, v2."}); status != http.StatusOK {
+		t.Fatalf("save variant v2: status = %d", status)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	meta := startChatOp(t, client, `{"prompt":"pirate"}`)
+	conn := dialChat(ctx, t, sock, meta)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	runTurn(ctx, t, conn)
+	if err := wsjson.Write(ctx, conn, map[string]any{"type": "save", "title": "arr"}); err != nil {
+		t.Fatalf("save write: %v", err)
+	}
+	var saved chatServerMessage
+	for saved.Type != "saved" {
+		if err := wsjson.Read(ctx, conn, &saved); err != nil {
+			t.Fatalf("read save ack: %v", err)
+		}
+		if saved.Type == "error" {
+			t.Fatalf("save error: %s", saved.Error)
+		}
+	}
+
+	list, _ := srv.chats.List("")
+	if len(list) != 1 {
+		t.Fatalf("expected one saved chat, got %d", len(list))
+	}
+	if list[0].Prompt != "pirate@2" {
+		t.Errorf("saved chat provenance = %q, want pirate@2", list[0].Prompt)
+	}
+
+	// An unknown variant fails the start request outright.
+	resp, err := client.Post("http://unix/1.0/chat", "application/json", strings.NewReader(`{"prompt":"nope"}`))
+	if err != nil {
+		t.Fatalf("POST /1.0/chat: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown variant start: status = %d, want 404", resp.StatusCode)
+	}
+}

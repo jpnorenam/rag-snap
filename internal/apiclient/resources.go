@@ -208,14 +208,41 @@ func (c *Client) AnswerBatch(ctx context.Context, manifest any) (string, error) 
 	return c.Async(ctx, "POST", "/1.0/answer/batch", manifest)
 }
 
-// Prompt is the client view of one prompt template: its effective value, the
-// built-in default it falls back to, and whether an override is stored in the
-// daemon. The daemon store is what chat sessions and batch runs are seeded from.
+// Prompt is the client view of one prompt slot: its effective value, the
+// built-in default it falls back to, and whether an override is active. For
+// generation slots it also carries the active variant name and the stored
+// variant names. The daemon store is what chat sessions and batch runs are
+// seeded from.
 type Prompt struct {
-	Name       string `json:"name"`
-	Value      string `json:"value"`
-	Default    string `json:"default"`
-	Customized bool   `json:"customized"`
+	Name       string   `json:"name"`
+	Value      string   `json:"value"`
+	Default    string   `json:"default"`
+	Customized bool     `json:"customized"`
+	Active     string   `json:"active,omitempty"`
+	Variants   []string `json:"variants,omitempty"`
+}
+
+// PromptVariant is the client view of one named variant's head value and
+// metadata.
+type PromptVariant struct {
+	Name    string `json:"name"`
+	Slot    string `json:"slot"`
+	Value   string `json:"value"`
+	Version int    `json:"version"`
+	Active  bool   `json:"active"`
+}
+
+// PromptVariantSummary is the transcript-free view of a variant in a listing.
+type PromptVariantSummary struct {
+	Name     string `json:"name"`
+	Versions int    `json:"versions"`
+	Active   bool   `json:"active"`
+}
+
+// PromptVersion is one entry in a variant's version history.
+type PromptVersion struct {
+	Version int    `json:"version"`
+	Value   string `json:"value"`
 }
 
 // ListPrompts returns the prompt templates in the daemon's canonical order.
@@ -252,6 +279,81 @@ func (c *Client) SetPrompt(ctx context.Context, name, value string) (*Prompt, er
 func (c *Client) ResetPrompt(ctx context.Context, name string) (*Prompt, error) {
 	var prompt Prompt
 	if err := c.Sync(ctx, "DELETE", "/1.0/prompts/"+name, nil, &prompt); err != nil {
+		return nil, err
+	}
+	return &prompt, nil
+}
+
+// ListPromptVariants returns the variants of a generation slot.
+func (c *Client) ListPromptVariants(ctx context.Context, slot string) ([]PromptVariantSummary, error) {
+	var out []PromptVariantSummary
+	if err := c.Sync(ctx, "GET", "/1.0/prompts/"+slot+"/variants", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// GetPromptVariant returns one variant's head value and metadata.
+func (c *Client) GetPromptVariant(ctx context.Context, slot, name string) (*PromptVariant, error) {
+	var v PromptVariant
+	if err := c.Sync(ctx, "GET", "/1.0/prompts/"+slot+"/variants/"+name, nil, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// SavePromptVariant appends a new version to a variant, creating it if absent.
+func (c *Client) SavePromptVariant(ctx context.Context, slot, name, value string) (*PromptVariant, error) {
+	var v PromptVariant
+	body := map[string]string{"value": value}
+	if err := c.Sync(ctx, "PUT", "/1.0/prompts/"+slot+"/variants/"+name, body, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// CreatePromptVariant stores a new variant from an initial value, failing if the
+// name is already in use.
+func (c *Client) CreatePromptVariant(ctx context.Context, slot, name, value string) (*PromptVariant, error) {
+	var v PromptVariant
+	body := map[string]string{"name": name, "value": value}
+	if err := c.Sync(ctx, "POST", "/1.0/prompts/"+slot+"/variants", body, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// DeletePromptVariant removes a variant. The active variant cannot be deleted.
+func (c *Client) DeletePromptVariant(ctx context.Context, slot, name string) error {
+	return c.Sync(ctx, "DELETE", "/1.0/prompts/"+slot+"/variants/"+name, nil, nil)
+}
+
+// PromptVariantVersions returns a variant's full version history.
+func (c *Client) PromptVariantVersions(ctx context.Context, slot, name string) ([]PromptVersion, error) {
+	var out []PromptVersion
+	if err := c.Sync(ctx, "GET", "/1.0/prompts/"+slot+"/variants/"+name+"/versions", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RestorePromptVariant appends a new head version carrying an earlier version's
+// content.
+func (c *Client) RestorePromptVariant(ctx context.Context, slot, name string, version int) (*PromptVariant, error) {
+	var v PromptVariant
+	body := map[string]int{"version": version}
+	if err := c.Sync(ctx, "POST", "/1.0/prompts/"+slot+"/variants/"+name+"/restore", body, &v); err != nil {
+		return nil, err
+	}
+	return &v, nil
+}
+
+// ActivatePrompt points a slot's active pointer at a variant, or at the built-in
+// default when name is empty.
+func (c *Client) ActivatePrompt(ctx context.Context, slot, name string) (*Prompt, error) {
+	var prompt Prompt
+	body := map[string]string{"active": name}
+	if err := c.Sync(ctx, "PATCH", "/1.0/prompts/"+slot, body, &prompt); err != nil {
 		return nil, err
 	}
 	return &prompt, nil

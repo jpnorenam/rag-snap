@@ -123,3 +123,34 @@ func TestAnswerBatchRejectsEmptyManifest(t *testing.T) {
 		t.Fatalf("status = %d, want 400", resp.StatusCode)
 	}
 }
+
+// TestAnswerBatchPromptRefValidation verifies the request-level guards on
+// prompt_ref: it is mutually exclusive with an inline prompt, and an unknown
+// variant is rejected before any operation is created.
+func TestAnswerBatchPromptRefValidation(t *testing.T) {
+	inference := stubInference(t)
+	sock, _ := startTestServer(t, map[string]string{
+		backendOpenSearch: "http://127.0.0.1:1",
+		backendOpenAI:     inference,
+		backendTika:       "http://127.0.0.1:1",
+	})
+	client := dialSocket(sock)
+
+	post := func(body string) int {
+		resp, err := client.Post("http://unix/1.0/answer/batch", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("POST /1.0/answer/batch: %v", err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// Both prompt and prompt_ref set → 400.
+	if code := post(`{"prompt":"x","prompt_ref":"y","questions":[{"question":"q"}]}`); code != http.StatusBadRequest {
+		t.Errorf("prompt+prompt_ref: status = %d, want 400", code)
+	}
+	// Unknown prompt_ref → 404.
+	if code := post(`{"prompt_ref":"nope","questions":[{"question":"q"}]}`); code != http.StatusNotFound {
+		t.Errorf("unknown prompt_ref: status = %d, want 404", code)
+	}
+}

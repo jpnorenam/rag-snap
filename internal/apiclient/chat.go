@@ -48,14 +48,19 @@ type ChatSession struct {
 }
 
 // StartChat creates a chat session via POST /1.0/chat and dials the resulting
-// websocket operation, returning a live session. bases/model are optional.
-func (c *Client) StartChat(ctx context.Context, model string, bases []string, temperature float64) (*ChatSession, error) {
+// websocket operation, returning a live session. bases/model/promptVariant are
+// optional; promptVariant selects a named chat_system_prompt variant for this
+// session.
+func (c *Client) StartChat(ctx context.Context, model string, bases []string, temperature float64, promptVariant string) (*ChatSession, error) {
 	body := map[string]any{"temperature": temperature}
 	if model != "" {
 		body["model"] = model
 	}
 	if len(bases) > 0 {
 		body["bases"] = bases
+	}
+	if promptVariant != "" {
+		body["prompt"] = promptVariant
 	}
 	return c.openChat(ctx, body)
 }

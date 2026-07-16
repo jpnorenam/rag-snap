@@ -753,7 +753,7 @@ each answer (RAG).
 ### Starting a session
 
 ```
-rag-cli.rag chat [model_name] [--temperature <float>]
+rag-cli.rag chat [model_name] [--temperature <float>] [--prompt <variant>]
 ```
 
 | Argument | Required | Description |
@@ -763,6 +763,7 @@ rag-cli.rag chat [model_name] [--temperature <float>]
 | Flag | Default | Description |
 |---|---|---|
 | `--temperature` | `0.3` | Sampling temperature (0.0–1.0). Lower values produce more deterministic responses; higher values allow more creative variation. |
+| `--prompt` | (active) | Name of a `chat_system_prompt` variant to use for this session only (see [Prompt](#prompt)). Requires the `ragd` daemon. |
 
 **Example — auto-detect model**
 
@@ -1068,6 +1069,7 @@ model: <model_id>             # optional; inherits from config or auto-detected 
 knowledge_bases:              # optional; defaults to the default knowledge base
   - <name>
 prompt: <system_prompt>       # optional; overrides the default RAG system prompt for the whole batch
+prompt_ref: <variant_name>    # optional; use a stored answer_system_prompt variant (daemon only; not with 'prompt')
 questions:
   - id: <identifier>          # optional; included in the output file for traceability
     question: <text>
@@ -1078,7 +1080,8 @@ questions:
 | `version` | Yes | Schema version. Use `"1.0"`. |
 | `model` | No | LLM model identifier. Falls back to the `chat.model` config value, then to server auto-detection. |
 | `knowledge_bases` | No | List of knowledge base names to search for context. Defaults to the `default` base. |
-| `prompt` | No | Custom system prompt for the entire batch. Overrides the built-in RAG answer prompt. Useful for adding domain-specific context or tone instructions. |
+| `prompt` | No | Custom system prompt for the entire batch. Overrides the built-in RAG answer prompt. `source_rules` is appended to it. Mutually exclusive with `prompt_ref`. |
+| `prompt_ref` | No | Name of a stored `answer_system_prompt` variant to run the batch on (see [Prompt](#prompt)). Requires the `ragd` daemon; mutually exclusive with `prompt`. The resolved `variant@version` is recorded in the output JSON. |
 | `questions[].id` | No | Identifier for the question, used in the output JSON for traceability. |
 | `questions[].question` | Yes | The question text sent to the LLM. |
 
@@ -1337,8 +1340,12 @@ Prompts live in one of two places, depending on whether the `ragd` daemon is run
 
 | | Stored in | Read by |
 |---|---|---|
-| **Daemon running** (the usual case) | the daemon, at `$SNAP_COMMON/ragd/prompts.json` | `chat`, `answer batch`, the [web UI](local-ui.md), and the [REST API](rest-api.md) |
+| **Daemon running** (the usual case) | the daemon, under `$SNAP_COMMON/ragd/prompts/` (one file per variant) | `chat`, `answer batch`, the [web UI](local-ui.md), and the [REST API](rest-api.md) |
 | **No daemon** (direct CLI runs) | `~/.config/rag-cli/prompts.json` | direct (daemonless) CLI runs only |
+
+Named **variants** and version history are a daemon-only feature (the daemonless file keeps the
+single-override behaviour). A pre-existing daemon `prompts.json` is migrated automatically the
+first time the daemon starts after upgrade: each override becomes a `custom` variant, activated.
 
 `prompt init` writes to whichever applies, and `chat` / `answer batch` prefer the daemon whenever
 it is running — so with `ragd` active, the **daemon store is the one that matters**. A prompt
@@ -1354,13 +1361,55 @@ saved there is shared with the web UI and applies to every client.
 
 | Command | Description |
 |---|---|
-| `prompt init` | Interactively select and edit (or reset) a system prompt |
+| `prompt init` | Interactively select a prompt, then a variant — edit, create, activate, or restore |
+| `prompt list` | List the slots, their active selection, and each slot's variants |
+| `prompt save <slot> <name> [--file f]` | Save a variant (new version) from a file or stdin |
+| `prompt use <slot> <name>` / `--default` | Activate a variant (or the built-in default) on a slot |
+| `prompt history <slot> <name>` | Show a variant's version history |
+| `prompt restore <slot> <name> <version>` | Restore an earlier version as a new version |
+| `prompt delete <slot> <name>` | Delete a variant |
+
+The two generation slots (`chat_system_prompt`, `answer_system_prompt`) support **named
+variants** — keep one prompt per task (answering RFPs, a presales-call assistant, support triage)
+and switch between them by activating one. Every save appends to a linear version history, so an
+earlier wording can always be restored. The `source_rules` guardrail has a single override only.
+The `list`/`save`/`use`/`history`/`restore`/`delete` subcommands require the `ragd` daemon.
+
+**Example — build and activate a variant for a presales call**
+
+```bash
+$ rag-cli.rag prompt save chat_system_prompt presales-call --file presales.txt
+Saved chat_system_prompt/presales-call (now at version 1).
+Activate it with: rag-cli.rag prompt use chat_system_prompt presales-call
+
+$ rag-cli.rag prompt use chat_system_prompt presales-call
+chat_system_prompt is now using variant "presales-call". New chats and batch runs will use it.
+```
+
+Select a variant for a single session without changing the active one with `chat --prompt`:
+
+```bash
+rag-cli.rag chat --prompt presales-call
+```
+
+For batch runs, name a variant in the manifest with `prompt_ref:` (mutually exclusive with the
+inline `prompt:`; requires the daemon). The exported results record which `variant@version`
+produced them, as an audit trail:
+
+```yaml
+version: "1.0"
+prompt_ref: rfp-govco-2026
+questions:
+  - question: What certifications does the platform hold?
+```
 
 ---
 
 ### `prompt init`
 
-Opens an interactive terminal editor pre-populated with the current value of the selected prompt (custom or built-in default). A prompt that is already customised can also be **reset to its built-in default** from the same flow.
+Opens the interactive flow. Select a slot, then — for a generation slot — a variant to edit, a
+new variant to create, or the built-in default; you can then edit (save a new version), activate,
+or restore an earlier version. The `source_rules` guardrail keeps the simple edit/reset flow.
 
 ```
 rag-cli.rag prompt init

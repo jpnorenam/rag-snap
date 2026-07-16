@@ -12,6 +12,7 @@ import (
 type chatCommand struct {
 	*common.Context
 	temperature float64
+	prompt      string
 }
 
 func ChatCommand(ctx *common.Context) *cobra.Command {
@@ -30,6 +31,7 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 	}
 
 	cobraCmd.Flags().Float64Var(&cmd.temperature, "temperature", 0.3, "Sampling temperature (0.0–1.0); lower = more deterministic")
+	cobraCmd.Flags().StringVar(&cmd.prompt, "prompt", "", "Name of a chat_system_prompt variant to use for this session (requires the ragd daemon)")
 	addDebugFlags(cobraCmd, ctx)
 
 	return cobraCmd
@@ -46,7 +48,13 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 
 	// Prefer a running daemon: it owns the session, backends, and secrets.
 	if dc := daemonClient(cmd.Context); dc != nil {
-		return chat.RemoteClient(dc, llmModelName, nil, cmd.temperature)
+		return chat.RemoteClient(dc, llmModelName, nil, cmd.temperature, cmd.prompt)
+	}
+
+	// Named prompt variants live in the daemon; a daemonless run cannot resolve
+	// one, so fail clearly rather than silently ignoring the flag.
+	if cmd.prompt != "" {
+		return fmt.Errorf("--prompt selects a stored prompt variant, which requires the ragd daemon; start it and retry")
 	}
 
 	apiUrls, err := serverApiUrls(cmd.Context)

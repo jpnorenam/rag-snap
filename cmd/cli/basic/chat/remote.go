@@ -21,11 +21,11 @@ import (
 // REPL only sends prompts and renders streamed token/think frames. /use-knowledge
 // becomes a set-active-kbs control message; other slash commands behave as in the
 // direct REPL where they make sense.
-func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, temperature float64) error {
+func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, temperature float64, promptVariant string) error {
 	ctx := context.Background()
 
 	stop := common.StartProgressSpinner("Connecting to ragd")
-	session, err := dc.StartChat(ctx, llmModelName, bases, temperature)
+	session, err := dc.StartChat(ctx, llmModelName, bases, temperature, promptVariant)
 	stop()
 	if err != nil {
 		return fmt.Errorf("starting chat session: %w", err)

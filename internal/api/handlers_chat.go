@@ -27,6 +27,11 @@ type chatStartRequest struct {
 	Bases       []string `json:"bases,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
 	Resume      string   `json:"resume,omitempty"`
+	// Prompt optionally names a variant of chat_system_prompt to run this session
+	// on (the slot is implied). It overrides the slot's active pointer for this
+	// session only; an unknown variant fails the request. Empty uses the active
+	// selection (or the built-in default).
+	Prompt string `json:"prompt,omitempty"`
 }
 
 // chatControlMessage is a client→server control frame on the chat websocket.
@@ -121,8 +126,15 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 	// customization saved mid-conversation applies to the *next* session rather
 	// than shifting this one's behaviour under the user. The configured prompt
 	// is sent unconditionally — retrieval availability never swaps in a hidden
-	// substitute, so what the prompts API shows is what runs.
-	systemPrompt := s.prompts.resolve().ChatSystemPrompt
+	// substitute, so what the prompts API shows is what runs. An explicit
+	// req.Prompt selects a named variant for this session only; an unknown one
+	// fails the request before any session is started. Resuming re-resolves fresh
+	// here too, so a resumed chat picks up the user's latest prompt iteration.
+	systemPrompt, promptRef, err := s.prompts.resolveSlot(promptChatSystem, req.Prompt)
+	if err != nil {
+		respondError(w, http.StatusNotFound, "unknown prompt variant: "+req.Prompt)
+		return
+	}
 
 	// Initial active bases: a resumed session restores the saved set (dropping any
 	// base whose index no longer exists), otherwise the request's bases are used.
@@ -137,6 +149,7 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, "starting chat session: "+err.Error())
 		return
 	}
+	live.SetPromptRef(promptRef)
 	if resumed != nil {
 		// Seed the conversation history and pin the record so a later save updates
 		// it in place rather than creating a duplicate.
@@ -272,11 +285,12 @@ func (s *Server) runChatSession(ctx context.Context, conn *websocket.Conn, live 
 
 		case "save":
 			saved, err := s.chats.Save(chatstore.Chat{
-				ID:    live.ChatID(),
-				Title: strings.TrimSpace(msg.Title),
-				Model: live.Model(),
-				Bases: live.ActiveBases(),
-				Turns: live.Turns(),
+				ID:     live.ChatID(),
+				Title:  strings.TrimSpace(msg.Title),
+				Model:  live.Model(),
+				Bases:  live.ActiveBases(),
+				Turns:  live.Turns(),
+				Prompt: live.PromptRef(),
 			})
 			if err != nil {
 				// A store failure (or an empty session) is reported without ending

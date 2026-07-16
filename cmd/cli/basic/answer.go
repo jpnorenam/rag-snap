@@ -49,7 +49,8 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 		Short: "Run questions from a YAML manifest and export results to JSON, or build a manifest from a document",
 		Long: "Reads a YAML manifest defining a list of questions, runs each through the RAG+LLM pipeline, " +
 			"and writes the results to a timestamped JSON file.\n\n" +
-			"An optional top-level 'prompt' field in the manifest overrides the default system prompt for the entire batch.\n\n" +
+			"An optional top-level 'prompt' field in the manifest overrides the default system prompt for the entire batch.\n" +
+			"Alternatively, 'prompt_ref: <name>' selects a stored answer_system_prompt variant (requires the ragd daemon; mutually exclusive with 'prompt').\n\n" +
 			"Use --build <document> to extract RFP/RFI questions from a PDF, DOCX, XLSX, or CSV file and " +
 			"generate a manifest without running the batch.",
 		Args: cobra.MaximumNArgs(1),
@@ -73,6 +74,12 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			// timestamped JSON file the direct path produces.
 			if dc := daemonClient(cmd.Context); dc != nil {
 				return cmd.runBatchRemote(dc, manifest, temperature)
+			}
+
+			// A prompt_ref names a stored variant, which only the daemon can
+			// resolve. Fail clearly in direct mode rather than silently ignoring it.
+			if manifest.PromptRef != "" {
+				return fmt.Errorf("manifest 'prompt_ref' names a stored prompt variant, which requires the ragd daemon; start it and retry, or use an inline 'prompt' instead")
 			}
 
 			apiUrls, err := serverApiUrls(cmd.Context)

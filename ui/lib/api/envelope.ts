@@ -106,6 +106,12 @@ export async function putSync<T>(path: string, body?: unknown): Promise<T> {
   return env.metadata as T;
 }
 
+// patchSync issues a PATCH expecting a sync response and returns its metadata.
+export async function patchSync<T>(path: string, body?: unknown): Promise<T> {
+  const env = await request<T>("PATCH", path, body);
+  return env.metadata as T;
+}
+
 // deleteSync issues a DELETE expecting a sync response and returns its metadata.
 export async function deleteSync<T>(path: string): Promise<T> {
   const env = await request<T>("DELETE", path);

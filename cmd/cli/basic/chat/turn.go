@@ -44,6 +44,10 @@ type LiveSession struct {
 	// systemPrompt is the resolved system prompt the session started with, kept
 	// so Restore can rebuild history under the same prompt.
 	systemPrompt string
+	// promptRef is the provenance reference of the resolved system prompt
+	// ("variant@version", or empty for the built-in default), stamped onto a
+	// saved chat so a later reader knows which prompt this conversation ran on.
+	promptRef string
 	// chatID pins the saved-chat record this session persists to, so a second
 	// save updates in place rather than creating a duplicate. Empty until the
 	// session is resumed from a saved chat or saved for the first time.
@@ -105,6 +109,14 @@ func (ls *LiveSession) Restore(turns []chatstore.Turn, chatID string) {
 func (ls *LiveSession) Turns() []chatstore.Turn {
 	return historyToTurns(ls.params.Messages)
 }
+
+// SetPromptRef records the provenance reference of the session's resolved system
+// prompt ("variant@version", or empty for the built-in default), so a save can
+// stamp it onto the stored chat.
+func (ls *LiveSession) SetPromptRef(ref string) { ls.promptRef = ref }
+
+// PromptRef returns the session's prompt provenance reference.
+func (ls *LiveSession) PromptRef() string { return ls.promptRef }
 
 // ChatID returns the pinned saved-chat id, or empty if this session has not been
 // resumed from or saved to a record yet.
