@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Header from "@/components/Header";
 import ChatHistoryPanel from "@/components/ChatHistoryPanel";
+import Markdown from "@/components/common/Markdown";
 import { ApiError, errorMessage } from "@/lib/api/envelope";
 import { startChat, ChatConnection, type ChatFrame, type ChatStartOptions } from "@/lib/api/chat";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
@@ -484,9 +485,15 @@ export default function ChatScreen() {
             <div key={i} className={`chat-message chat-message--${m.role}`}>
               <span className="chat-message__role">{m.role === "user" ? "You" : "Assistant"}</span>
               {m.think && <div className="chat-message__think">{m.think}</div>}
-              <div className="chat-message__bubble">
-                {m.content || (m.streaming ? "…" : "")}
-              </div>
+              {m.role === "assistant" ? (
+                // Assistant answers are Markdown; render them formatted. User
+                // turns are plain text and stay in the pre-wrap bubble.
+                <div className="chat-message__bubble chat-message__bubble--md">
+                  {m.content ? <Markdown content={m.content} /> : m.streaming ? "…" : ""}
+                </div>
+              ) : (
+                <div className="chat-message__bubble">{m.content}</div>
+              )}
             </div>
           ))}
           <div ref={messagesEndRef} />
