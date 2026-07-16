@@ -30,9 +30,15 @@ export default function ResultsOpener({ onOpen, onError }: Props) {
     [onOpen, onError]
   );
 
+  // The whole card is the control: a <label> wrapping a hidden file input, so a
+  // click anywhere on the square opens the results-file picker (matching the Run
+  // and Build entry cards, which are buttons).
   return (
-    <label className="p-button u-no-margin--bottom answer-entry__file">
-      Open results file
+    <label className="answer-entry">
+      <span className="answer-entry__title">Review results</span>
+      <span className="answer-entry__desc u-text--muted p-text--small">
+        Open a previously exported results file to review the answers.
+      </span>
       <input
         type="file"
         accept=".json,application/json"

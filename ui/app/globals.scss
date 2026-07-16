@@ -91,6 +91,19 @@ $sidebar-accent: #e95420; // Ubuntu orange
   text-decoration: none;
   cursor: pointer;
   transition: background-color 0.1s ease-in-out;
+  // Kill the mobile/webview tap highlight so a click doesn't flash an accent tint.
+  -webkit-tap-highlight-color: transparent;
+
+  // Keep the rail's own light-on-dark palette in every link state — the webview
+  // must never fall back to the UA visited/active link colour (purple) once a
+  // section has been clicked.
+  &:visited {
+    color: rgba(255, 255, 255, 0.85);
+  }
+
+  &:active {
+    color: #fff;
+  }
 
   &:not(.app-sidebar__item--soon):hover {
     background-color: rgba(255, 255, 255, 0.1);
@@ -315,6 +328,104 @@ $sidebar-accent: #e95420; // Ubuntu orange
 
 .chat-message--user .chat-message__bubble {
   background-color: var(--vf-color-background-information-default);
+}
+
+// Markdown-rendered assistant bubble: block elements handle their own spacing,
+// so drop the pre-wrap the plain-text bubble relies on.
+.chat-message__bubble--md {
+  white-space: normal;
+}
+
+// ---------------------------------------------------------------------------
+// Markdown (assistant answers) — see components/common/Markdown.tsx
+// ---------------------------------------------------------------------------
+
+.md {
+  // Collapse the outer margins so the rendered block sits flush in the bubble.
+  > :first-child {
+    margin-top: 0;
+  }
+  > :last-child {
+    margin-bottom: 0;
+  }
+}
+
+.md__p {
+  margin: 0 0 0.75rem;
+}
+
+.md__heading {
+  margin: 1rem 0 0.5rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.md__list {
+  margin: 0 0 0.75rem;
+  padding-left: 1.5rem;
+
+  li {
+    margin-bottom: 0.25rem;
+  }
+}
+
+.md__quote {
+  margin: 0 0 0.75rem;
+  padding: 0.25rem 0 0.25rem 0.75rem;
+  border-left: 3px solid var(--vf-color-border-default);
+  color: var(--vf-color-text-muted);
+}
+
+.md__hr {
+  margin: 1rem 0;
+  border: none;
+  border-top: 1px solid var(--vf-color-border-default);
+}
+
+// Inline code and fenced blocks.
+.md__code {
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.2rem;
+  background-color: var(--vf-color-background);
+  font-family: var(--vf-font-monospace, monospace);
+  font-size: 0.875em;
+}
+
+.md__pre {
+  margin: 0 0 0.75rem;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  border-radius: 0.35rem;
+  background-color: var(--vf-color-background);
+
+  code {
+    font-family: var(--vf-font-monospace, monospace);
+    font-size: 0.875em;
+    white-space: pre;
+  }
+}
+
+// Tables scroll inside their own wrapper so the page never scrolls sideways.
+.md__table-wrap {
+  overflow-x: auto;
+  margin: 0 0 0.75rem;
+}
+
+.md__table {
+  border-collapse: collapse;
+  width: 100%;
+
+  th,
+  td {
+    padding: 0.4rem 0.65rem;
+    border: 1px solid var(--vf-color-border-default);
+    text-align: left;
+  }
+
+  th {
+    background-color: var(--vf-color-background-alt);
+    font-weight: 600;
+  }
 }
 
 .chat-message__think {
@@ -1503,8 +1614,8 @@ $sidebar-accent: #e95420; // Ubuntu orange
   margin-top: 1.5rem;
 }
 
-// Entry cards double as buttons (Run / Build) and a container (Review). Reset
-// button chrome so all three read as the same card.
+// Entry cards are the Build / Run / Review controls (buttons and a file-input
+// label). Reset button chrome so all three read as the same card.
 .answer-entry {
   display: flex;
   flex-direction: column;
@@ -1524,17 +1635,8 @@ $sidebar-accent: #e95420; // Ubuntu orange
   }
 }
 
-.answer-entry--opener {
-  cursor: default;
-}
-
 .answer-entry__title {
   font-weight: 550;
-}
-
-.answer-entry__file {
-  align-self: flex-start;
-  cursor: pointer;
 }
 
 .answer-flow__head,
@@ -1648,9 +1750,12 @@ $sidebar-accent: #e95420; // Ubuntu orange
 
 .answer-columns__option {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.5rem;
-  padding: 0.5rem;
+  // Uniform card size: a fixed height keeps every column option the same size
+  // regardless of how many sample values it carries.
+  min-height: 3.5rem;
+  padding: 0.5rem 0.75rem;
   border: 1px solid var(--vf-color-border-default);
   border-radius: 0.25rem;
   margin-bottom: 0.5rem;
@@ -1666,6 +1771,8 @@ $sidebar-accent: #e95420; // Ubuntu orange
   display: flex;
   flex-direction: column;
   min-width: 0;
+  // Take the remaining row width so the single-line sample can ellipsize.
+  flex: 1 1 auto;
 }
 
 .answer-columns__header {
@@ -1677,9 +1784,12 @@ $sidebar-accent: #e95420; // Ubuntu orange
   color: var(--vf-color-text-muted);
 }
 
-// Sample cells: keep the row from forcing horizontal page scroll at 620px.
+// Sample cells: one line, ellipsized, so every option keeps the same height and
+// the row never forces horizontal page scroll at 620px.
 .answer-columns__samples {
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .answer-questions {
