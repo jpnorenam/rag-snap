@@ -206,9 +206,10 @@ func (p *promptStore) resolve() chat.PromptConfig {
 
 // resolveSlot resolves one generation slot honouring an explicit variant
 // selection over the active pointer. An empty selection uses the active pointer
-// (or the built-in default). A named selection that does not exist returns
-// errUnknownVariant. ref is the provenance reference ("name@version", or empty
-// for the built-in default).
+// (or the built-in default); the reserved name "default" forces the built-in
+// default regardless of the active pointer. A named selection that does not
+// exist returns errUnknownVariant. ref is the provenance reference
+// ("name@version", or empty for the built-in default).
 func (p *promptStore) resolveSlot(slot promptName, selection string) (value, ref string, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -218,6 +219,11 @@ func (p *promptStore) resolveSlot(slot promptName, selection string) (value, ref
 		active := p.loadActiveLocked()
 		value, ref = p.effectiveLocked(slot, active)
 		return value, ref, nil
+	}
+	if selection == reservedVariant {
+		// "default" is not a stored variant; it explicitly selects the built-in
+		// default for this session, overriding whatever the slot has active.
+		return defaultOf(slot), "", nil
 	}
 	if !validVariantName(selection) {
 		return "", "", errUnknownVariant

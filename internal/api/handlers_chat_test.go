@@ -260,4 +260,16 @@ func TestChatRecordsPromptProvenance(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("unknown variant start: status = %d, want 404", resp.StatusCode)
 	}
+
+	// The reserved name "default" is accepted (not a stored variant) and forces
+	// the built-in default — this is what the UI's "Built-in default" option
+	// sends when a variant is active on the slot.
+	resp, err = client.Post("http://unix/1.0/chat", "application/json", strings.NewReader(`{"prompt":"default"}`))
+	if err != nil {
+		t.Fatalf("POST /1.0/chat: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Errorf("prompt=default start: status = %d, want 202", resp.StatusCode)
+	}
 }

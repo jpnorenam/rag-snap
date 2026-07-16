@@ -362,6 +362,26 @@ $sidebar-accent: #e95420; // Ubuntu orange
   color: var(--vf-color-text-muted);
 }
 
+// Session system-prompt selector, sitting under the knowledge-base row. The
+// prompt is chosen before a session starts and fixed for its duration.
+.prompt-selector {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+
+  select {
+    margin-bottom: 0;
+    width: auto;
+  }
+}
+
+.prompt-selector__label {
+  font-size: 0.875rem;
+  color: var(--vf-color-text-muted);
+}
+
 .chat__history-toggle {
   margin-right: 0.5rem;
 }

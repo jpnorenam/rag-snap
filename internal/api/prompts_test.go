@@ -349,6 +349,16 @@ func TestResolveSlotExplicitSelection(t *testing.T) {
 	if _, _, err := store.resolveSlot(promptChatSystem, "nope"); !errors.Is(err, errUnknownVariant) {
 		t.Errorf("resolveSlot unknown: err = %v, want errUnknownVariant", err)
 	}
+
+	// The reserved name "default" forces the built-in default even though a
+	// variant is active, and carries no provenance ref.
+	value, ref, err = store.resolveSlot(promptChatSystem, reservedVariant)
+	if err != nil {
+		t.Fatalf("resolveSlot default: %v", err)
+	}
+	if value != chat.DefaultPrompts().ChatSystemPrompt || ref != "" {
+		t.Errorf("default resolution = (%q, %q), want the built-in default and empty ref", value, ref)
+	}
 }
 
 // TestPromptStoreMigratesLegacyOverrides checks the one-way migration: a legacy

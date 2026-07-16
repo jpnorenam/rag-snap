@@ -89,6 +89,17 @@ prompt) — each as a card marked **Default** or **Customized**.
 - Only one card is open at a time, and unsaved edits are protected: switching cards, navigating
   away, or reloading the page asks before discarding them. A failed save keeps your text.
 
+The chat and answer prompts support **named variants** with version history — keep one prompt per
+task (answering RFPs, a presales-call assistant) and mark one active per slot. Each card offers a
+radio list to pick the active variant, a per-variant editor and history (with restore), and a
+**New variant** action; see the `prompt` CLI commands for the equivalent.
+
+When the chat prompt has variants, the **Chat** page shows a **System prompt** dropdown above the
+composer: pick the built-in default or any variant for the session before you send the first
+message. The choice is fixed once the session starts (the daemon snapshots the prompt at start),
+so the dropdown locks while connected and applies to the next fresh chat; leaving it on the active
+variant matches what the daemon would use anyway.
+
 Prompts are held by the **daemon**, so what you save here is exactly what `rag-cli.rag chat`,
 `answer batch`, and the REST API use. The daemon resolves prompts when a chat session or batch run
 *starts*, which is why the confirmation reads "New chats and batch runs will use it" — work
