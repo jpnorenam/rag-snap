@@ -312,6 +312,8 @@ websocket URL to dial for streamed tokens and `<think>` blocks.
 | `POST /1.0/search` | sync | Hybrid search |
 | `POST /1.0/chat` | async (ws) | Start an interactive chat session |
 | `POST /1.0/answer/batch` | async | Run a prepared batch manifest |
+| `POST /1.0/answer/build` | async | Extract questions from a document (spreadsheets return a column choice) |
+| `POST /1.0/answer/build/extract` | async | Extract questions from a chosen spreadsheet column |
 | `GET /1.0/prompts`, `GET /1.0/prompts/{name}` | sync | Read the prompt templates |
 | `PUT /1.0/prompts/{name}` | sync | Customize a prompt template |
 | `DELETE /1.0/prompts/{name}` | sync | Reset a prompt to its built-in default |
@@ -426,3 +428,38 @@ sudo curl -s --unix-socket /var/snap/rag-cli/common/ragd/unix.socket -X DELETE \
 The config keys that *are* secrets — any key whose last segment is `secret`, `password`, or
 `token`, today `gdrive.client.secret` — are redacted on read: the key is listed and stays
 writable, but its value is replaced with `<redacted>`. They are write-only through the API.
+### `POST /1.0/answer/build`
+
+Derives a batch manifest from an uploaded RFP/RFI document. Accepts
+`multipart/form-data` with a `file` field (PDF, DOCX, XLSX, or CSV) and an
+optional `refine` field (`"false"` to skip the LLM refinement pass; refinement
+is on by default). Runs as an async operation whose completion metadata depends
+on the document kind:
+
+- **Free-text (PDF, DOCX):** questions are extracted in one pass and published
+  under the `questions` key (each `{id, question, source?}`), for interactive
+  client-side review.
+- **Spreadsheet/CSV (XLSX, CSV):** the question column cannot be reliably
+  guessed, so the operation does **not** extract on this pass. It parses the
+  document into tables and completes with a discriminated response —
+  `needs_column: true`, an opaque `build_token`, the parsed `tables` (each with
+  its `header` row and, per column, `sample` cells and `avg_len`), and a
+  heuristic `suggested` `{table_index, column_index}`. The client picks a column
+  and calls `POST /1.0/answer/build/extract`.
+
+This endpoint does **not** persist a manifest or run the batch. Tika parses XLSX
+(and PDF/DOCX); CSV is parsed directly. Advertised via the `answer_build` entry
+in `api_extensions`; the two-pass spreadsheet flow via `answer_build_columns`.
+
+### `POST /1.0/answer/build/extract`
+
+Extracts questions from one column of a table parsed and staged by a prior
+`POST /1.0/answer/build` call — no re-upload, no re-parse. JSON body:
+`{build_token, table_index, column_index, id_column_index?, min_length?, refine?}`
+(`id_column_index` defaults to `-1` = auto-number; `min_length` defaults to 20).
+Runs as an async operation and publishes the questions under the `questions` key
+— the same shape a free-text build produces. An unknown or expired `build_token`
+returns `400` (re-upload the document); a column that yields no questions after
+the `min_length` filter fails the operation with a column-naming message so the
+client can pick a different column or lower the minimum without starting a batch
+run.

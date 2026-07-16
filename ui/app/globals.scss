@@ -1477,3 +1477,301 @@ $sidebar-accent: #e95420; // Ubuntu orange
   margin: 0;
   word-break: break-all;
 }
+
+// ---------------------------------------------------------------------------
+// Answer batch (components/answer)
+// ---------------------------------------------------------------------------
+
+.answer-entry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
+// Entry cards double as buttons (Run / Build) and a container (Review). Reset
+// button chrome so all three read as the same card.
+.answer-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  text-align: left;
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.25rem;
+  background-color: var(--vf-color-background-alt);
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+
+  &:hover,
+  &:focus-visible {
+    border-color: var(--vf-color-border-high-contrast);
+  }
+}
+
+.answer-entry--opener {
+  cursor: default;
+}
+
+.answer-entry__title {
+  font-weight: 550;
+}
+
+.answer-entry__file {
+  align-self: flex-start;
+  cursor: pointer;
+}
+
+.answer-flow__head,
+.answer-review__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.answer-flow__temp {
+  max-width: 8rem;
+}
+
+// Run controls on one line: file select, temperature, and Run batch. align-end
+// baselines the fields despite their stacked labels; wrap keeps it usable at
+// 620px with no horizontal page scroll (foundation responsive rules).
+.answer-flow__controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem;
+  margin-bottom: 1rem;
+
+  // Zero the default bottom margins the form groups carry so the row aligns.
+  .p-form-validation,
+  .p-form__group {
+    margin-bottom: 0;
+  }
+}
+
+// Anchor Run batch to the end of the controls row, leaving file + temperature
+// grouped at the start.
+.answer-flow__run {
+  margin-left: auto;
+}
+
+.answer-preview {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.25rem;
+  background-color: var(--vf-color-background-alt);
+}
+
+.answer-preview__kbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0.5rem 0;
+}
+
+.answer-preview__questions {
+  margin: 0.5rem 0 1rem;
+  padding-left: 1.25rem;
+}
+
+.answer-running {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1.5rem;
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.25rem;
+  background-color: var(--vf-color-background-alt);
+}
+
+.answer-running__bar {
+  height: 0.4rem;
+  border-radius: 0.2rem;
+  background-color: var(--vf-color-border-low-contrast);
+  overflow: hidden;
+}
+
+.answer-running__bar-fill {
+  display: block;
+  height: 100%;
+  background-color: var(--vf-color-border-positive);
+  transition: width 0.2s ease-in-out;
+}
+
+// Step indicator: current step distinguished by weight/text color only — no
+// brand accent in content (foundation §1).
+.answer-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 0 0 1.5rem;
+  padding: 0;
+  list-style: none;
+}
+
+.answer-steps__item {
+  color: var(--vf-color-text-muted);
+  font-size: 0.875rem;
+
+  &.is-current {
+    color: var(--vf-color-text-default);
+    font-weight: 600;
+  }
+}
+
+// Column-selection step (spreadsheet/CSV builds).
+.answer-columns {
+  margin: 0 0 1rem;
+  padding: 0;
+  border: none;
+}
+
+.answer-columns__option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem;
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.25rem;
+  margin-bottom: 0.5rem;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-within {
+    border-color: var(--vf-color-border-high-contrast);
+  }
+}
+
+.answer-columns__body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.answer-columns__header {
+  font-weight: 550;
+}
+
+.answer-columns__suggested {
+  font-weight: 400;
+  color: var(--vf-color-text-muted);
+}
+
+// Sample cells: keep the row from forcing horizontal page scroll at 620px.
+.answer-columns__samples {
+  overflow-wrap: anywhere;
+}
+
+.answer-questions {
+  margin: 0 0 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.answer-questions__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--vf-color-border-low-contrast);
+}
+
+.answer-questions__check {
+  margin-top: 0.35rem;
+}
+
+.answer-questions__text {
+  flex: 1;
+  resize: vertical;
+  min-height: 2.25rem;
+}
+
+.answer-questions__footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  background-color: var(--vf-color-background);
+  border-top: 1px solid var(--vf-color-border-default);
+}
+
+.answer-wizard__actions,
+.answer-review__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.answer-review__kbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.5rem;
+}
+
+.answer-review__jump {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 1rem 0;
+}
+
+.answer-review__jump-link {
+  min-width: 1.75rem;
+  padding: 0.15rem 0.4rem;
+  text-align: center;
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.2rem;
+}
+
+.answer-review__cards {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.qa-card {
+  padding: 1rem;
+  border: 1px solid var(--vf-color-border-default);
+  border-left: 3px solid var(--vf-color-border-default);
+  border-radius: 0.25rem;
+  background-color: var(--vf-color-background-alt);
+}
+
+// Failed / empty / no-context answers get a caution treatment, never blank.
+.qa-card--caution {
+  border-left-color: var(--vf-color-border-caution);
+  background-color: var(--vf-color-background-caution-default);
+}
+
+.qa-card__question {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.qa-card__num {
+  font-variant-numeric: tabular-nums;
+}
+
+.qa-card__answer {
+  white-space: pre-wrap;
+  margin-bottom: 0.5rem;
+}
+
+.qa-card__sources {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+}
+
+.qa-card__sources-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1rem;
+}

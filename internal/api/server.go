@@ -37,6 +37,8 @@ var apiExtensions = []string{
 	"chat_websocket",
 	"chat_history",
 	"batch_answer",
+	"answer_build",
+	"answer_build_columns",
 	"prompts",
 	"prompt_variants",
 	"status",
@@ -60,7 +62,10 @@ type Server struct {
 	prompts *promptStore
 	// chats is the daemon-owned store of saved chat conversations, shared by the
 	// UI and the CLI's remote mode. Sessions save into it and resume from it.
-	chats    *chatstore.Store
+	chats *chatstore.Store
+	// builds stages parsed spreadsheet/CSV tables between the two answer-build
+	// passes (inspect → extract) so the document is parsed once, not re-uploaded.
+	builds   *buildStore
 	httpSrv  *http.Server
 	listener net.Listener
 	// token is the localhost bearer token authenticating loopback requests. It
@@ -101,6 +106,7 @@ func New(opts Options) *Server {
 		events:   newEventsHub(),
 		prompts:  newPromptStore(),
 		chats:    newChatStore(),
+		builds:   newBuildStore(),
 	}
 	s.httpSrv = &http.Server{
 		Handler:           s.routes(),
@@ -328,6 +334,12 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 
 	// Batch answering (prepared manifest, async operation).
 	mux.HandleFunc("POST /1.0/answer/batch", s.requireAuth(s.handleAnswerBatch))
+	// Building a manifest from a document (Tika extraction + optional LLM
+	// refinement, async operation). Does not persist or run the manifest.
+	mux.HandleFunc("POST /1.0/answer/build", s.requireAuth(s.handleAnswerBuild))
+	// Column-scoped extraction for spreadsheet/CSV builds: extract questions
+	// from a chosen column of tables staged by POST /1.0/answer/build.
+	mux.HandleFunc("POST /1.0/answer/build/extract", s.requireAuth(s.handleAnswerBuildExtract))
 
 	// Prompt slots (daemon-owned; seed chat sessions and batch runs). The
 	// slot-level endpoints keep their pre-variants semantics; the nested variant

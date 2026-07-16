@@ -41,11 +41,11 @@ from the chips at the top of the page to ground answers in your documents.
 ## Navigating the UI
 
 The UI is a multi-page application with a persistent dark navigation rail on the left. The
-rail lists the app's sections; **Chat**, **Prompts**, and **Status** are shipped today, and the
-remaining entries (Knowledge bases, Search, Answer RFPs) show a **Soon** badge until their features
-land. The active section is marked with an orange left-border indicator, and the browser tab title
-tracks the section you are on. On narrow windows the rail collapses to an icon-only strip; hover a
-icon for its label.
+rail lists the app's sections — **Chat**, **Knowledge bases**, **Search**, **Answer RFPs**,
+**Prompts**, and **Status** — all shipped, plus a **Documentation** link at the bottom that opens
+the docs in a new tab. The active section is marked with an orange left-border indicator, and the
+browser tab title tracks the section you are on. On narrow windows the rail collapses to an
+icon-only strip; hover an icon for its label.
 
 ### Background operations
 
@@ -136,6 +136,40 @@ re-check Status above.
 Secret values are never shown. The service credentials are environment variables, not
 configuration, and the one config key that *is* a secret (`gdrive.client.secret`) is redacted by
 the daemon — it renders as `••••` and can be written but never read back.
+
+### Answer RFPs
+
+The **Answer RFPs** section is browser parity with the CLI's `answer batch` (and `answer batch
+--build`). Its landing page offers three flows:
+
+- **Run a manifest** — upload a YAML batch manifest (the same format `rag-cli.rag answer batch
+  <manifest.yaml>` accepts). The manifest is parsed and previewed in the browser (name, target
+  knowledge bases, and the numbered question list) before anything runs; an invalid manifest
+  shows a validation error and is never sent to the daemon. Set a temperature (default `0.1`) and
+  **Run batch**: the run is a tracked operation, so its progress (answered *N* of *M*) shows in
+  the section and in the top-bar operations indicator, and it can be cancelled there. When it
+  finishes, the results open in the review surface. A run survives navigation — leave the page and
+  come back and the running view is restored.
+- **Build from a document** — a wizard: **(1)** upload an RFP/RFI document (PDF, DOCX, XLSX, or
+  CSV), optionally letting the model refine the extracted questions; the daemon reads it
+  (`POST /1.0/answer/build`) as a tracked operation. **(1a — spreadsheets/CSV only)** because the
+  question column can't be reliably guessed, a **column-selection step** appears: pick the sheet
+  (when there's more than one) and the column holding the questions — each shown with sample cell
+  values and the best guess preselected — plus a minimum cell length (default 20; lower it if
+  short questions are missed). Continuing extracts that column
+  (`POST /1.0/answer/build/extract`); a wrong choice is recoverable by going back and picking
+  again, with no batch run wasted. PDF/DOCX skip this step. **(2)** review the extracted questions
+  — deselect, edit inline, or add your own, with a running selected-of-total count. **(3)** choose
+  knowledge bases, a temperature, and a manifest name, then either **Download manifest** (writes
+  YAML the CLI accepts, without running) or **Run batch** (runs it and opens the review surface).
+  The wizard warns you before you navigate away with an unsaved manifest; cancelling while the
+  document is being read or a column extracted just returns you to the previous step.
+- **Review results** — open a previously exported results JSON to review the answers without
+  re-running anything.
+
+The review surface renders each question with its answer; failed or empty answers are flagged
+rather than shown blank, and **Export JSON** downloads the results in the same format the CLI
+writes. (Per-question source provenance is not shown yet — the batch API does not return it.)
 
 ---
 

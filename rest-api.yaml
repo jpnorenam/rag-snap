@@ -28,8 +28,10 @@ definitions:
         description: |-
             batchManifestRequest is the prepared batch manifest accepted by
             POST /1.0/answer/batch. It mirrors chat.BatchManifest but is JSON-tagged and
-            decoupled from the YAML on-disk format. The interactive document-to-manifest
-            "build" flow is intentionally CLI-only (see the rest-api-answer spec).
+            decoupled from the YAML on-disk format. The run endpoint accepts only a
+            prepared manifest; deriving a manifest from a document is a separate
+            operation exposed by POST /1.0/answer/build (see handleAnswerBuild and the
+            rest-api-answer spec).
         properties:
             knowledge_bases:
                 items:
@@ -331,8 +333,9 @@ paths:
                 Runs a prepared batch manifest of questions through the RAG+LLM pipeline as
                 an async operation. Progress is reported in the operation metadata across the
                 questions, and the structured results are stored on the operation for
-                retrieval on completion. The interactive document-to-manifest build flow is
-                CLI-only and not exposed here.
+                retrieval on completion. To derive a manifest from a document, use the
+                separate POST /1.0/answer/build endpoint (Tika extraction + optional LLM
+                refinement); this run endpoint accepts only a prepared manifest.
             operationId: answerBatch
             parameters:
                 - in: body
@@ -349,6 +352,57 @@ paths:
                 "500":
                     $ref: '#/responses/errorResponse'
             summary: Run a batch of questions.
+            tags:
+                - answer
+    /1.0/answer/build:
+        post:
+            consumes:
+                - multipart/form-data
+            description: |-
+                Accepts an uploaded RFP/RFI document (PDF, DOCX, XLSX, CSV) as
+                multipart/form-data. Free-text formats (PDF, DOCX) extract candidate
+                questions in one pass and publish them on the operation metadata under
+                "questions". Tabular formats (XLSX, CSV) do not extract on this pass — the
+                question column cannot be reliably guessed — so the operation instead parses
+                the document into tables and completes with a discriminated response:
+                "needs_column": true, an opaque "build_token", the parsed "tables" (headers
+                and per-column samples), and a heuristic "suggested" table/column. The client
+                then calls POST /1.0/answer/build/extract for the chosen column. When the
+                "refine" field is not "false", an LLM refinement pass is applied to the
+                extracted questions. This endpoint never persists a manifest or runs a batch.
+            operationId: answerBuild
+            responses:
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Extract candidate questions from a document.
+            tags:
+                - answer
+    /1.0/answer/build/extract:
+        post:
+            description: |-
+                Extracts questions from one column of a table parsed and staged by a prior
+                POST /1.0/answer/build call, identified by its build token. Does not
+                re-upload or re-parse the document. Publishes the questions on the operation
+                metadata in the same shape a free-text build does. An unknown/expired token,
+                or an out-of-range table/column, is a 400; a column that yields no questions
+                after the min-length filter fails the operation with a column-naming message.
+            operationId: answerBuildExtract
+            responses:
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Extract questions from a chosen spreadsheet column.
             tags:
                 - answer
     /1.0/chat:

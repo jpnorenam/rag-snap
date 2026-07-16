@@ -16,8 +16,10 @@ const defaultBatchTemperature = 0.1
 
 // batchManifestRequest is the prepared batch manifest accepted by
 // POST /1.0/answer/batch. It mirrors chat.BatchManifest but is JSON-tagged and
-// decoupled from the YAML on-disk format. The interactive document-to-manifest
-// "build" flow is intentionally CLI-only (see the rest-api-answer spec).
+// decoupled from the YAML on-disk format. The run endpoint accepts only a
+// prepared manifest; deriving a manifest from a document is a separate
+// operation exposed by POST /1.0/answer/build (see handleAnswerBuild and the
+// rest-api-answer spec).
 type batchManifestRequest struct {
 	Version        string   `json:"version,omitempty"`
 	Model          string   `json:"model,omitempty"`
@@ -63,8 +65,9 @@ func (req batchManifestRequest) toManifest() *chat.BatchManifest {
 // Runs a prepared batch manifest of questions through the RAG+LLM pipeline as
 // an async operation. Progress is reported in the operation metadata across the
 // questions, and the structured results are stored on the operation for
-// retrieval on completion. The interactive document-to-manifest build flow is
-// CLI-only and not exposed here.
+// retrieval on completion. To derive a manifest from a document, use the
+// separate POST /1.0/answer/build endpoint (Tika extraction + optional LLM
+// refinement); this run endpoint accepts only a prepared manifest.
 //
 //	Responses:
 //	  202: asyncResponse
