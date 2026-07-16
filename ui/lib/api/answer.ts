@@ -1,4 +1,4 @@
-import { postAsync } from "./envelope";
+import { postAsync, postAsyncForm } from "./envelope";
 import type { OperationView } from "./operations";
 
 // BatchQuestion is a single question in a prepared manifest. `id`, `question`,
@@ -181,7 +181,7 @@ export async function buildFromDocument(
   form.append("file", file);
   // Default is refine on; only send "false" to disable it.
   if (opts.refine === false) form.append("refine", "false");
-  const { operation, metadata } = await postAsync<OperationView>("/1.0/answer/build", form);
+  const { operation, metadata } = await postAsyncForm<OperationView>("/1.0/answer/build", form);
   return { operation, view: metadata };
 }
 

@@ -51,3 +51,6 @@ docs/ux/
 # named .gitignore.)
 internal/webui/dist/*
 !internal/webui/dist/index.html
+
+# Local working kit — not part of the project.
+hackathon-ux-harness-kit*/

@@ -3,7 +3,7 @@
 // the operations indicator (which labels a "go to this section" link) read from
 // here so section names never drift between the two.
 
-export type IconName = "chat" | "prompt" | "knowledge" | "search" | "rfp" | "status";
+export type IconName = "chat" | "prompt" | "knowledge" | "search" | "rfp" | "status" | "docs";
 
 export interface NavItem {
   id: string;
@@ -19,10 +19,10 @@ export interface NavItem {
 // as each section's change ships.
 export const NAV_ITEMS: NavItem[] = [
   { id: "chat", label: "Chat", icon: "chat", href: "/", enabled: true },
-  { id: "knowledge", label: "Knowledge bases", icon: "knowledge", href: "/knowledge/" },
-  { id: "search", label: "Search", icon: "search", href: "/search/" },
+  { id: "knowledge", label: "Knowledge bases", icon: "knowledge", href: "/knowledge/", enabled: true },
+  { id: "search", label: "Search", icon: "search", href: "/search/", enabled: true },
   { id: "answer", label: "Answer RFPs", icon: "rfp", href: "/answer/", enabled: true },
-  { id: "prompts", label: "Prompts", icon: "prompt", href: "/prompts/" },
+  { id: "prompts", label: "Prompts", icon: "prompt", href: "/prompts/", enabled: true },
 ];
 
 // Status is a utility entry pinned to the bottom of the rail (above the toggle).
@@ -31,6 +31,7 @@ export const STATUS_ITEM: NavItem = {
   label: "Status",
   icon: "status",
   href: "/status/",
+  enabled: true,
 };
 
 // normalizePath strips a trailing slash (but keeps root "/") so paths compare
