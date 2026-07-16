@@ -171,6 +171,7 @@ func (c *KapaClient) Search(ctx context.Context, query string, limit int, source
 			Score:    1.0 / float64(i+1),
 			Content:  chunk.Content,
 			SourceID: chunk.SourceURL,
+			Label:    LabelKapa,
 		}
 	}
 	return hits, nil

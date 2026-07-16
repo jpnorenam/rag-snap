@@ -2,61 +2,54 @@
 
 import { useEffect, useId, useRef, useState } from "react";
 import { errorMessage } from "@/lib/api/envelope";
-import { createKnowledge } from "@/lib/api/knowledge";
+import { setKnowledgeLabel } from "@/lib/api/knowledge";
+import type { OperationView } from "@/lib/api/operations";
 import { useModalDialog } from "@/lib/useModalDialog";
 
 interface Props {
-  onCreated: (name: string) => void;
+  name: string;
+  currentLabel?: string;
+  onSaved: (label: string, backfillOp: OperationView | null) => void;
   onClose: () => void;
 }
-
-// NAME_PATTERN is a cheap client-side guard mirroring the daemon's naming rules
-// (lowercase letters, digits, and hyphens). The daemon remains the authority.
-const NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 // LABEL_PATTERN mirrors the daemon's knowledge-label format.
 const LABEL_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
-// CreateKbModal is the create-knowledge-base dialog: a validated name field
-// plus an optional default knowledge label. On error it keeps the modal open
-// with the entered values preserved.
-export default function CreateKbModal({ onCreated, onClose }: Props) {
+// EditLabelModal changes a base's default knowledge label, optionally
+// backfilling already-ingested chunks and sources that have no label yet.
+// On error it keeps the modal open with the entered value preserved.
+export default function EditLabelModal({ name, currentLabel, onSaved, onClose }: Props) {
   const titleId = useId();
-  const inputId = useId();
   const labelId = useId();
+  const backfillId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const { dialogRef, onKeyDown } = useModalDialog(onClose);
-  const [name, setName] = useState("");
-  const [label, setLabel] = useState("");
+  const [label, setLabel] = useState(currentLabel ?? "");
+  const [backfill, setBackfill] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [labelError, setLabelError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     inputRef.current?.focus();
+    inputRef.current?.select();
   }, []);
 
   const submit = async () => {
-    const trimmed = name.trim();
-    const trimmedLabel = label.trim();
+    const trimmed = label.trim();
     setError(null);
-    setLabelError(null);
-    if (!NAME_PATTERN.test(trimmed)) {
-      setError("Use lowercase letters, digits, and hyphens; start with a letter or digit.");
-      return;
-    }
-    if (trimmedLabel && !LABEL_PATTERN.test(trimmedLabel)) {
-      setLabelError(
+    if (!LABEL_PATTERN.test(trimmed)) {
+      setError(
         "Use lowercase letters, digits, and hyphens; start with a letter or digit (max 32 characters)."
       );
       return;
     }
     setBusy(true);
     try {
-      await createKnowledge(trimmed, trimmedLabel || undefined);
-      onCreated(trimmed);
+      const op = await setKnowledgeLabel(name, trimmed, backfill);
+      onSaved(trimmed, op);
     } catch (e) {
-      // Keep the modal open with the entered values intact.
+      // Keep the modal open with the entered value intact.
       setError(errorMessage(e));
       setBusy(false);
     }
@@ -74,7 +67,7 @@ export default function CreateKbModal({ onCreated, onClose }: Props) {
       >
         <header className="p-modal__header">
           <h2 className="p-modal__title" id={titleId}>
-            Create knowledge base
+            Edit default label
           </h2>
         </header>
 
@@ -86,38 +79,41 @@ export default function CreateKbModal({ onCreated, onClose }: Props) {
           }}
         >
           <div className={`p-form__group ${error ? "p-form-validation is-error" : ""}`}>
-            <label htmlFor={inputId}>Name</label>
+            <label htmlFor={labelId}>Default label</label>
             <input
-              id={inputId}
+              id={labelId}
               ref={inputRef}
               type="text"
               className={error ? "p-form-validation__input" : ""}
-              value={name}
-              autoComplete="off"
-              onChange={(e) => setName(e.target.value)}
-            />
-            {error && <p className="p-form-validation__message">{error}</p>}
-          </div>
-
-          <div className={`p-form__group ${labelError ? "p-form-validation is-error" : ""}`}>
-            <label htmlFor={labelId}>Default label (optional)</label>
-            <input
-              id={labelId}
-              type="text"
-              className={labelError ? "p-form-validation__input" : ""}
               value={label}
               autoComplete="off"
-              placeholder="canonical"
               onChange={(e) => setLabel(e.target.value)}
             />
-            {labelError ? (
-              <p className="p-form-validation__message">{labelError}</p>
+            {error ? (
+              <p className="p-form-validation__message">{error}</p>
             ) : (
               <p className="p-form-help-text">
-                Knowledge label sources inherit at ingest. Reference it in your prompts to
-                prioritize this base&rsquo;s content.
+                Sources ingested into <strong>{name}</strong> without an explicit label inherit
+                it. Reference the tag in your prompts to prioritize this base&rsquo;s content.
               </p>
             )}
+          </div>
+
+          <div className="p-form__group">
+            <label className="p-checkbox">
+              <input
+                type="checkbox"
+                className="p-checkbox__input"
+                id={backfillId}
+                checked={backfill}
+                onChange={(e) => setBackfill(e.target.checked)}
+              />
+              <span className="p-checkbox__label">Apply to existing sources</span>
+            </label>
+            <p className="p-form-help-text u-text--muted">
+              Also label already-ingested chunks and sources that have no label yet. Sources
+              ingested with an explicit label keep it.
+            </p>
           </div>
 
           <footer className="p-modal__footer">
@@ -125,7 +121,7 @@ export default function CreateKbModal({ onCreated, onClose }: Props) {
               Cancel
             </button>
             <button type="submit" className="p-button--positive u-no-margin--bottom" disabled={busy}>
-              {busy ? "Creating…" : "Create"}
+              {busy ? "Saving…" : "Save label"}
             </button>
           </footer>
         </form>

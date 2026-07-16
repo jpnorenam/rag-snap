@@ -303,6 +303,7 @@ websocket URL to dial for streamed tokens and `<think>` blocks.
 | `GET /1.0/events` | ws | Operation/logging event stream |
 | `GET`/`POST /1.0/knowledge` | sync | List / create knowledge bases |
 | `GET`/`DELETE /1.0/knowledge/{name}` | sync | Inspect / delete a base |
+| `PATCH /1.0/knowledge/{name}` | sync / async | Set a base's default label (async when backfilling existing data) |
 | `GET`/`DELETE /1.0/knowledge/{name}/sources[/{id}]` | sync | List / inspect / forget sources |
 | `POST /1.0/knowledge/{name}/sources` | async | Ingest (file/URL/batch) |
 | `POST /1.0/knowledge/{name}/export` | async | Export a base |

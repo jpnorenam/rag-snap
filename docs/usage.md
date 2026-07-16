@@ -25,6 +25,7 @@ using any `knowledge` sub-command.
 | `knowledge list` | List knowledge bases (indexes) |
 | `knowledge list --sources` | List ingested source documents |
 | `knowledge create <name>` | Create a new knowledge base |
+| `knowledge label <name> [<label>]` | Show or set a knowledge base's default label |
 | `knowledge ingest <name> <source-id>` | Ingest a document into a knowledge base |
 | `knowledge ingest <name> <source-id> --format rfp` | Ingest a CSV of previous RFP question/answer pairs, one chunk per row |
 | `knowledge ingest --batch <config.yaml>` | Ingest multiple documents from a YAML config file |
@@ -123,18 +124,67 @@ wiki-rag                                           wiki-rag                     
 Create a new, empty knowledge base index.
 
 ```
-rag-cli.rag knowledge create <knowledge_base_name>
+rag-cli.rag knowledge create <knowledge_base_name> [--label <label>]
 ```
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--label` | `-l` | _(convention)_ | Default knowledge label for sources ingested into this base |
 
 The name must be a short identifier (letters, numbers, hyphens). It is used as a suffix for the
 underlying OpenSearch index name.
+
+Without `--label`, the base's default label follows the naming convention: `upstream` when the
+name contains "upstream", otherwise `canonical`.
 
 **Example**
 
 ```bash
 $ rag-cli.rag knowledge create docs
 Knowledge base 'docs' created successfully.
+
+$ rag-cli.rag knowledge create partner-docs --label partner
+Knowledge base 'partner-docs' created successfully.
 ```
+
+---
+
+### `knowledge label`
+
+Show or set a knowledge base's **default knowledge label**. Every ingested source carries exactly
+one label; it is stamped onto the source's metadata and onto every chunk, and retrieved chunks are
+tagged with it (uppercased, e.g. `[PARTNER]`) in search results and in the context sent to the LLM.
+
+Labels have **no built-in meaning** — they are plain markers you define. To make the LLM prefer
+one label over another, reference the tags in your system prompts (see the `prompt` command and
+its named variants). The built-in default prompts already prioritise the default label set:
+`[CANONICAL]` > `[KAPA-CANONICAL]` > `[UPSTREAM]`.
+
+```
+rag-cli.rag knowledge label <knowledge_base_name> [<label>] [--apply-to-existing]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--apply-to-existing` | `false` | Also stamp the new label onto already-ingested chunks and sources **that have no label yet**. Sources ingested with an explicit `--label` are never overwritten. |
+
+With no `<label>` argument the effective default is printed, together with whether it is stored or
+derived from the naming convention. Setting a label affects future ingests only, unless
+`--apply-to-existing` is given.
+
+**Example**
+
+```bash
+$ rag-cli.rag knowledge label docs
+Default label: canonical (derived from the base name (not stored))
+
+$ rag-cli.rag knowledge label docs internal --apply-to-existing
+Default label of 'docs' set to 'internal'.
+Labeled 142 existing chunk(s) that had no label.
+```
+
+Labels must be lowercase letters, digits, and hyphens, starting with a letter or digit, at most
+32 characters.
 
 ---
 
@@ -154,6 +204,7 @@ rag-cli.rag knowledge ingest <knowledge_base_name> <source_id> (--file <path> | 
 | `--url` | `-u` | one of three | URL of a static HTML page to fetch and extract |
 | `--batch` | `-B` | one of three | YAML batch config file — ingest multiple documents at once |
 | `--format` | | No | Input format. Use `rfp` to ingest a CSV of question/answer/source rows (requires `--file`). Default auto-detects via Tika. |
+| `--label` | `-l` | No | Knowledge label for this source. Defaults to the base's default label (see `knowledge label`). Not allowed with `--batch` — set per-job `label:` fields in the YAML instead. |
 | `--force` | | No | Re-ingest the source even if it is already recorded as `completed`. The source's existing chunks are removed before re-indexing, so a forced re-ingest **replaces** the source rather than leaving duplicate chunks behind. |
 
 `<source_id>` is a human-readable identifier you choose (e.g. `snap-docs`, `rag-wiki`). It is used
@@ -271,6 +322,7 @@ jobs:
     extensions:               # github-repo / gitea-repo only — file extensions to include
       - .md
       - .txt
+    label: <label>            # optional; knowledge label for the job's sources
 ```
 
 | Field | Applies to | Required | Description |
@@ -282,6 +334,7 @@ jobs:
 | `branch` | repo types | No | Branch to read from. Defaults to the repository's default branch. |
 | `path` | repo types | No | Restrict ingestion to files under this subdirectory (e.g. `docs/`). Omit to process the entire repository. |
 | `extensions` | repo types | Yes* | List of file extensions to ingest (e.g. `.md`, `.rst`, `.txt`). At least one extension is required — files that do not match are skipped. |
+| `label` | all | No | Knowledge label stamped onto the job's sources and chunks. Defaults to the target base's default label (see `knowledge label`). |
 
 **Example config — all four job types**
 
@@ -374,7 +427,7 @@ rag-cli.rag knowledge search <query> [--bases <name,...>] [--top <k>]
 ```bash
 $ rag-cli.rag knowledge search "how does vector search work"
 
---- Result 1 (score: 0.9821, index: rag-kb-default) ---
+--- Result 1 (score: 0.9821, index: rag-kb-default) [CANONICAL] ---
   Source: rag-wiki
   Date:   2025-06-02T14:22:10Z
   Vector search (also called semantic search) finds documents by comparing high-dimensional …
@@ -848,8 +901,9 @@ the model for a given query.
 - `<query>` — the keywords or question to retrieve for.
 - `-k N` — maximum number of results (default: 15). Also accepts `-k=N`.
 
-Each result shows its relevance score, knowledge base name, `[CANONICAL]`/`[UPSTREAM]` provenance
-tag, source ID, creation date, and the full (untruncated) chunk content. Results are ordered by score
+Each result shows its relevance score, knowledge base name, knowledge-label tag (e.g.
+`[CANONICAL]`, `[UPSTREAM]`, or any label you assigned at ingest — see `knowledge label`), source
+ID, creation date, and the full (untruncated) chunk content. Results are ordered by score
 descending.
 
 ```
@@ -1422,6 +1476,11 @@ Three prompts are configurable:
 | `answer_system_prompt` | `answer batch` | System instruction for batch Q&A mode. Controls tone, format, and grounding behaviour for RFP/RFI answers. |
 | `chat_system_prompt` | `chat` | System instruction for the interactive REPL. Controls how the assistant responds during a live session. |
 | `source_rules` | `answer batch` | Grounding constraints appended to any custom `prompt:` field in a batch manifest. Prevents custom prompts from bypassing `[CANONICAL]`/`[UPSTREAM]` source prioritisation rules. |
+
+> Context chunks are tagged with the **knowledge labels** assigned at ingest (see `knowledge
+> label`). The built-in prompts define priority for the default label set (`[CANONICAL]`,
+> `[KAPA-CANONICAL]`, `[UPSTREAM]`); if you ingest with custom labels, save a prompt variant that
+> tells the model how to treat those tags.
 
 **Example**
 

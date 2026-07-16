@@ -296,6 +296,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /1.0/knowledge", s.requireAuth(s.handleKnowledgeCreate))
 	mux.HandleFunc("POST /1.0/knowledge/import", s.requireAuth(s.handleKnowledgeImport))
 	mux.HandleFunc("GET /1.0/knowledge/{name}", s.requireAuth(s.handleKnowledgeGet))
+	mux.HandleFunc("PATCH /1.0/knowledge/{name}", s.requireAuth(s.handleKnowledgePatch))
 	mux.HandleFunc("DELETE /1.0/knowledge/{name}", s.requireAuth(s.handleKnowledgeDelete))
 	mux.HandleFunc("POST /1.0/knowledge/{name}/export", s.requireAuth(s.handleKnowledgeExport))
 	mux.HandleFunc("GET /1.0/knowledge/{name}/export/{opId}/archive", s.requireAuth(s.handleKnowledgeExportDownload))

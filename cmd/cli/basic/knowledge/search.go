@@ -13,11 +13,15 @@ import (
 )
 
 // SearchHit represents a single search result with its relevance score.
+// Label is always resolved (stored chunk label, or the legacy index-name
+// inference for unlabeled chunks) — consumers use it directly and never
+// re-derive provenance.
 type SearchHit struct {
 	Index     string  `json:"index"`
 	Score     float64 `json:"score"`
 	Content   string  `json:"content"`
 	SourceID  string  `json:"source_id"`
+	Label     string  `json:"label"`
 	CreatedAt string  `json:"created_at"`
 }
 
@@ -95,6 +99,7 @@ func (c *OpenSearchClient) hybridSearch(
 			Score:     hit.Score,
 			Content:   hit.Source.Content,
 			SourceID:  hit.Source.SourceID,
+			Label:     ResolveLabel(hit.Index, hit.Source.Label),
 			CreatedAt: hit.Source.CreatedAt,
 		})
 	}
@@ -160,6 +165,7 @@ type neuralSearchResponse struct {
 			Source struct {
 				Content   string `json:"content"`
 				SourceID  string `json:"source_id"`
+				Label     string `json:"label"`
 				CreatedAt string `json:"created_at"`
 			} `json:"_source"`
 		} `json:"hits"`

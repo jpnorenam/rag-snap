@@ -25,6 +25,7 @@ type ingestItem struct {
 	Branch     string   `json:"branch,omitempty"`     // repo branch (github/gitea)
 	Path       string   `json:"path,omitempty"`       // repo subpath (github/gitea)
 	Extensions []string `json:"extensions,omitempty"` // repo file extensions (github/gitea)
+	Label      string   `json:"label,omitempty"`      // knowledge label; empty means the base default
 	filePath   string   // server-side path to the staged upload; not from JSON
 	cleanup    func()   // optional cleanup for crawled/uploaded temp files
 }
@@ -34,6 +35,7 @@ type ingestItem struct {
 type ingestRequest struct {
 	SourceID string       `json:"source_id,omitempty"`
 	URL      string       `json:"url,omitempty"`
+	Label    string       `json:"label,omitempty"`
 	Force    bool         `json:"force,omitempty"`
 	Batch    []ingestItem `json:"batch,omitempty"`
 }
@@ -82,6 +84,16 @@ func (s *Server) handleSourcesIngest(w http.ResponseWriter, r *http.Request) {
 	if len(items) == 0 {
 		respondError(w, http.StatusBadRequest, "no sources to ingest: provide a file upload, a url, or a batch")
 		return
+	}
+	for _, it := range items {
+		if it.Label == "" {
+			continue
+		}
+		if err := knowledge.ValidateLabel(it.Label); err != nil {
+			cleanupItems(items)
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	// Synchronous duplicate pre-check for a single non-repo ingest, so the client
@@ -165,7 +177,7 @@ func (s *Server) collectIngestItems(r *http.Request) ([]ingestItem, bool, error)
 		return req.Batch, req.Force, nil
 	}
 	if req.URL != "" {
-		return []ingestItem{{SourceID: req.SourceID, URL: req.URL, Type: "url"}}, req.Force, nil
+		return []ingestItem{{SourceID: req.SourceID, URL: req.URL, Type: "url", Label: req.Label}}, req.Force, nil
 	}
 	return nil, req.Force, nil
 }
@@ -201,6 +213,7 @@ func (s *Server) collectUploadedItems(r *http.Request) ([]ingestItem, bool, erro
 	return []ingestItem{{
 		SourceID: sourceID,
 		Type:     "file",
+		Label:    r.FormValue("label"),
 		filePath: path,
 		cleanup:  func() { _ = os.Remove(path) },
 	}}, force, nil
@@ -243,7 +256,7 @@ func ingestOneItem(ctx context.Context, client *knowledge.OpenSearchClient, tika
 		if sourceID == "" {
 			sourceID = item.URL
 		}
-		return ingestResolvedFile(ctx, client, tikaURL, index, path, sourceID, item.URL, force)
+		return ingestResolvedFile(ctx, client, tikaURL, index, path, sourceID, item.URL, item.Label, force)
 	default: // staged file upload
 		if item.filePath == "" {
 			if item.Type == "file" {
@@ -255,13 +268,13 @@ func ingestOneItem(ctx context.Context, client *knowledge.OpenSearchClient, tika
 		if sourceID == "" {
 			sourceID = filepath.Base(item.filePath)
 		}
-		return ingestResolvedFile(ctx, client, tikaURL, index, item.filePath, sourceID, item.filePath, force)
+		return ingestResolvedFile(ctx, client, tikaURL, index, item.filePath, sourceID, item.filePath, item.Label, force)
 	}
 }
 
 // ingestResolvedFile skips an already-completed source unless force is set, then
 // runs the shared ingest core.
-func ingestResolvedFile(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index, filePath, sourceID, metadataPath string, force bool) error {
+func ingestResolvedFile(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index, filePath, sourceID, metadataPath, label string, force bool) error {
 	if !force && client.SourceCompleted(ctx, sourceID) {
 		return nil
 	}
@@ -270,6 +283,7 @@ func ingestResolvedFile(ctx context.Context, client *knowledge.OpenSearchClient,
 		SourceID:     sourceID,
 		MetadataPath: metadataPath,
 		TargetIndex:  index,
+		Label:        label,
 		Force:        force,
 	})
 }
@@ -289,7 +303,7 @@ func ingestGitHubRepo(ctx context.Context, client *knowledge.OpenSearchClient, t
 	if err != nil {
 		return fmt.Errorf("listing repository files: %w", err)
 	}
-	return ingestRepoEntries(ctx, client, tikaURL, index, entries, token, force)
+	return ingestRepoEntries(ctx, client, tikaURL, index, entries, token, item.Label, force)
 }
 
 // ingestGiteaRepo mirrors ingestGitHubRepo for Gitea.
@@ -306,11 +320,11 @@ func ingestGiteaRepo(ctx context.Context, client *knowledge.OpenSearchClient, ti
 	if err != nil {
 		return fmt.Errorf("listing repository files: %w", err)
 	}
-	return ingestRepoEntries(ctx, client, tikaURL, index, entries, token, force)
+	return ingestRepoEntries(ctx, client, tikaURL, index, entries, token, item.Label, force)
 }
 
 // ingestRepoEntries fetches and ingests each repo file, honouring cancellation.
-func ingestRepoEntries(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index string, entries []processing.RepoEntry, token string, force bool) error {
+func ingestRepoEntries(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index string, entries []processing.RepoEntry, token, label string, force bool) error {
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -319,7 +333,7 @@ func ingestRepoEntries(ctx context.Context, client *knowledge.OpenSearchClient, 
 		if err != nil {
 			return fmt.Errorf("fetching %q: %w", entry.Path, err)
 		}
-		err = ingestResolvedFile(ctx, client, tikaURL, index, tempPath, entry.Path, entry.Path, force)
+		err = ingestResolvedFile(ctx, client, tikaURL, index, tempPath, entry.Path, entry.Path, label, force)
 		cleanup()
 		if err != nil {
 			return fmt.Errorf("ingesting %q: %w", entry.Path, err)

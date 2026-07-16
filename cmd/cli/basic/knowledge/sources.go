@@ -36,6 +36,7 @@ type SourceMetadata struct {
 	ChunkSize     int    `json:"chunk_size"`
 	ChunkOverlap  int    `json:"chunk_overlap"`
 	ContentLength int64  `json:"content_length"`
+	Label         string `json:"label,omitempty"`
 	Status        string `json:"status"`
 	IngestedAt    string `json:"ingested_at"`
 	UpdatedAt     string `json:"updated_at"`
@@ -114,6 +115,7 @@ func buildSourcesIndexBody() map[string]any {
 				"chunk_size":     map[string]any{"type": "integer"},
 				"chunk_overlap":  map[string]any{"type": "integer"},
 				"content_length": map[string]any{"type": "long"},
+				"label":          map[string]any{"type": "keyword"},
 				"status":         map[string]any{"type": "keyword"},
 				"ingested_at": map[string]any{
 					"type":   "date",

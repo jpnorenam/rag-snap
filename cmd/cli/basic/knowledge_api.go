@@ -42,7 +42,7 @@ func (cmd *knowledgeCommand) listSourcesAPI(ctx context.Context, dc *apiclient.C
 		}
 	}
 
-	fmt.Printf("%-50s %-30s %-12s %-8s %-20s\n", "SOURCE ID", "KNOWLEDGE BASE", "STATUS", "CHUNKS", "INGESTED AT")
+	fmt.Printf("%-50s %-30s %-16s %-12s %-8s %-20s\n", "SOURCE ID", "KNOWLEDGE BASE", "LABEL", "STATUS", "CHUNKS", "INGESTED AT")
 	found := false
 	for _, b := range bases {
 		sources, err := dc.ListSources(ctx, b.Name)
@@ -51,7 +51,7 @@ func (cmd *knowledgeCommand) listSourcesAPI(ctx context.Context, dc *apiclient.C
 		}
 		for _, s := range sources {
 			found = true
-			fmt.Printf("%-50s %-30s %-12s %-8d %-20s\n", s.SourceID, b.Name, s.Status, s.ChunkCount, s.IngestedAt)
+			fmt.Printf("%-50s %-30s %-16s %-12s %-8d %-20s\n", s.SourceID, b.Name, s.Label, s.Status, s.ChunkCount, s.IngestedAt)
 		}
 	}
 	if !found {
@@ -70,6 +70,7 @@ func printSourceMetadata(knowledgeBaseName string, meta *apiclient.Source) {
 	fmt.Printf("File path:      %s\n", meta.FilePath)
 	fmt.Printf("Content type:   %s\n", meta.ContentType)
 	fmt.Printf("Content length: %d bytes\n", meta.ContentLength)
+	fmt.Printf("Label:          %s\n", meta.Label)
 	fmt.Printf("Checksum:       %s\n", meta.Checksum)
 	fmt.Printf("Chunks:         %d (size=%d, overlap=%d)\n", meta.ChunkCount, meta.ChunkSize, meta.ChunkOverlap)
 	fmt.Printf("Ingested at:    %s\n", meta.IngestedAt)

@@ -25,30 +25,17 @@ type extractedKeywords struct {
 	Expansion []string `json:"expansion"`
 }
 
-// sourceLabel returns a provenance tag for a search hit based on its index name.
-// Convention: when ingesting open-source / third-party documentation, the KB name
-// must include "upstream" (e.g. "openstack-upstream", "kubernetes-upstream").
-func sourceLabel(indexName string) string {
-	lower := strings.ToLower(indexName)
-	if lower == knowledge.KapaIndexName {
-		return "[KAPA-CANONICAL]"
-	}
-	if strings.Contains(lower, "upstream") {
-		return "[UPSTREAM]"
-	}
-	return "[CANONICAL]"
-}
-
 // formatContext renders a slice of search hits into a single text block
-// suitable for injection into a RAG prompt. Each chunk is prefixed with a
-// provenance label so the LLM can apply source priority rules.
+// suitable for injection into a RAG prompt. Each chunk is prefixed with its
+// resolved knowledge label so the LLM can apply the priority rules the active
+// system prompt defines for those labels.
 func formatContext(hits []knowledge.SearchHit) string {
 	var b strings.Builder
 	for i, hit := range hits {
 		if i > 0 {
 			b.WriteString("\n---\n")
 		}
-		fmt.Fprintf(&b, "%s\n", sourceLabel(hit.Index))
+		fmt.Fprintf(&b, "%s\n", knowledge.LabelTag(hit.Label))
 		b.WriteString(hit.Content)
 		fmt.Fprintf(&b, "\n(source: %s, score: %.4f)", hit.SourceID, hit.Score)
 	}
@@ -294,7 +281,7 @@ func formatConversationForRewrite(messages []openai.ChatCompletionMessageParamUn
 // given context (Kapa.ai is an optional integration; [KAPA-CANONICAL] chunks are
 // only present when it is enabled and configured).
 const ragSourceRules = "Source rules (mandatory, override any prior instruction):\n" +
-	"- Context chunks are tagged [CANONICAL], [KAPA-CANONICAL], or [UPSTREAM]. Not every tag necessarily appears in a given context — Kapa.ai integration is optional, so [KAPA-CANONICAL] chunks are only present when it is enabled and returns results. Apply the rules below only to tags actually present; never treat a missing tag as a gap to fill with outside knowledge.\n" +
+	"- Context chunks are tagged with knowledge labels assigned at ingestion; the default labels are [CANONICAL], [KAPA-CANONICAL], and [UPSTREAM]. Not every tag necessarily appears in a given context — Kapa.ai integration is optional, so [KAPA-CANONICAL] chunks are only present when it is enabled and returns results. Apply the rules below only to tags actually present; never treat a missing tag as a gap to fill with outside knowledge.\n" +
 	"- Priority among tags actually present: [CANONICAL] > [KAPA-CANONICAL] > [UPSTREAM]. A higher-priority tag overrides a lower one on the same point; a lower-priority tag remains usable on points no higher-priority tag covers.\n" +
 	"- Only name a product or component if a [CANONICAL] or [KAPA-CANONICAL] chunk explicitly documents it. Do NOT name anything found only in [UPSTREAM] chunks.\n" +
 	"- If the question names a product as an example, do not repeat or endorse it unless a [CANONICAL] or [KAPA-CANONICAL] chunk confirms it.\n" +
@@ -304,7 +291,7 @@ const ragSourceRules = "Source rules (mandatory, override any prior instruction)
 // Produces professional, document-ready responses suitable for submission in RFI/RFP documents.
 const ragAnswerSystemPrompt = "You are a Canonical support engineer responding to a procurement executive on behalf of Canonical. Apply these rules strictly:\n" +
 	"1. GROUNDING: Use ONLY information explicitly stated in the provided context. Never infer, extrapolate, or use outside knowledge.\n" +
-	"2. SOURCE PRIORITY: Context chunks are tagged [CANONICAL], [KAPA-CANONICAL], or [UPSTREAM]. Not all three necessarily appear — Kapa.ai integration is optional, so [KAPA-CANONICAL] chunks are only present when it is enabled and returns results. Apply priority only among tags actually present in the context; never treat a missing tier as a gap to fill with outside knowledge.\n" +
+	"2. SOURCE PRIORITY: Context chunks are tagged with knowledge labels assigned at ingestion; the default labels are [CANONICAL], [KAPA-CANONICAL], and [UPSTREAM]. Not all three necessarily appear — Kapa.ai integration is optional, so [KAPA-CANONICAL] chunks are only present when it is enabled and returns results. Apply priority only among tags actually present in the context; never treat a missing tier as a gap to fill with outside knowledge.\n" +
 	"   - [CANONICAL]: private internal documents (RFPs, implementation notes) — most specific, takes precedence over [KAPA-CANONICAL] and [UPSTREAM] on the same point.\n" +
 	"   - [KAPA-CANONICAL]: official Canonical public documentation — authoritative for general product facts and capabilities on points no [CANONICAL] chunk covers.\n" +
 	"   - [UPSTREAM]: third-party upstream docs — supplemental only, lowest priority; usable on points no [CANONICAL] or [KAPA-CANONICAL] chunk covers, subject to rule 3.\n" +
@@ -325,7 +312,7 @@ const ragAnswerSystemPrompt = "You are a Canonical support engineer responding t
 // Grounded and conversational — follows the same strict accuracy rules with natural phrasing.
 const ragChatSystemPrompt = "You are a Canonical technical assistant. Apply these rules strictly:\n" +
 	"1. GROUNDING: Use ONLY information explicitly stated in the provided context. Never infer, extrapolate, or use outside knowledge.\n" +
-	"2. SOURCE PRIORITY: Context chunks are tagged [CANONICAL], [KAPA-CANONICAL], or [UPSTREAM]. Not all three necessarily appear — Kapa.ai integration is optional, so [KAPA-CANONICAL] chunks are only present when it is enabled and returns results. Apply priority only among tags actually present in the context; never treat a missing tier as a gap to fill with outside knowledge.\n" +
+	"2. SOURCE PRIORITY: Context chunks are tagged with knowledge labels assigned at ingestion; the default labels are [CANONICAL], [KAPA-CANONICAL], and [UPSTREAM]. Not all three necessarily appear — Kapa.ai integration is optional, so [KAPA-CANONICAL] chunks are only present when it is enabled and returns results. Apply priority only among tags actually present in the context; never treat a missing tier as a gap to fill with outside knowledge.\n" +
 	"   - [CANONICAL]: private internal documents (RFPs, implementations) — takes precedence over [KAPA-CANONICAL] and [UPSTREAM] on the same point.\n" +
 	"   - [KAPA-CANONICAL]: official Canonical public documentation — authoritative for general product facts on points no [CANONICAL] chunk covers.\n" +
 	"   - [UPSTREAM]: third-party upstream docs — supplemental only, usable on points no [CANONICAL] or [KAPA-CANONICAL] chunk covers, subject to rule 3.\n" +

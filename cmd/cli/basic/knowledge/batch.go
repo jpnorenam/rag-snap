@@ -19,6 +19,7 @@ type BatchJob struct {
 	Branch     string   `yaml:"branch,omitempty"`
 	Extensions []string `yaml:"extensions,omitempty"`
 	Path       string   `yaml:"path,omitempty"`
+	Label      string   `yaml:"label,omitempty"`
 }
 
 // BatchConfig is the top-level structure of a batch YAML file.
@@ -41,6 +42,14 @@ func ProcessBatch(ctx context.Context, client *OpenSearchClient, tikaURL string,
 	}
 	if len(batchCfg.Jobs) == 0 {
 		return fmt.Errorf("batch file contains no jobs")
+	}
+	for i, job := range batchCfg.Jobs {
+		if job.Label == "" {
+			continue
+		}
+		if err := ValidateLabel(job.Label); err != nil {
+			return fmt.Errorf("job %d (%s): %w", i+1, job.Source, err)
+		}
 	}
 
 	fmt.Printf("Found %d jobs in batch file version %s\n", len(batchCfg.Jobs), batchCfg.Version)
@@ -78,7 +87,7 @@ func processSingleJob(ctx context.Context, client *OpenSearchClient, tikaURL str
 		if sourceID == "" {
 			sourceID = filepath.Base(path)
 		}
-		return ingestAndIndex(ctx, client, tikaURL, path, sourceID, targetIndex, force)
+		return ingestAndIndex(ctx, client, tikaURL, path, sourceID, targetIndex, job.Label, force)
 
 	case "url":
 		crawled, _, cleanup, err := processing.CrawlURL(job.Source)
@@ -90,7 +99,7 @@ func processSingleJob(ctx context.Context, client *OpenSearchClient, tikaURL str
 		if sourceID == "" {
 			sourceID = job.Source
 		}
-		return ingestAndIndex(ctx, client, tikaURL, crawled, sourceID, targetIndex, force)
+		return ingestAndIndex(ctx, client, tikaURL, crawled, sourceID, targetIndex, job.Label, force)
 
 	case "github-repo":
 		return processGitHubRepoJob(ctx, client, tikaURL, job, targetIndex, force)
@@ -125,7 +134,7 @@ func processGitHubRepoJob(ctx context.Context, client *OpenSearchClient, tikaURL
 			fmt.Printf("  skip %s: %v\n", entry.Path, err)
 			continue
 		}
-		if ingestErr := ingestAndIndex(ctx, client, tikaURL, tempPath, entry.Path, targetIndex, force); ingestErr != nil {
+		if ingestErr := ingestAndIndex(ctx, client, tikaURL, tempPath, entry.Path, targetIndex, job.Label, force); ingestErr != nil {
 			fmt.Printf("  skip %s: %v\n", entry.Path, ingestErr)
 		}
 		cleanup()
@@ -155,7 +164,7 @@ func processGiteaRepoJob(ctx context.Context, client *OpenSearchClient, tikaURL 
 			fmt.Printf("  skip %s: %v\n", entry.Path, err)
 			continue
 		}
-		if ingestErr := ingestAndIndex(ctx, client, tikaURL, tempPath, entry.Path, targetIndex, force); ingestErr != nil {
+		if ingestErr := ingestAndIndex(ctx, client, tikaURL, tempPath, entry.Path, targetIndex, job.Label, force); ingestErr != nil {
 			fmt.Printf("  skip %s: %v\n", entry.Path, ingestErr)
 		}
 		cleanup()
@@ -166,7 +175,7 @@ func processGiteaRepoJob(ctx context.Context, client *OpenSearchClient, tikaURL 
 // ingestAndIndex is the CLI-side wrapper over the shared IngestSource core. When
 // force is false, sources already marked as completed are skipped (batch policy);
 // when force is set, IngestSource replaces the existing source's chunks.
-func ingestAndIndex(ctx context.Context, client *OpenSearchClient, tikaURL, filePath, sourceID, targetIndex string, force bool) error {
+func ingestAndIndex(ctx context.Context, client *OpenSearchClient, tikaURL, filePath, sourceID, targetIndex, label string, force bool) error {
 	if !force && client.SourceCompleted(ctx, sourceID) {
 		fmt.Printf("  already ingested, skipping: %s\n", sourceID)
 		return nil
@@ -175,6 +184,7 @@ func ingestAndIndex(ctx context.Context, client *OpenSearchClient, tikaURL, file
 		FilePath:    filePath,
 		SourceID:    sourceID,
 		TargetIndex: targetIndex,
+		Label:       label,
 		Force:       force,
 	})
 }

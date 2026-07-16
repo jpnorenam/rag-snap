@@ -167,7 +167,7 @@ export default function KbList({ notify, onError }: Props) {
               <tr>
                 <th>Name</th>
                 <th className="u-align--right">Sources</th>
-                <th className="u-align--right">Actions</th>
+                <th className="u-align--right kb__actions-col">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -177,7 +177,7 @@ export default function KbList({ notify, onError }: Props) {
                     <Link href={{ pathname: "/knowledge/", query: { kb: base.name } }}>{base.name}</Link>
                   </td>
                   <td className="u-align--right">{base.source_count}</td>
-                  <td className="u-align--right">
+                  <td className="u-align--right kb__actions-col">
                     <div className="kb-actions-cell">
                       <Link
                         className="p-button--base kb-action u-no-margin--bottom"
@@ -194,7 +194,7 @@ export default function KbList({ notify, onError }: Props) {
                       </button>
                       <button
                         type="button"
-                        className="p-button--base kb-action u-no-margin--bottom"
+                        className="p-button--base kb-action kb-action--danger u-no-margin--bottom"
                         onClick={() => setDeleteTarget(base)}
                       >
                         Delete

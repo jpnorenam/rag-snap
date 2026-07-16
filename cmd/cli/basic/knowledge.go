@@ -63,6 +63,7 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 		cmd.initCommand(),
 		cmd.listCommand(),
 		cmd.createCommand(),
+		cmd.labelCommand(),
 		cmd.ingestCommand(),
 		cmd.searchCommand(),
 		cmd.forgetCommand(),
@@ -161,16 +162,28 @@ func (cmd *knowledgeCommand) listCommand() *cobra.Command {
 }
 
 func (cmd *knowledgeCommand) createCommand() *cobra.Command {
-	return &cobra.Command{
+	var labelFlag string
+
+	cobraCmd := &cobra.Command{
 		Use:   "create <knowledge_base_name>",
 		Short: "Create a knowledge base index",
-		Long:  "Create an OpenSearch index for storing knowledge base documents.",
-		Args:  cobra.ExactArgs(1),
+		Long: "Create an OpenSearch index for storing knowledge base documents.\n" +
+			"Use --label to set the base's default knowledge label; sources ingested\n" +
+			"without an explicit label inherit it. Without --label, the default follows\n" +
+			"the naming convention ('upstream' for names containing \"upstream\", else\n" +
+			"'canonical'). Define what labels mean to the LLM in your prompt variants.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			knowledgeBaseName := args[0]
 
+			if labelFlag != "" {
+				if err := knowledge.ValidateLabel(labelFlag); err != nil {
+					return err
+				}
+			}
+
 			if dc := daemonClient(cmd.Context); dc != nil {
-				if _, err := dc.CreateKnowledge(context.Background(), knowledgeBaseName); err != nil {
+				if _, err := dc.CreateKnowledge(context.Background(), knowledgeBaseName, labelFlag); err != nil {
 					return err
 				}
 				fmt.Printf("Knowledge base '%s' created successfully.\n", knowledgeBaseName)
@@ -184,14 +197,119 @@ func (cmd *knowledgeCommand) createCommand() *cobra.Command {
 				return err
 			}
 
-			if err := client.CreateIndex(context.Background(), indexName); err != nil {
+			ctx := context.Background()
+			if err := client.CreateIndex(ctx, indexName); err != nil {
 				return fmt.Errorf("creating index: %w", err)
+			}
+			if labelFlag != "" {
+				if err := client.SetDefaultLabel(ctx, indexName, labelFlag); err != nil {
+					return fmt.Errorf("setting default label: %w", err)
+				}
 			}
 
 			fmt.Printf("Knowledge base '%s' created successfully.\n", knowledgeBaseName)
 			return nil
 		},
 	}
+
+	cobraCmd.Flags().StringVarP(&labelFlag, "label", "l", "", "Default knowledge label for sources ingested into this base")
+
+	return cobraCmd
+}
+
+func (cmd *knowledgeCommand) labelCommand() *cobra.Command {
+	var applyToExisting bool
+
+	cobraCmd := &cobra.Command{
+		Use:   "label <knowledge_base_name> [<label>]",
+		Short: "Show or set a knowledge base's default label",
+		Long: "Show or set the default knowledge label of a knowledge base.\n" +
+			"With no <label> argument, the effective default is printed together with\n" +
+			"whether it is stored or derived from the naming convention.\n" +
+			"Setting a label affects future ingests only, unless --apply-to-existing is\n" +
+			"given, which also backfills chunks and sources that have no label yet\n" +
+			"(explicit per-source labels are never overwritten).\n" +
+			"Labels have no built-in meaning: reference them in your system prompt\n" +
+			"variants ('prompt' command) to tell the LLM how to prioritize them.",
+		Args: cobra.RangeArgs(1, 2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			knowledgeBaseName := args[0]
+			ctx := context.Background()
+
+			// Show mode.
+			if len(args) == 1 {
+				if applyToExisting {
+					return fmt.Errorf("--apply-to-existing requires a <label> argument")
+				}
+				if dc := daemonClient(cmd.Context); dc != nil {
+					kb, err := dc.GetKnowledge(ctx, knowledgeBaseName)
+					if err != nil {
+						return err
+					}
+					fmt.Printf("Default label: %s\n", kb.DefaultLabel)
+					return nil
+				}
+				client, err := cmd.opensearchClient()
+				if err != nil {
+					return err
+				}
+				indexName := knowledge.FullIndexName(knowledgeBaseName)
+				label, stored, err := client.GetDefaultLabel(ctx, indexName)
+				if err != nil {
+					return err
+				}
+				origin := "derived from the base name (not stored)"
+				if stored {
+					origin = "stored"
+				}
+				fmt.Printf("Default label: %s (%s)\n", label, origin)
+				return nil
+			}
+
+			// Set mode.
+			label := args[1]
+			if err := knowledge.ValidateLabel(label); err != nil {
+				return err
+			}
+
+			if dc := daemonClient(cmd.Context); dc != nil {
+				opURL, err := dc.SetKnowledgeLabel(ctx, knowledgeBaseName, label, applyToExisting)
+				if err != nil {
+					return err
+				}
+				if opURL != "" {
+					if _, err := waitWithProgress(dc, opURL, "Backfilling labels", "", ""); err != nil {
+						return err
+					}
+				}
+				fmt.Printf("Default label of '%s' set to '%s'.\n", knowledgeBaseName, label)
+				return nil
+			}
+
+			client, err := cmd.opensearchClient()
+			if err != nil {
+				return err
+			}
+			indexName := knowledge.FullIndexName(knowledgeBaseName)
+			if err := client.SetDefaultLabel(ctx, indexName, label); err != nil {
+				return err
+			}
+			fmt.Printf("Default label of '%s' set to '%s'.\n", knowledgeBaseName, label)
+
+			if applyToExisting {
+				updated, err := client.BackfillLabel(ctx, indexName, label)
+				if err != nil {
+					return fmt.Errorf("backfilling labels: %w", err)
+				}
+				fmt.Printf("Labeled %d existing chunk(s) that had no label.\n", updated)
+			}
+			return nil
+		},
+	}
+
+	cobraCmd.Flags().BoolVar(&applyToExisting, "apply-to-existing", false, "Also label already-ingested chunks and sources that have no label")
+
+	return cobraCmd
 }
 
 func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
@@ -199,6 +317,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 	var urlFlag string
 	var batchFlag string
 	var formatFlag string
+	var labelFlag string
 	var forceFlag bool
 
 	cobraCmd := &cobra.Command{
@@ -211,6 +330,15 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 			"(columns: question, answer, source), one chunk per row.",
 		Args: cobra.RangeArgs(0, 2),
 		RunE: func(_ *cobra.Command, args []string) error {
+			if labelFlag != "" {
+				if err := knowledge.ValidateLabel(labelFlag); err != nil {
+					return err
+				}
+				if batchFlag != "" {
+					return fmt.Errorf("--label is not allowed with --batch; set per-job labels in the YAML file")
+				}
+			}
+
 			// Batch mode: delegate to ProcessBatch, no positional args needed.
 			if batchFlag != "" {
 				if len(args) != 0 {
@@ -249,9 +377,9 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 				var opURL string
 				var err error
 				if urlFlag != "" {
-					opURL, err = dc.IngestURL(context.Background(), knowledgeBaseName, sourceID, urlFlag)
+					opURL, err = dc.IngestURL(context.Background(), knowledgeBaseName, sourceID, urlFlag, labelFlag)
 				} else {
-					opURL, err = dc.IngestFile(context.Background(), knowledgeBaseName, sourceID, fileFlag)
+					opURL, err = dc.IngestFile(context.Background(), knowledgeBaseName, sourceID, fileFlag, labelFlag)
 				}
 				if err != nil {
 					return err
@@ -312,6 +440,19 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 
 			ctx := context.Background()
 
+			// Resolve the source's label: explicit > base default > convention.
+			label := labelFlag
+			if label == "" {
+				if label, _, err = client.GetDefaultLabel(ctx, indexName); err != nil {
+					return fmt.Errorf("resolving base default label: %w", err)
+				}
+			}
+			// Older indexes lack the label keyword mapping; ensure it before the
+			// first labeled write so dynamic mapping cannot type the field wrong.
+			if err := client.EnsureLabelMapping(ctx, indexName); err != nil {
+				return fmt.Errorf("ensuring label mapping: %w", err)
+			}
+
 			// Build source metadata with status=processing
 			now := time.Now().UTC().Format(knowledge.DateFormat)
 			chunkOverlap := processing.DefaultChunkOverlap
@@ -328,6 +469,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 				ChunkSize:     processing.DefaultChunkSize,
 				ChunkOverlap:  chunkOverlap,
 				ContentLength: result.ContentLength,
+				Label:         label,
 				Status:        knowledge.StatusProcessing,
 				IngestedAt:    now,
 				UpdatedAt:     now,
@@ -361,6 +503,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 				docs[i] = knowledge.Document{
 					Content:   c.Content,
 					SourceID:  c.SourceID,
+					Label:     label,
 					CreatedAt: c.CreatedAt,
 				}
 			}
@@ -390,6 +533,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 	cobraCmd.Flags().StringVarP(&urlFlag, "url", "u", "", "URL to download and ingest")
 	cobraCmd.Flags().StringVarP(&batchFlag, "batch", "B", "", "YAML batch config file — ingest multiple documents at once")
 	cobraCmd.Flags().StringVar(&formatFlag, "format", "", "Input format: 'rfp' for a CSV of question,answer,source rows (default: auto-detect via Tika)")
+	cobraCmd.Flags().StringVarP(&labelFlag, "label", "l", "", "Knowledge label for this source (default: the base's default label)")
 	cobraCmd.Flags().BoolVar(&forceFlag, "force", false, "Re-ingest sources even if already present in the knowledge base")
 
 	return cobraCmd
@@ -424,7 +568,7 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 					return nil
 				}
 				for i, hit := range hits {
-					fmt.Printf("\n--- Result %d (score: %.4f, base: %s) ---\n", i+1, hit.Score, hit.Base)
+					fmt.Printf("\n--- Result %d (score: %.4f, base: %s) %s ---\n", i+1, hit.Score, hit.Base, knowledge.LabelTag(hit.Label))
 					fmt.Printf("  Source: %s\n", hit.SourceID)
 					fmt.Printf("  Date:   %s\n", hit.CreatedAt)
 					content := hit.Content
@@ -469,7 +613,7 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 			}
 
 			for i, hit := range results {
-				fmt.Printf("\n--- Result %d (score: %.4f, index: %s) ---\n", i+1, hit.Score, hit.Index)
+				fmt.Printf("\n--- Result %d (score: %.4f, index: %s) %s ---\n", i+1, hit.Score, hit.Index, knowledge.LabelTag(hit.Label))
 				fmt.Printf("  Source: %s\n", hit.SourceID)
 				fmt.Printf("  Date:   %s\n", hit.CreatedAt)
 				content := hit.Content
@@ -579,6 +723,7 @@ func (cmd *knowledgeCommand) metadataCommand() *cobra.Command {
 			fmt.Printf("File path:      %s\n", meta.FilePath)
 			fmt.Printf("Content type:   %s\n", meta.ContentType)
 			fmt.Printf("Content length: %d bytes\n", meta.ContentLength)
+			fmt.Printf("Label:          %s\n", knowledge.ResolveLabel(meta.IndexName, meta.Label))
 			fmt.Printf("Checksum:       %s\n", meta.Checksum)
 			fmt.Printf("Chunks:         %d (size=%d, overlap=%d)\n", meta.ChunkCount, meta.ChunkSize, meta.ChunkOverlap)
 			fmt.Printf("Ingested at:    %s\n", meta.IngestedAt)
@@ -720,11 +865,11 @@ func (cmd *knowledgeCommand) listSources(ctx context.Context, client *knowledge.
 		return nil
 	}
 
-	fmt.Printf("%-50s %-30s %-12s %-8s %-20s\n", "SOURCE ID", "KNOWLEDGE BASE", "STATUS", "CHUNKS", "INGESTED AT")
+	fmt.Printf("%-50s %-30s %-16s %-12s %-8s %-20s\n", "SOURCE ID", "KNOWLEDGE BASE", "LABEL", "STATUS", "CHUNKS", "INGESTED AT")
 	for _, s := range sources {
 		knowledgeBaseName, _ := knowledge.KnowledgeBaseNameFromIndex(s.IndexName)
-		fmt.Printf("%-50s %-30s %-12s %-8d %-20s\n",
-			s.SourceID, knowledgeBaseName, s.Status, s.ChunkCount, s.IngestedAt)
+		fmt.Printf("%-50s %-30s %-16s %-12s %-8d %-20s\n",
+			s.SourceID, knowledgeBaseName, knowledge.ResolveLabel(s.IndexName, s.Label), s.Status, s.ChunkCount, s.IngestedAt)
 	}
 
 	return nil

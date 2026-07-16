@@ -164,7 +164,7 @@ export default function ConfigTable({
                           aria-label={`Edit ${entry.key}`}
                           onClick={(e) => startEdit(entry, e.currentTarget)}
                         >
-                          <i className="p-icon--edit" aria-hidden="true" />
+                          Edit
                         </button>
                         {entry.layer === "user" && (
                           <button
