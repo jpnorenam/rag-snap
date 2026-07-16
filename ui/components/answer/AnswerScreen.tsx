@@ -287,13 +287,6 @@ function AnswerLanding({
         command="rag-cli.rag answer batch <manifest.yaml>"
       />
       <div className="answer-entry-grid">
-        <button type="button" className="answer-entry" onClick={onRun}>
-          <span className="answer-entry__title">Run a manifest</span>
-          <span className="answer-entry__desc u-text--muted p-text--small">
-            Upload a YAML manifest of questions and run it against your knowledge bases.
-          </span>
-        </button>
-
         <button type="button" className="answer-entry" onClick={onBuild}>
           <span className="answer-entry__title">Build from a document</span>
           <span className="answer-entry__desc u-text--muted p-text--small">
@@ -301,13 +294,14 @@ function AnswerLanding({
           </span>
         </button>
 
-        <div className="answer-entry answer-entry--opener">
-          <span className="answer-entry__title">Review results</span>
+        <button type="button" className="answer-entry" onClick={onRun}>
+          <span className="answer-entry__title">Run a manifest</span>
           <span className="answer-entry__desc u-text--muted p-text--small">
-            Open a previously exported results file to review the answers.
+            Upload a YAML manifest of questions and run it against your knowledge bases.
           </span>
-          <ResultsOpener onOpen={onReview} onError={onReviewError} />
-        </div>
+        </button>
+
+        <ResultsOpener onOpen={onReview} onError={onReviewError} />
       </div>
     </>
   );
