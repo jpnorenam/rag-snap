@@ -2,6 +2,8 @@ import {
   deleteSync,
   downloadFile,
   getSync,
+  patchAsync,
+  patchSync,
   postAsync,
   postAsyncForm,
   postSync,
@@ -26,6 +28,8 @@ export interface KnowledgeBaseDetail {
   index: string;
   chunk_count: number;
   source_count: number;
+  default_label?: string;
+  default_label_stored?: boolean;
 }
 
 // SourceMetadata mirrors the daemon's stored source record. Fields beyond the
@@ -41,6 +45,7 @@ export interface SourceMetadata {
   index_name?: string;
   chunk_count?: number;
   content_length?: number;
+  label?: string;
   status?: string;
   ingested_at?: string;
   updated_at?: string;
@@ -63,6 +68,7 @@ export interface BatchItem {
   branch?: string;
   path?: string;
   extensions?: string[];
+  label?: string;
 }
 
 // listKnowledge fetches the available knowledge bases, sorted alphabetically by
@@ -79,13 +85,36 @@ export async function getKnowledge(name: string): Promise<KnowledgeBaseDetail> {
 }
 
 // createKnowledge creates a base (sync). Rejects with ApiError on conflict.
-export async function createKnowledge(name: string): Promise<KnowledgeBase> {
-  return postSync<KnowledgeBase>("/1.0/knowledge", { name });
+// defaultLabel optionally sets the base's default knowledge label.
+export async function createKnowledge(name: string, defaultLabel?: string): Promise<KnowledgeBase> {
+  return postSync<KnowledgeBase>("/1.0/knowledge", {
+    name,
+    default_label: defaultLabel || undefined,
+  });
 }
 
 // deleteKnowledge removes a base and its source metadata (sync).
 export async function deleteKnowledge(name: string): Promise<void> {
   await deleteSync(`/1.0/knowledge/${encodeURIComponent(name)}`);
+}
+
+// setKnowledgeLabel sets a base's default knowledge label. Without backfill the
+// update is synchronous and resolves to null; with applyToExisting the daemon
+// backfills unlabeled chunks and sources, and the operation to track is
+// returned.
+export async function setKnowledgeLabel(
+  name: string,
+  label: string,
+  applyToExisting: boolean
+): Promise<OperationView | null> {
+  const path = `/1.0/knowledge/${encodeURIComponent(name)}`;
+  const body = { default_label: label, apply_to_existing: applyToExisting };
+  if (applyToExisting) {
+    const { metadata } = await patchAsync<OperationView>(path, body);
+    return metadata;
+  }
+  await patchSync(path, body);
+  return null;
 }
 
 // listSources returns a base's ingested sources ([] when none).
@@ -118,16 +147,19 @@ export async function initEngine(): Promise<OperationView> {
 }
 
 // ingestFile uploads a document to a base and returns the operation to track.
+// label optionally overrides the base's default knowledge label.
 export async function ingestFile(
   name: string,
   file: File,
   sourceId: string,
-  force: boolean
+  force: boolean,
+  label?: string
 ): Promise<OperationView> {
   const form = new FormData();
   form.append("file", file);
   if (sourceId) form.append("source_id", sourceId);
   if (force) form.append("force", "true");
+  if (label) form.append("label", label);
   const { metadata } = await postAsyncForm<OperationView>(
     `/1.0/knowledge/${encodeURIComponent(name)}/sources`,
     form
@@ -136,15 +168,17 @@ export async function ingestFile(
 }
 
 // ingestUrl ingests a URL into a base and returns the operation to track.
+// label optionally overrides the base's default knowledge label.
 export async function ingestUrl(
   name: string,
   url: string,
   sourceId: string,
-  force: boolean
+  force: boolean,
+  label?: string
 ): Promise<OperationView> {
   const { metadata } = await postAsync<OperationView>(
     `/1.0/knowledge/${encodeURIComponent(name)}/sources`,
-    { url, source_id: sourceId || undefined, force }
+    { url, source_id: sourceId || undefined, force, label: label || undefined }
   );
   return metadata;
 }

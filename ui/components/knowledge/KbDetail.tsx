@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { Notice } from "@/components/KnowledgeScreen";
 import IngestModal from "@/components/knowledge/IngestModal";
 import BatchIngestModal from "@/components/knowledge/BatchIngestModal";
+import EditLabelModal from "@/components/knowledge/EditLabelModal";
 import MetadataModal from "@/components/knowledge/MetadataModal";
 import ConfirmModal from "@/components/common/ConfirmModal";
 import EmptyState from "@/components/common/EmptyState";
@@ -46,6 +47,7 @@ export default function KbDetail({ name, notify }: Props) {
 
   const [showIngest, setShowIngest] = useState(false);
   const [showBatch, setShowBatch] = useState(false);
+  const [showEditLabel, setShowEditLabel] = useState(false);
   const [metaTarget, setMetaTarget] = useState<SourceMetadata | null>(null);
   const [forgetTarget, setForgetTarget] = useState<SourceMetadata | null>(null);
   const [forgetting, setForgetting] = useState(false);
@@ -100,6 +102,22 @@ export default function KbDetail({ name, notify }: Props) {
         }
         void load();
       }
+      // Label backfill for this base: report and refresh the labels shown.
+      if (op.description.startsWith("Backfilling label") && (op.resources.knowledge ?? []).includes(resourcePath)) {
+        if (succeeded) {
+          const n = op.metadata?.chunks_labeled;
+          notify({
+            kind: "positive",
+            message:
+              typeof n === "number"
+                ? `Label backfill complete — ${n} chunk${n === 1 ? "" : "s"} labeled.`
+                : "Label backfill complete.",
+          });
+        } else {
+          notify({ kind: "negative", message: op.err || "Label backfill failed." });
+        }
+        void load();
+      }
     },
     [name, notify, load, resourcePath]
   );
@@ -148,10 +166,28 @@ export default function KbDetail({ name, notify }: Props) {
       </div>
 
       <div className="kb__header">
-        <div>
+        <div className="kb-detail__heading">
           <h2 className="u-no-margin--bottom">{name}</h2>
-          <p className="u-text--muted p-text--small">
-            {count} source{count === 1 ? "" : "s"} · <code>rag-cli.rag k ingest {name} &lt;id&gt; --file &lt;path&gt;</code>
+          <p className="u-text--muted p-text--small u-no-margin--bottom">
+            {count} source{count === 1 ? "" : "s"}
+          </p>
+          {detail?.default_label ? (
+            <div className="kb-detail__label">
+              <span className="kb-detail__label-term">Default label</span>
+              <span className="p-chip u-no-margin--bottom">
+                <span className="p-chip__value">{detail.default_label}</span>
+              </span>
+              <button
+                type="button"
+                className="p-button--base u-no-margin--bottom kb-detail__label-edit"
+                onClick={() => setShowEditLabel(true)}
+              >
+                Edit
+              </button>
+            </div>
+          ) : null}
+          <p className="kb-detail__hint u-text--muted p-text--small u-no-margin--bottom">
+            <code>rag-cli.rag k ingest {name} &lt;id&gt; --file &lt;path&gt;</code>
           </p>
         </div>
         <div className="kb__actions">
@@ -216,8 +252,9 @@ export default function KbDetail({ name, notify }: Props) {
                 <th>Source ID</th>
                 <th>Title / filename</th>
                 <th>Type</th>
+                <th>Label</th>
                 <th>Ingested</th>
-                <th className="u-align--right">Actions</th>
+                <th className="u-align--right kb__actions-col">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -226,11 +263,20 @@ export default function KbDetail({ name, notify }: Props) {
                   <td>{src.source_id}</td>
                   <td>{src.title || src.file_name || "—"}</td>
                   <td>{sourceType(src)}</td>
+                  <td>
+                    {src.label ? (
+                      <span className="p-chip u-no-margin--bottom">
+                        <span className="p-chip__value">{src.label}</span>
+                      </span>
+                    ) : (
+                      "—"
+                    )}
+                  </td>
                   <td title={src.ingested_at ? absoluteTime(src.ingested_at) : undefined}>
                     {src.ingested_at ? relativeTime(src.ingested_at) : "—"}
                   </td>
-                  <td className="u-align--right">
-                    <div className="kb-actions-stack">
+                  <td className="u-align--right kb__actions-col">
+                    <div className="kb-actions-cell">
                       <button
                         type="button"
                         className="p-button--base kb-action u-no-margin--bottom"
@@ -240,7 +286,7 @@ export default function KbDetail({ name, notify }: Props) {
                       </button>
                       <button
                         type="button"
-                        className="p-button--base kb-action u-no-margin--bottom"
+                        className="p-button--base kb-action kb-action--danger u-no-margin--bottom"
                         onClick={() => setForgetTarget(src)}
                       >
                         Forget
@@ -257,12 +303,31 @@ export default function KbDetail({ name, notify }: Props) {
       {showIngest && (
         <IngestModal
           name={name}
+          defaultLabel={detail?.default_label}
           onStarted={(op) => {
             setShowIngest(false);
             track(op);
             notify({ kind: "positive", message: "Ingestion started…" });
           }}
           onClose={() => setShowIngest(false)}
+        />
+      )}
+
+      {showEditLabel && (
+        <EditLabelModal
+          name={name}
+          currentLabel={detail?.default_label}
+          onSaved={(label, backfillOp) => {
+            setShowEditLabel(false);
+            if (backfillOp) {
+              track(backfillOp);
+              notify({ kind: "positive", message: `Default label set to “${label}” — backfilling existing sources…` });
+            } else {
+              notify({ kind: "positive", message: `Default label set to “${label}”.` });
+            }
+            void load();
+          }}
+          onClose={() => setShowEditLabel(false)}
         />
       )}
 

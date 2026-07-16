@@ -19,24 +19,16 @@ type searchRequest struct {
 	Count int      `json:"count"`
 }
 
-// searchResult is the API view of a single hit, including provenance derived
-// from the originating index.
+// searchResult is the API view of a single hit. Label is the hit's resolved
+// knowledge label (stored chunk label, with index-name fallback for chunks
+// ingested before labels existed), already resolved by the knowledge package.
 type searchResult struct {
-	Score      float64 `json:"score"`
-	Base       string  `json:"base"`
-	SourceID   string  `json:"source_id"`
-	CreatedAt  string  `json:"created_at"`
-	Provenance string  `json:"provenance"`
-	Content    string  `json:"content"`
-}
-
-// provenanceLabel returns the provenance tag for an index, mirroring the chat
-// REPL's source labelling ([UPSTREAM] vs [CANONICAL]).
-func provenanceLabel(indexName string) string {
-	if strings.Contains(strings.ToLower(indexName), "upstream") {
-		return "upstream"
-	}
-	return "canonical"
+	Score     float64 `json:"score"`
+	Base      string  `json:"base"`
+	SourceID  string  `json:"source_id"`
+	CreatedAt string  `json:"created_at"`
+	Label     string  `json:"label"`
+	Content   string  `json:"content"`
 }
 
 // swagger:route POST /1.0/search search search
@@ -99,12 +91,12 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	for _, h := range hits {
 		base, _ := knowledge.KnowledgeBaseNameFromIndex(h.Index)
 		results = append(results, searchResult{
-			Score:      h.Score,
-			Base:       base,
-			SourceID:   h.SourceID,
-			CreatedAt:  h.CreatedAt,
-			Provenance: provenanceLabel(h.Index),
-			Content:    h.Content,
+			Score:     h.Score,
+			Base:      base,
+			SourceID:  h.SourceID,
+			CreatedAt: h.CreatedAt,
+			Label:     h.Label,
+			Content:   h.Content,
 		})
 	}
 	respondSync(w, results)

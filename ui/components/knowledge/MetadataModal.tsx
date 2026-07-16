@@ -19,6 +19,7 @@ const FIELD_ORDER: { key: keyof SourceMetadata; label: string }[] = [
   { key: "content_type", label: "Content type" },
   { key: "author", label: "Author" },
   { key: "language", label: "Language" },
+  { key: "label", label: "Label" },
   { key: "status", label: "Status" },
   { key: "chunk_count", label: "Chunks" },
   { key: "content_length", label: "Content length" },

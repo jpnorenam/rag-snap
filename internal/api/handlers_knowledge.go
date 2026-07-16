@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
@@ -11,18 +12,27 @@ import (
 // knowledgeBaseSummary is the API view of a knowledge base, derived from its
 // backing index.
 type knowledgeBaseSummary struct {
-	Name        string `json:"name"`
-	Index       string `json:"index"`
-	Health      string `json:"health"`
-	Status      string `json:"status"`
-	DocsCount   string `json:"docs_count"`
-	StoreSize   string `json:"store_size"`
-	SourceCount int    `json:"source_count"`
+	Name         string `json:"name"`
+	Index        string `json:"index"`
+	Health       string `json:"health"`
+	Status       string `json:"status"`
+	DocsCount    string `json:"docs_count"`
+	StoreSize    string `json:"store_size"`
+	SourceCount  int    `json:"source_count"`
+	DefaultLabel string `json:"default_label,omitempty"`
 }
 
 // createKnowledgeRequest is the body of POST /1.0/knowledge.
 type createKnowledgeRequest struct {
-	Name string `json:"name"`
+	Name         string `json:"name"`
+	DefaultLabel string `json:"default_label"`
+}
+
+// patchKnowledgeRequest is the body of PATCH /1.0/knowledge/{name}: set the
+// base's default label, optionally backfilling unlabeled data.
+type patchKnowledgeRequest struct {
+	DefaultLabel    string `json:"default_label"`
+	ApplyToExisting bool   `json:"apply_to_existing"`
 }
 
 // swagger:route GET /1.0/knowledge knowledge knowledgeList
@@ -89,6 +99,12 @@ func (s *Server) handleKnowledgeCreate(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "knowledge base name is required")
 		return
 	}
+	if req.DefaultLabel != "" {
+		if err := knowledge.ValidateLabel(req.DefaultLabel); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
 
 	client, err := s.clients.openSearchClient()
 	if err != nil {
@@ -110,7 +126,87 @@ func (s *Server) handleKnowledgeCreate(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	respondSync(w, knowledgeBaseSummary{Name: req.Name, Index: index})
+	if req.DefaultLabel != "" {
+		if err := client.SetDefaultLabel(r.Context(), index, req.DefaultLabel); err != nil {
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+	}
+	respondSync(w, knowledgeBaseSummary{Name: req.Name, Index: index, DefaultLabel: req.DefaultLabel})
+}
+
+// swagger:route PATCH /1.0/knowledge/{name} knowledge knowledgePatch
+//
+// Set a knowledge base's default label.
+//
+// Stores the default label. With apply_to_existing, unlabeled chunks and
+// source records are backfilled as an async operation (explicit per-source
+// labels are never overwritten); otherwise the update is synchronous.
+//
+//	Responses:
+//	  200: syncResponse
+//	  202: asyncResponse
+//	  400: errorResponse
+//	  403: errorResponse
+//	  404: errorResponse
+//	  500: errorResponse
+func (s *Server) handleKnowledgePatch(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	var req patchKnowledgeRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "invalid request body: "+err.Error())
+		return
+	}
+	if err := knowledge.ValidateLabel(req.DefaultLabel); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	client, err := s.clients.openSearchClient()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	index := knowledge.FullIndexName(name)
+	exists, err := client.IndexExists(r.Context(), index)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !exists {
+		respondError(w, http.StatusNotFound, "knowledge base not found: "+name)
+		return
+	}
+
+	if err := client.SetDefaultLabel(r.Context(), index, req.DefaultLabel); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if !req.ApplyToExisting {
+		respondSync(w, map[string]any{"name": name, "default_label": req.DefaultLabel})
+		return
+	}
+
+	// Backfill rewrites bulk data via _update_by_query, so it runs as an
+	// operation like ingest and export do.
+	op, err := s.ops.runTask(
+		"Backfilling label for knowledge base "+name,
+		map[string][]string{"knowledge": {"/1.0/knowledge/" + name}}, false,
+		func(ctx context.Context, op *Operation) error {
+			updated, err := client.BackfillLabel(ctx, index, req.DefaultLabel)
+			if err != nil {
+				return err
+			}
+			op.UpdateMetadata(map[string]any{"chunks_labeled": updated})
+			return nil
+		},
+	)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	respondAsync(w, op.url(), op.view())
 }
 
 // swagger:route GET /1.0/knowledge/{name} knowledge knowledgeGet
@@ -150,11 +246,18 @@ func (s *Server) handleKnowledgeGet(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	defaultLabel, labelStored, err := client.GetDefaultLabel(r.Context(), index)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	respondSync(w, map[string]any{
-		"name":         name,
-		"index":        index,
-		"chunk_count":  count,
-		"source_count": sourceCounts[index],
+		"name":                 name,
+		"index":                index,
+		"chunk_count":          count,
+		"source_count":         sourceCounts[index],
+		"default_label":        defaultLabel,
+		"default_label_stored": labelStored,
 	})
 }
 
@@ -233,6 +336,11 @@ func (s *Server) handleSourcesList(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	// Sources ingested before labels existed have no stored label; expose the
+	// effective fallback so clients never re-derive it.
+	for i := range sources {
+		sources[i].Label = knowledge.ResolveLabel(sources[i].IndexName, sources[i].Label)
+	}
 	respondSync(w, sources)
 }
 
@@ -257,6 +365,7 @@ func (s *Server) handleSourceGet(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	meta.Label = knowledge.ResolveLabel(meta.IndexName, meta.Label)
 	respondSync(w, meta)
 }
 

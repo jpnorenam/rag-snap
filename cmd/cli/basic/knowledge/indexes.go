@@ -192,6 +192,9 @@ func buildIndexTemplateBody() map[string]any {
 					"source_id": map[string]any{
 						"type": "keyword",
 					},
+					"label": map[string]any{
+						"type": "keyword",
+					},
 					"content": map[string]any{
 						"type": "text",
 					},

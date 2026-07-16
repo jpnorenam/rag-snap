@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"testing"
+
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 )
 
 // TestSearchValidation verifies request validation for POST /1.0/search occurs
@@ -99,12 +101,16 @@ func TestExportDownloadUnknownOperation(t *testing.T) {
 	}
 }
 
-// TestProvenanceLabel verifies the provenance tag derives from the index name.
-func TestProvenanceLabel(t *testing.T) {
-	if got := provenanceLabel("rag-snap-context-upstream-docs"); got != "upstream" {
-		t.Errorf("provenanceLabel(upstream) = %q, want upstream", got)
+// TestFallbackLabel verifies unlabeled hits resolve their label from the index
+// name via the shared knowledge resolver (the old provenance behavior).
+func TestFallbackLabel(t *testing.T) {
+	if got := knowledge.ResolveLabel("rag-snap-context-upstream-docs", ""); got != "upstream" {
+		t.Errorf("ResolveLabel(upstream, \"\") = %q, want upstream", got)
 	}
-	if got := provenanceLabel("rag-snap-context-default"); got != "canonical" {
-		t.Errorf("provenanceLabel(default) = %q, want canonical", got)
+	if got := knowledge.ResolveLabel("rag-snap-context-default", ""); got != "canonical" {
+		t.Errorf("ResolveLabel(default, \"\") = %q, want canonical", got)
+	}
+	if got := knowledge.ResolveLabel("rag-snap-context-upstream-docs", "internal"); got != "internal" {
+		t.Errorf("ResolveLabel(upstream, internal) = %q, want internal", got)
 	}
 }

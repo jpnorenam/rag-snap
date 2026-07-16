@@ -914,8 +914,19 @@ $sidebar-accent: #e95420; // Ubuntu orange
   overflow-x: auto;
 }
 
-// List row-action cell (Open/Export/Delete): a right-aligned horizontal row,
-// vertically centered and evenly spaced.
+// Actions column: Vanilla applies `overflow: hidden` to every td/th, which clips
+// the horizontal button row in a narrow cell (truncating "Metadata" to "data").
+// Keep the buttons visible and reserve enough width for the pair so neighbouring
+// columns give up space instead; the wrapper's overflow-x guards page scroll.
+.kb__actions-col {
+  overflow: visible;
+  white-space: nowrap;
+  min-width: 12rem;
+}
+
+// Row-action cell (list: Open/Export/Delete; detail: Metadata/Forget): a
+// right-aligned horizontal row, vertically centered and evenly spaced. Buttons
+// keep their intrinsic width so labels never get clipped in a narrow cell.
 .kb-actions-cell {
   display: flex;
   justify-content: flex-end;
@@ -923,24 +934,16 @@ $sidebar-accent: #e95420; // Ubuntu orange
   gap: 0.5rem;
 }
 
-// Detail row-action stack (Metadata/Forget): the buttons stack vertically and
-// stretch to equal width, so their left and right edges line up. inline-flex so
-// the stack shrinks to the widest button rather than filling the whole cell.
-.kb-actions-stack {
-  display: inline-flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0.4rem;
-}
-
 // Bordered row-action buttons (Open/Export/Delete, Metadata/Forget). A visible
 // border makes them read as buttons; hover uses Vanilla's neutral highlight
-// token so it reads correctly in both themes. Text is centered within the
-// equal-width stacked buttons.
+// token so it reads correctly in both themes. Both the list and detail screens
+// lay these out horizontally via .kb-actions-cell for a consistent, compact row.
 .kb-action {
-  display: flex;
+  display: inline-flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
+  white-space: nowrap;
   border: 1px solid var(--vf-color-border-default);
   border-radius: 0.125rem;
 
@@ -949,8 +952,71 @@ $sidebar-accent: #e95420; // Ubuntu orange
   }
 }
 
+// Destructive row action (Forget/Delete): a solid negative button — white text
+// on the full-opacity negative fill — so the consequence is unmistakable. These
+// are the same `button-negative` tokens Vanilla's own p-button--negative uses
+// (NOT `background-negative-default`, which is a ~10%-alpha notification tint).
+// Hover/active deepen the red to confirm the press target.
+.kb-action--danger {
+  color: var(--vf-color-button-negative-text);
+  background-color: var(--vf-color-button-negative-default);
+  border-color: var(--vf-color-button-negative-default);
+
+  &:hover {
+    color: var(--vf-color-button-negative-text);
+    background-color: var(--vf-color-button-negative-hover);
+    border-color: var(--vf-color-button-negative-hover);
+  }
+
+  &:active {
+    background-color: var(--vf-color-button-negative-active);
+    border-color: var(--vf-color-button-negative-active);
+  }
+}
+
 .kb-detail__breadcrumb {
   margin-bottom: 0.5rem;
+}
+
+// Detail header block: title, source count, the default-label control, and the
+// CLI hint stack vertically with tight, deliberate spacing rather than running
+// together in one muted middot-separated line.
+.kb-detail__heading {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+// Default-label control: a labelled term, the label chip, and an Edit action on
+// one baseline-aligned row so it reads as an editable property, not prose.
+.kb-detail__label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.15rem;
+}
+
+.kb-detail__label-term {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vf-color-text-muted);
+}
+
+// The Edit action sits quietly next to the chip; the underline on hover marks it
+// as actionable without competing with the header's primary buttons.
+.kb-detail__label-edit {
+  padding: 0;
+  font-size: 0.8125rem;
+
+  &:hover {
+    text-decoration: underline;
+  }
+}
+
+// CLI equivalent, demoted to a quiet footnote below the metadata.
+.kb-detail__hint {
+  margin-top: 0.15rem;
 }
 
 .kb-detail__progress {

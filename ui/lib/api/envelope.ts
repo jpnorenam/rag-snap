@@ -131,6 +131,19 @@ export async function postAsync<T>(
   return { operation: env.operation, metadata: env.metadata as T };
 }
 
+// patchAsync issues a PATCH expecting an async response and returns the
+// operation object from metadata along with its canonical operation URL.
+export async function patchAsync<T>(
+  path: string,
+  body?: unknown
+): Promise<{ operation: string; metadata: T }> {
+  const env = await request<T>("PATCH", path, body);
+  if (!env.operation) {
+    throw new ApiError(`expected an async operation but got a "${env.type}" response`, 0);
+  }
+  return { operation: env.operation, metadata: env.metadata as T };
+}
+
 // requestForm performs a multipart/form-data POST. The browser sets the
 // Content-Type (with boundary) from the FormData, so we must not set it here.
 async function requestForm<T>(path: string, form: FormData): Promise<ApiEnvelope<T>> {

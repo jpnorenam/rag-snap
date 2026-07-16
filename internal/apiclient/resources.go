@@ -13,12 +13,13 @@ import (
 // KnowledgeBase is the client view of a knowledge base summary from
 // GET/POST /1.0/knowledge.
 type KnowledgeBase struct {
-	Name      string `json:"name"`
-	Index     string `json:"index"`
-	Health    string `json:"health"`
-	Status    string `json:"status"`
-	DocsCount string `json:"docs_count"`
-	StoreSize string `json:"store_size"`
+	Name         string `json:"name"`
+	Index        string `json:"index"`
+	Health       string `json:"health"`
+	Status       string `json:"status"`
+	DocsCount    string `json:"docs_count"`
+	StoreSize    string `json:"store_size"`
+	DefaultLabel string `json:"default_label,omitempty"`
 }
 
 // Source is the client view of source metadata.
@@ -33,6 +34,7 @@ type Source struct {
 	ChunkSize     int    `json:"chunk_size"`
 	ChunkOverlap  int    `json:"chunk_overlap"`
 	ContentLength int64  `json:"content_length"`
+	Label         string `json:"label,omitempty"`
 	Status        string `json:"status"`
 	IngestedAt    string `json:"ingested_at"`
 	UpdatedAt     string `json:"updated_at"`
@@ -68,14 +70,16 @@ func (c *Client) ServerInfo(ctx context.Context) (*LoopbackInfo, error) {
 	return &info.Config.Loopback, nil
 }
 
-// SearchHit is the client view of a single search result.
+// SearchHit is the client view of a single search result. Label is the hit's
+// resolved knowledge label (stored chunk label, or the daemon's index-name
+// fallback for unlabeled chunks).
 type SearchHit struct {
-	Score      float64 `json:"score"`
-	Base       string  `json:"base"`
-	SourceID   string  `json:"source_id"`
-	CreatedAt  string  `json:"created_at"`
-	Provenance string  `json:"provenance"`
-	Content    string  `json:"content"`
+	Score     float64 `json:"score"`
+	Base      string  `json:"base"`
+	SourceID  string  `json:"source_id"`
+	CreatedAt string  `json:"created_at"`
+	Label     string  `json:"label"`
+	Content   string  `json:"content"`
 }
 
 // ListKnowledge returns all knowledge bases.
@@ -87,14 +91,40 @@ func (c *Client) ListKnowledge(ctx context.Context) ([]KnowledgeBase, error) {
 	return bases, nil
 }
 
-// CreateKnowledge creates a knowledge base by name.
-func (c *Client) CreateKnowledge(ctx context.Context, name string) (*KnowledgeBase, error) {
+// CreateKnowledge creates a knowledge base by name. defaultLabel optionally
+// sets the base's default knowledge label; empty leaves the convention-derived
+// default in place.
+func (c *Client) CreateKnowledge(ctx context.Context, name, defaultLabel string) (*KnowledgeBase, error) {
 	var kb KnowledgeBase
 	body := map[string]string{"name": name}
+	if defaultLabel != "" {
+		body["default_label"] = defaultLabel
+	}
 	if err := c.Sync(ctx, "POST", "/1.0/knowledge", body, &kb); err != nil {
 		return nil, err
 	}
 	return &kb, nil
+}
+
+// GetKnowledge returns a single knowledge base's detail.
+func (c *Client) GetKnowledge(ctx context.Context, name string) (*KnowledgeBase, error) {
+	var kb KnowledgeBase
+	if err := c.Sync(ctx, "GET", "/1.0/knowledge/"+name, nil, &kb); err != nil {
+		return nil, err
+	}
+	return &kb, nil
+}
+
+// SetKnowledgeLabel sets a base's default knowledge label. When
+// applyToExisting is set the daemon backfills unlabeled chunks and source
+// records as an async operation and the operation URL is returned; otherwise
+// the update is synchronous and the returned URL is empty.
+func (c *Client) SetKnowledgeLabel(ctx context.Context, name, label string, applyToExisting bool) (string, error) {
+	body := map[string]any{"default_label": label, "apply_to_existing": applyToExisting}
+	if applyToExisting {
+		return c.Async(ctx, "PATCH", "/1.0/knowledge/"+name, body)
+	}
+	return "", c.Sync(ctx, "PATCH", "/1.0/knowledge/"+name, body, nil)
 }
 
 // DeleteKnowledge deletes a knowledge base and its sources.
@@ -136,15 +166,19 @@ func (c *Client) Search(ctx context.Context, query string, bases []string, count
 }
 
 // IngestURL starts an ingest operation for a single URL source and returns the
-// operation URL.
-func (c *Client) IngestURL(ctx context.Context, name, sourceID, url string) (string, error) {
+// operation URL. label optionally overrides the base's default knowledge label.
+func (c *Client) IngestURL(ctx context.Context, name, sourceID, url, label string) (string, error) {
 	body := map[string]any{"source_id": sourceID, "url": url}
+	if label != "" {
+		body["label"] = label
+	}
 	return c.Async(ctx, "POST", "/1.0/knowledge/"+name+"/sources", body)
 }
 
 // IngestFile uploads a local file to a knowledge base as a multipart ingest
-// operation and returns the operation URL.
-func (c *Client) IngestFile(ctx context.Context, name, sourceID, path string) (string, error) {
+// operation and returns the operation URL. label optionally overrides the
+// base's default knowledge label.
+func (c *Client) IngestFile(ctx context.Context, name, sourceID, path, label string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("opening file: %w", err)
@@ -155,6 +189,11 @@ func (c *Client) IngestFile(ctx context.Context, name, sourceID, path string) (s
 	mw := multipart.NewWriter(&buf)
 	if sourceID != "" {
 		if err := mw.WriteField("source_id", sourceID); err != nil {
+			return "", err
+		}
+	}
+	if label != "" {
+		if err := mw.WriteField("label", label); err != nil {
 			return "", err
 		}
 	}

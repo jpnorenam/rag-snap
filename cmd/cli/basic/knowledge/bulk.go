@@ -16,6 +16,7 @@ import (
 type Document struct {
 	Content   string `json:"content"`
 	SourceID  string `json:"source_id"`
+	Label     string `json:"label,omitempty"`
 	CreatedAt string `json:"created_at"`
 }
 

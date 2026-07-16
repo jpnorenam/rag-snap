@@ -42,6 +42,12 @@ definitions:
             prompt:
                 type: string
                 x-go-name: Prompt
+            prompt_ref:
+                description: |-
+                    PromptRef names a stored answer_system_prompt variant to run this batch on.
+                    It is mutually exclusive with the inline Prompt.
+                type: string
+                x-go-name: PromptRef
             questions:
                 items:
                     $ref: '#/definitions/batchQuestionRequest'
@@ -87,6 +93,14 @@ definitions:
             model:
                 type: string
                 x-go-name: Model
+            prompt:
+                description: |-
+                    Prompt optionally names a variant of chat_system_prompt to run this session
+                    on (the slot is implied). It overrides the slot's active pointer for this
+                    session only; an unknown variant fails the request. Empty uses the active
+                    selection (or the built-in default).
+                type: string
+                x-go-name: Prompt
             resume:
                 type: string
                 x-go-name: Resume
@@ -98,6 +112,9 @@ definitions:
         x-go-package: github.com/jpnorenam/rag-snap/internal/api
     createKnowledgeRequest:
         properties:
+            default_label:
+                type: string
+                x-go-name: DefaultLabel
             name:
                 type: string
                 x-go-name: Name
@@ -186,6 +203,9 @@ definitions:
                     type: string
                 type: array
                 x-go-name: Extensions
+            label:
+                type: string
+                x-go-name: Label
             path:
                 type: string
                 x-go-name: Path
@@ -216,6 +236,9 @@ definitions:
             force:
                 type: boolean
                 x-go-name: Force
+            label:
+                type: string
+                x-go-name: Label
             source_id:
                 type: string
                 x-go-name: SourceID
@@ -572,6 +595,28 @@ paths:
                 "500":
                     $ref: '#/responses/errorResponse'
             summary: Return knowledge base detail.
+            tags:
+                - knowledge
+        patch:
+            description: |-
+                Stores the default label. With apply_to_existing, unlabeled chunks and
+                source records are backfilled as an async operation (explicit per-source
+                labels are never overwritten); otherwise the update is synchronous.
+            operationId: knowledgePatch
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Set a knowledge base's default label.
             tags:
                 - knowledge
     /1.0/knowledge/{name}/export:
@@ -972,24 +1017,26 @@ paths:
     /1.0/prompts:
         get:
             description: |-
-                Returns the three RAG prompt templates in the order the CLI presents them,
-                each with its effective value, its built-in default, and whether an override
-                is stored. Chat sessions and batch runs started by the daemon are seeded from
-                these values.
+                Returns the three RAG prompt slots in the order the CLI presents them, each
+                with its effective value, its built-in default, and whether an override is
+                active. Generation slots additionally carry the active variant name and the
+                list of stored variant names. Chat sessions and batch runs started by the
+                daemon are seeded from these values.
             operationId: promptsList
             responses:
                 "200":
                     $ref: '#/responses/syncResponse'
                 "403":
                     $ref: '#/responses/errorResponse'
-            summary: List the prompt templates.
+            summary: List the prompt slots.
             tags:
                 - prompts
     /1.0/prompts/{name}:
         delete:
             description: |-
-                Drops the stored override so the prompt resolves to the built-in default of
-                the running release. Resetting an uncustomized prompt succeeds as a no-op.
+                Returns the slot to the built-in default of the running release: a generation
+                slot's active pointer is cleared (stored variants preserved); the source_rules
+                override is cleared. Resetting an uncustomized slot succeeds as a no-op.
             operationId: promptReset
             responses:
                 "200":
@@ -1000,7 +1047,7 @@ paths:
                     $ref: '#/responses/errorResponse'
                 "500":
                     $ref: '#/responses/errorResponse'
-            summary: Reset a prompt template to its default.
+            summary: Reset a prompt slot to its default.
             tags:
                 - prompts
         get:
@@ -1012,15 +1059,17 @@ paths:
                     $ref: '#/responses/errorResponse'
                 "404":
                     $ref: '#/responses/errorResponse'
-            summary: Return one prompt template.
+            summary: Return one prompt slot.
             tags:
                 - prompts
         put:
             description: |-
-                Stores an override for the named prompt. An empty value is rejected — reset a
-                prompt to its default with DELETE, so clearing an editor can never silently
-                discard a customization. A value equal to the built-in default clears the
-                override rather than storing a copy of it.
+                Writes the value through the slot's current selection: a new version on the
+                active variant, or — when the built-in default is active on a generation slot
+                — a `custom` variant that is created and activated. An empty value is rejected
+                — reset a slot to its default with DELETE. A value equal to the built-in
+                default clears the legacy `custom` variant (or the source_rules override)
+                rather than storing a copy.
             operationId: promptUpdate
             responses:
                 "200":
@@ -1033,7 +1082,146 @@ paths:
                     $ref: '#/responses/errorResponse'
                 "500":
                     $ref: '#/responses/errorResponse'
-            summary: Customize a prompt template.
+            summary: Customize a prompt slot.
+            tags:
+                - prompts
+    /1.0/prompts/{slot}:
+        patch:
+            description: |-
+                Points the slot's active pointer at a stored variant, or at the built-in
+                default when the value is empty. Activating an unknown variant is a not-found.
+            operationId: slotActivate
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Activate a variant on a slot.
+            tags:
+                - prompts
+    /1.0/prompts/{slot}/variants:
+        get:
+            operationId: variantsList
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+            summary: List a generation slot's variants.
+            tags:
+                - prompts
+        post:
+            description: |-
+                Stores a new variant from an initial value. The name must match
+                `^[a-z0-9][a-z0-9-]{0,63}$` and must not be the reserved name `default`. A
+                name already in use is a conflict. The variant is not activated.
+            operationId: variantCreate
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "409":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Create a variant.
+            tags:
+                - prompts
+    /1.0/prompts/{slot}/variants/{name}:
+        delete:
+            description: |-
+                Removes the variant and its history. The active variant cannot be deleted —
+                activate another selection first.
+            operationId: variantDelete
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "409":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Delete a variant.
+            tags:
+                - prompts
+        get:
+            operationId: variantGet
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+            summary: Return one variant's head value.
+            tags:
+                - prompts
+        put:
+            description: |-
+                Appends a new version, creating the variant if absent. A value byte-identical
+                to the head is a no-op. An empty value is rejected.
+            operationId: variantUpdate
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Save a new version of a variant.
+            tags:
+                - prompts
+    /1.0/prompts/{slot}/variants/{name}/restore:
+        post:
+            description: |-
+                Appends a new head version carrying the named version's content. Restoring the
+                current head is a no-op; an unknown version is a not-found.
+            operationId: variantRestore
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Restore an earlier version.
+            tags:
+                - prompts
+    /1.0/prompts/{slot}/variants/{name}/versions:
+        get:
+            operationId: variantVersions
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "404":
+                    $ref: '#/responses/errorResponse'
+            summary: List a variant's version history.
             tags:
                 - prompts
     /1.0/search:

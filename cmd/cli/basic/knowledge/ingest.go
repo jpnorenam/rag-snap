@@ -30,6 +30,9 @@ type IngestOptions struct {
 	MetadataPath string
 	// TargetIndex is the full index name of the destination knowledge base.
 	TargetIndex string
+	// Label is the explicit label for this source. When empty, the base's
+	// default label applies (stored _meta default, or the naming convention).
+	Label string
 	// Force replaces an existing source: its chunks are removed before
 	// re-indexing so a re-ingest does not append duplicate chunks.
 	Force bool
@@ -54,6 +57,23 @@ func (c *OpenSearchClient) IngestSource(ctx context.Context, tikaURL string, opt
 	metadataPath := opts.MetadataPath
 	if metadataPath == "" {
 		metadataPath = opts.FilePath
+	}
+
+	// Resolve the source's label: explicit > base default > naming convention.
+	label := opts.Label
+	if label == "" {
+		var err error
+		if label, _, err = c.GetDefaultLabel(ctx, opts.TargetIndex); err != nil {
+			return fmt.Errorf("resolving base default label: %w", err)
+		}
+	}
+	if err := ValidateLabel(label); err != nil {
+		return err
+	}
+	// Indexes created before labels existed lack the keyword mapping; without
+	// it, dynamic mapping would type the field wrong on first write.
+	if err := c.EnsureLabelMapping(ctx, opts.TargetIndex); err != nil {
+		return fmt.Errorf("ensuring label mapping: %w", err)
 	}
 
 	// Forced re-ingest of an existing source: remove its old chunks first so the
@@ -82,6 +102,7 @@ func (c *OpenSearchClient) IngestSource(ctx context.Context, tikaURL string, opt
 		ChunkSize:     processing.DefaultChunkSize,
 		ChunkOverlap:  processing.DefaultChunkOverlap,
 		ContentLength: result.ContentLength,
+		Label:         label,
 		Status:        StatusProcessing,
 		IngestedAt:    now,
 		UpdatedAt:     now,
@@ -98,7 +119,7 @@ func (c *OpenSearchClient) IngestSource(ctx context.Context, tikaURL string, opt
 
 	docs := make([]Document, len(result.Chunks))
 	for i, chunk := range result.Chunks {
-		docs[i] = Document{Content: chunk.Content, SourceID: chunk.SourceID, CreatedAt: chunk.CreatedAt}
+		docs[i] = Document{Content: chunk.Content, SourceID: chunk.SourceID, Label: label, CreatedAt: chunk.CreatedAt}
 	}
 
 	indexResult, err := c.BulkIndex(ctx, opts.TargetIndex, docs)

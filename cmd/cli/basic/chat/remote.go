@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/chzyer/readline"
 	"github.com/fatih/color"
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/internal/apiclient"
 )
@@ -329,7 +330,7 @@ func formatRemoteSearchResults(hits []apiclient.SearchHit) string {
 			b.WriteString("\n")
 		}
 
-		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", i+1, hit.Score, hit.Base, remoteProvenanceLabel(hit.Provenance))
+		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", i+1, hit.Score, hit.Base, knowledge.LabelTag(hit.Label))
 		fmt.Fprintln(&b, color.New(color.Bold).Sprint(header))
 		fmt.Fprintf(&b, "    source: %s   created: %s\n", hit.SourceID, hit.CreatedAt)
 		fmt.Fprintln(&b, color.HiBlackString("    "+strings.Repeat("─", 56)))
@@ -337,15 +338,6 @@ func formatRemoteSearchResults(hits []apiclient.SearchHit) string {
 		b.WriteString("\n")
 	}
 	return b.String()
-}
-
-// remoteProvenanceLabel maps the daemon's lowercase provenance tag to the same
-// bracketed label the direct REPL prints via sourceLabel.
-func remoteProvenanceLabel(provenance string) string {
-	if strings.EqualFold(provenance, "upstream") {
-		return "[UPSTREAM]"
-	}
-	return "[CANONICAL]"
 }
 
 // remotePromptTurn sends one prompt and renders streamed frames until the

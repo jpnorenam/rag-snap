@@ -315,7 +315,7 @@ export default function SearchScreen() {
                   className="search-result__footer p-text--small u-text--muted"
                   title={r.created_at}
                 >
-                  Source: {r.source_id} · {r.provenance}
+                  Source: {r.source_id} · {r.label}
                 </p>
               </li>
             ))}

@@ -7,7 +7,7 @@ export interface SearchResult {
   base: string;
   source_id: string;
   created_at: string;
-  provenance: string;
+  label: string;
   content: string;
 }
 
