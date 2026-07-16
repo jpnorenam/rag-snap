@@ -2,55 +2,19 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { NAV_ITEMS, STATUS_ITEM, normalizePath, type IconName, type NavItem } from "@/lib/nav";
 
 // Sidebar is the Canonical-style dark navigation rail. Sections that have
 // shipped render as real next/link routes with an active state; sections still
 // to land render as non-focusable placeholders with a "Soon" badge (foundation
 // §9: non-navigable items are never links or buttons). The dark-mode toggle
-// lives in the footer, and Status is pinned just above it.
-
-type IconName = "chat" | "prompt" | "knowledge" | "search" | "rfp" | "status" | "docs";
+// lives in the footer, and Status is pinned just above it. The nav model
+// (NAV_ITEMS/STATUS_ITEM) lives in @/lib/nav so the operations indicator can
+// resolve a section's label from the same source.
 
 // External documentation for the snap, opened in a new tab from the footer
 // (mirroring lxd-ui's bottom-of-rail Documentation link).
 const DOCS_URL = "https://github.com/jpnorenam/rag-snap/tree/main/docs";
-
-interface NavItem {
-  id: string;
-  label: string;
-  icon: IconName;
-  href: string;
-  // enabled sections are links; the rest stay "Soon" placeholders until their
-  // change lands.
-  enabled?: boolean;
-}
-
-// Primary navigation, top → bottom (docs/ux/01-app-shell.md). Only Chat is a
-// live route today; flip `enabled` on as each section's change ships.
-const NAV_ITEMS: NavItem[] = [
-  { id: "chat", label: "Chat", icon: "chat", href: "/", enabled: true },
-  { id: "knowledge", label: "Knowledge bases", icon: "knowledge", href: "/knowledge/", enabled: true },
-  { id: "search", label: "Search", icon: "search", href: "/search/", enabled: true },
-  { id: "answer", label: "Answer RFPs", icon: "rfp", href: "/answer/" },
-  { id: "prompts", label: "Prompts", icon: "prompt", href: "/prompts/", enabled: true },
-];
-
-// Status is a utility entry pinned to the bottom of the rail (above the toggle).
-const STATUS_ITEM: NavItem = {
-  id: "status",
-  label: "Status",
-  icon: "status",
-  href: "/status/",
-  enabled: true,
-};
-
-// normalizePath strips a trailing slash (but keeps root "/") so paths from
-// usePathname() compare equal regardless of the export's trailing-slash style.
-// basePath ("/ui") is already excluded from usePathname() values.
-function normalizePath(path: string): string {
-  if (path.length > 1 && path.endsWith("/")) return path.slice(0, -1);
-  return path;
-}
 
 interface Props {
   darkMode: boolean;

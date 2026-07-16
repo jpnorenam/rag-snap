@@ -39,6 +39,23 @@ export default function OperationsProvider({ children }: { children: React.React
   // Refs read inside async callbacks/timers (see foundation §4).
   const opsRef = useRef<OperationView[]>([]);
   const dismissedRef = useRef<Set<string>>(new Set());
+  // Originating route per operation id (e.g. "/answer/"), recorded by track().
+  // Kept separate from the daemon-owned OperationView so upsert/seed/poll — which
+  // replace the whole view on every update — cannot lose it. In-memory only:
+  // operations adopted from the daemon after a reload have no entry here and
+  // render non-clickable, which is the intended graceful degradation.
+  const routesRef = useRef<Map<string, string>>(new Map());
+  // Client-side lifecycle side-maps, same rationale as routesRef (the daemon
+  // owns and overwrites the OperationView, so this state lives outside it):
+  //   consumed — results handled elsewhere (exported / collaborated with ACK)
+  //   exited   — user explicitly dismissed the completed review surface
+  // Both remove the row from the indicator and stop the Answer screen from
+  // auto-resuming the operation. A bump counter forces a re-render (and thus a
+  // re-filter of the exposed list) when either set changes, since Sets are
+  // mutated in place.
+  const consumedRef = useRef<Set<string>>(new Set());
+  const exitedRef = useRef<Set<string>>(new Set());
+  const [lifecycleBump, setLifecycleBump] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
   const backoffRef = useRef<number>(BACKOFF_MIN_MS);
   const reconnectRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -177,7 +194,15 @@ export default function OperationsProvider({ children }: { children: React.React
     return () => clearInterval(timer);
   }, [upsert]);
 
-  const track = useCallback((op: OperationView) => upsert(op), [upsert]);
+  const track = useCallback(
+    (op: OperationView, route?: string) => {
+      if (route) routesRef.current.set(op.id, route);
+      upsert(op);
+    },
+    [upsert]
+  );
+
+  const routeOf = useCallback((id: string) => routesRef.current.get(id), []);
 
   const cancel = useCallback(
     async (id: string) => {
@@ -189,14 +214,46 @@ export default function OperationsProvider({ children }: { children: React.React
 
   const dismiss = useCallback((id: string) => {
     dismissedRef.current.add(id);
+    routesRef.current.delete(id);
     setOperations((prev) => prev.filter((o) => o.id !== id));
   }, []);
+
+  // markConsumed / markExited record client-side lifecycle and bump so consumers
+  // re-render; the operation stays in the daemon list but is filtered from the
+  // indicator and no longer auto-resumed.
+  const markConsumed = useCallback((id: string) => {
+    consumedRef.current.add(id);
+    setLifecycleBump((n) => n + 1);
+  }, []);
+
+  const markExited = useCallback((id: string) => {
+    exitedRef.current.add(id);
+    setLifecycleBump((n) => n + 1);
+  }, []);
+
+  const isConsumed = useCallback((id: string) => consumedRef.current.has(id), []);
+  const isExited = useCallback((id: string) => exitedRef.current.has(id), []);
 
   const running = useMemo(() => operations.filter((o) => !isTerminal(o)).length, [operations]);
 
   const value = useMemo<OperationsContextValue>(
-    () => ({ operations, running, seen, track, cancel, dismiss }),
-    [operations, running, seen, track, cancel, dismiss]
+    () => ({
+      operations,
+      running,
+      seen,
+      track,
+      routeOf,
+      cancel,
+      dismiss,
+      markConsumed,
+      markExited,
+      isConsumed,
+      isExited,
+    }),
+    // lifecycleBump changes identity when a consumed/exited mark is added, so
+    // consumers re-read the ref-backed is* predicates and re-filter.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [operations, running, seen, track, routeOf, cancel, dismiss, markConsumed, markExited, isConsumed, isExited, lifecycleBump]
   );
 
   return <OperationsContext.Provider value={value}>{children}</OperationsContext.Provider>;

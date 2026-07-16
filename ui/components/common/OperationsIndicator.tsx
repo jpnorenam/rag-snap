@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
+import Link from "next/link";
 import { ApiError } from "@/lib/api/envelope";
 import { isTerminal, statusOf, type OperationView } from "@/lib/api/operations";
 import { useOperations } from "@/lib/useOperations";
 import { relativeTime } from "@/lib/relativeTime";
+import { sectionLabel } from "@/lib/nav";
 import ConfirmModal from "./ConfirmModal";
 import EmptyState from "./EmptyState";
 
@@ -28,7 +30,14 @@ function progressPercent(metadata: Record<string, unknown>): number | null {
 // toggle showing the running count and an anchored panel listing the session's
 // operations with live status, progress, dismiss, and cancel.
 export default function OperationsIndicator() {
-  const { operations, running, seen, cancel, dismiss } = useOperations();
+  const { operations, seen, routeOf, cancel, dismiss, isConsumed, isExited } = useOperations();
+
+  // Only show operations that still need attention: actively running, or
+  // completed but not yet consumed (exported / collaborated) or exited. A
+  // consumed/exited operation stays in the daemon list but drops out of the
+  // indicator — its results live elsewhere now.
+  const visibleOps = operations.filter((o) => !isConsumed(o.id) && !isExited(o.id));
+  const running = visibleOps.filter((o) => !isTerminal(o)).length;
   const [open, setOpen] = useState(false);
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
@@ -125,7 +134,7 @@ export default function OperationsIndicator() {
       {open && (
         <div className="app-ops-panel" id={panelId} role="group" aria-label="Operations">
           <ul className="app-ops-panel__list" aria-live="polite">
-            {operations.length === 0 && (
+            {visibleOps.length === 0 && (
               <li className="app-ops-panel__empty">
                 <EmptyState
                   headline="No operations yet"
@@ -134,7 +143,7 @@ export default function OperationsIndicator() {
                 />
               </li>
             )}
-            {operations.map((op) => {
+            {visibleOps.map((op) => {
               const status = statusOf(op);
               const dotClass = {
                 running: "is-running",
@@ -145,11 +154,33 @@ export default function OperationsIndicator() {
               const pct = progressPercent(op.metadata);
               const cancellable = status === "running" && op.may_cancel;
               const cancelErr = cancelErrors[op.id];
+              // A route recorded at track() time makes the row a link back to
+              // its originating section. Rows without one (CLI-started, or
+              // adopted from the daemon after a reload) stay plain text
+              // (foundation §9: non-navigable items are never links).
+              const route = routeOf(op.id);
+              const routeLabel = route ? sectionLabel(route) : undefined;
               return (
                 <li key={op.id} className={`app-ops-row app-ops-row--${status}`}>
                   <div className="app-ops-row__main">
                     <span className={`app-status-dot ${dotClass}`} aria-hidden="true" />
-                    <span className="app-ops-row__desc">{op.description}</span>
+                    {route ? (
+                      <Link
+                        href={route}
+                        className="app-ops-row__desc app-ops-row__desc--link"
+                        onClick={close}
+                        aria-label={
+                          routeLabel
+                            ? `${op.description} — go to ${routeLabel}`
+                            : `${op.description} — go to its section`
+                        }
+                        title={routeLabel ? `Go to ${routeLabel}` : "Go to its section"}
+                      >
+                        {op.description}
+                      </Link>
+                    ) : (
+                      <span className="app-ops-row__desc">{op.description}</span>
+                    )}
                     <span
                       className="app-ops-row__time u-text--muted p-text--small"
                       title={new Date(op.created_at).toLocaleString()}

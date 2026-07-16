@@ -636,6 +636,20 @@ $sidebar-accent: #e95420; // Ubuntu orange
   font-size: 0.875rem;
 }
 
+// When the row is a link back to its originating section, keep the resting
+// appearance identical to the plain-text description (inherit theme text color,
+// no underline) and reveal the affordance on hover/focus.
+.app-ops-row__desc--link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    text-decoration: underline;
+  }
+}
+
 .app-ops-row__time {
   flex-shrink: 0;
   white-space: nowrap;
