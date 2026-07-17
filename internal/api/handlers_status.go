@@ -215,6 +215,24 @@ func (s *Server) probeInference() serviceStatus {
 
 	name, err := chat.FindModelName(status.Endpoint)
 	if err != nil {
+		// Some OpenAI-compatible backends (notably AWS Bedrock) don't implement
+		// GET /models: it 404s while /chat/completions works. That is a reachable
+		// server, not a down one, so health is taken from the explicitly
+		// configured chat.model — the same value the daemon's chat and answer
+		// paths use when /models is unavailable. With no model configured we can't
+		// name one, so we surface actionable guidance rather than a bare 404.
+		if chat.ModelListingUnsupported(err) {
+			if model, _ := config.GetString(s.ctx.Config, confChatModel); model != "" {
+				status.State = serviceRunning
+				status.LLMModel = model
+				return status
+			}
+			status.State = serviceUnreachable
+			status.Error = fmt.Sprintf(
+				"inference server has no model-listing endpoint; set the model name with `sudo rag-cli.rag set --package %s=<model>` (e.g. a Bedrock model id)",
+				confChatModel)
+			return status
+		}
 		status.State = serviceUnreachable
 		status.Error = err.Error()
 		return status
