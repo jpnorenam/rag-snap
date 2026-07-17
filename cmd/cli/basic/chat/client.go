@@ -32,6 +32,22 @@ func clientOptions(baseURL string) []option.RequestOption {
 	return opts
 }
 
+// ModelListingUnsupported reports whether err is the inference server rejecting
+// the GET /models probe because it does not implement model listing (HTTP 404 or
+// 405) — as opposed to being unreachable, refusing auth, or erroring internally.
+// AWS Bedrock's OpenAI-compatible endpoint is the motivating case: it serves
+// /openai/v1/chat/completions but has no /openai/v1/models route, so its health
+// cannot be derived from the model listing and a model name must be configured
+// explicitly (chat.model). A 401/403/5xx is a real fault and returns false.
+func ModelListingUnsupported(err error) bool {
+	var apiErr *openai.Error
+	if errors.As(err, &apiErr) {
+		return apiErr.StatusCode == http.StatusNotFound ||
+			apiErr.StatusCode == http.StatusMethodNotAllowed
+	}
+	return false
+}
+
 // FindModelName queries the OpenAI-compatible API for available models
 // and returns the first model name. Returns an error if the server is
 // unreachable or returns no models.
