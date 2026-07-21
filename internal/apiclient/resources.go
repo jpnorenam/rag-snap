@@ -227,6 +227,38 @@ func (c *Client) EngineInit(ctx context.Context) (string, error) {
 	return c.Async(ctx, "POST", "/1.0/knowledge-engine", nil)
 }
 
+// EngineModel is the client view of a model registered in the engine's model
+// group, from GET /1.0/knowledge-engine/models.
+type EngineModel struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	State       string `json:"state"`
+	SizeBytes   int64  `json:"size_bytes"`
+	WorkerNodes int    `json:"worker_nodes"`
+	Role        string `json:"role"`
+}
+
+// ListEngineModels returns the engine's registered models with their deployment
+// state and engine role.
+func (c *Client) ListEngineModels(ctx context.Context) ([]EngineModel, error) {
+	var models []EngineModel
+	if err := c.Sync(ctx, "GET", "/1.0/knowledge-engine/models", nil, &models); err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// DeleteEngineModel undeploys and deletes a model. force removes a model the
+// engine currently uses.
+func (c *Client) DeleteEngineModel(ctx context.Context, id string, force bool) error {
+	path := "/1.0/knowledge-engine/models/" + id
+	if force {
+		path += "?force=true"
+	}
+	return c.Sync(ctx, "DELETE", path, nil, nil)
+}
+
 // Export starts an export operation for a knowledge base and returns the
 // operation URL.
 func (c *Client) Export(ctx context.Context, name, outputDir string, compress bool) (string, error) {

@@ -323,6 +323,8 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	// Search and engine init.
 	mux.HandleFunc("POST /1.0/search", s.requireAuth(s.handleSearch))
 	mux.HandleFunc("POST /1.0/knowledge-engine", s.requireAuth(s.handleEngineInit))
+	mux.HandleFunc("GET /1.0/knowledge-engine/models", s.requireAuth(s.handleEngineModelsList))
+	mux.HandleFunc("DELETE /1.0/knowledge-engine/models/{id}", s.requireAuth(s.handleEngineModelDelete))
 
 	// Chat (interactive websocket session).
 	mux.HandleFunc("POST /1.0/chat", s.requireAuth(s.handleChatStart))

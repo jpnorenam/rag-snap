@@ -606,6 +606,43 @@ paths:
             summary: Initialize the knowledge engine.
             tags:
                 - knowledge
+    /1.0/knowledge-engine/models:
+        get:
+            description: |-
+                Returns every model registered in the snap's model group with its deployment
+                state, size, and worker-node count, plus the engine role it serves
+                ("embedding", "rerank", or none). Models with no role are not referenced by the
+                engine and are what a prune reclaims.
+            operationId: engineModelsList
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: List the engine's registered models.
+            tags:
+                - knowledge
+    /1.0/knowledge-engine/models/{id}:
+        delete:
+            description: |-
+                Frees the model's memory on the ML nodes and removes it. A model the engine
+                currently uses is refused unless "force=true" is given, since removing it
+                breaks ingest and search until the engine is initialized again.
+            operationId: engineModelDelete
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Undeploy and delete a model.
+            tags:
+                - knowledge
     /1.0/knowledge/{name}:
         delete:
             description: |-

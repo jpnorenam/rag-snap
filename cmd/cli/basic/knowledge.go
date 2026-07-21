@@ -62,6 +62,7 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 
 	cobraCmd.AddCommand(
 		cmd.initCommand(),
+		cmd.modelsCommand(),
 		cmd.listCommand(),
 		cmd.createCommand(),
 		cmd.labelCommand(),
@@ -78,22 +79,19 @@ func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 }
 
 func (cmd *knowledgeCommand) initCommand() *cobra.Command {
-	var sentenceTransformer string
-	var crossEncoder string
-
+	// The models are fixed (see knowledge.DefaultSentenceTransformerName and
+	// DefaultCrossEncoderName). This command used to advertise
+	// --sentence-transformer/--cross-encoder flags that were printed and then
+	// ignored; selecting a model is only safe once switching one prunes the
+	// previous deployment, so the flags are gone rather than misleading.
 	cobraCmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize the knowledge base pipelines and index template",
-		Long:  "Create and initialize an OpenSearch pipelines and index template for storing knowledge base documents.",
-		Args:  cobra.NoArgs,
+		Long: "Create and initialize an OpenSearch pipelines and index template for storing knowledge base documents.\n" +
+			"Re-running is safe: existing models are reused and the pipelines are rewired to them.\n" +
+			"Use 'knowledge models' to see what is registered and deployed.",
+		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if sentenceTransformer != "" {
-				fmt.Printf("  Sentence transformer model: %s\n", sentenceTransformer)
-			}
-			if crossEncoder != "" {
-				fmt.Printf("  Cross-encoder model: %s\n", crossEncoder)
-			}
-
 			if dc := daemonClient(cmd.Context); dc != nil {
 				opURL, err := dc.EngineInit(context.Background())
 				if err != nil {
@@ -125,9 +123,6 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 			return client.InitPipelines(context.Background(), hooks)
 		},
 	}
-
-	cobraCmd.Flags().StringVarP(&sentenceTransformer, "sentence-transformer", "s", "", "Sentence transformer model name")
-	cobraCmd.Flags().StringVarP(&crossEncoder, "cross-encoder", "c", "", "Cross-encoder model name")
 
 	return cobraCmd
 }

@@ -22,6 +22,9 @@ using any `knowledge` sub-command.
 | Command | Description |
 |---|---|
 | `knowledge init` | Create ingest/search pipelines and the shared index template |
+| `knowledge models` | List the engine's registered models, their state and memory use |
+| `knowledge models prune` | Undeploy and delete models the engine no longer uses |
+| `knowledge models remove <id>` | Undeploy and delete one model |
 | `knowledge list` | List knowledge bases (indexes) |
 | `knowledge list --sources` | List ingested source documents |
 | `knowledge create <name>` | Create a new knowledge base |
@@ -60,13 +63,12 @@ Registers the ML models and creates the ingest and search pipelines that every k
 relies on. Run this **once** after the snap is installed or after OpenSearch is reset.
 
 ```
-rag-cli.rag knowledge init [--sentence-transformer <model>] [--cross-encoder <model>]
+rag-cli.rag knowledge init
 ```
 
-| Flag | Short | Default | Description |
-|---|---|---|---|
-| `--sentence-transformer` | `-s` | _(cluster default)_ | Sentence transformer model name |
-| `--cross-encoder` | `-c` | _(cluster default)_ | Cross-encoder re-ranking model name |
+The embedding and re-ranking models are fixed. Re-running is safe: an already-registered model is
+reused (nothing is re-downloaded or deployed twice) and the pipelines are rewired to it — which is
+how you recover after OpenSearch is reset. See `knowledge models` to check what is deployed.
 
 **Example**
 
@@ -87,6 +89,50 @@ Rerank model ID: el3sX58Bao98vwZuduqL
 
 Without the daemon (or if the daemon could not write the configuration), it prints the command to
 run instead: `sudo rag-cli.rag set --package knowledge.model.embedding="<id>"`.
+
+---
+
+### `knowledge models`
+
+List the models registered in the engine's model group, with their deployment state, size, and the
+role they serve.
+
+```
+rag-cli.rag knowledge models
+rag-cli.rag knowledge models prune [--yes]
+rag-cli.rag knowledge models remove <model_id> [--force]
+```
+
+A **deployed** model is held in memory on every ML worker node whether or not the engine still
+refers to it, and nothing removes one implicitly. Strays appear when an init is interrupted and
+re-run inside the model index's refresh window, when two inits run at once, or when the model
+version the engine targets changes — `init` reuses only an exact name-and-version match, so the
+previous model is left deployed.
+
+| Flag | Short | Default | Description |
+|---|---|---|---|
+| `--yes` (prune) | `-y` | `false` | Skip the confirmation prompt |
+| `--force` (remove) | `-f` | `false` | Remove a model the engine currently uses |
+
+`prune` removes every model no configuration key points at; the embedding and rerank models in use
+are never touched. `remove` refuses an in-use model unless `--force` is given — after that, ingest
+and search fail until `knowledge init` runs again.
+
+**Example**
+
+```bash
+rag-cli.rag knowledge models
+```
+
+```
+MODEL ID                 NAME                                                 VERSION    STATE      SIZE       IN USE
+d13rX58Bao98vwZu4-qa     huggingface/sentence-transformers/msmarco-distil…     1.0.2      DEPLOYED   253.6 MB   embedding
+el3sX58Bao98vwZuduqL     huggingface/cross-encoders/ms-marco-MiniLM-L-12-v2    1.0.2      DEPLOYED   127.2 MB   rerank
+csgcXJ8BFkzJBtapkxyO     huggingface/sentence-transformers/msmarco-distil…     1.0.2      DEPLOYED   253.6 MB   -
+
+1 unused model(s) are deployed, holding about 253.6 MB per worker node.
+Run 'knowledge models prune' to undeploy and delete them.
+```
 
 ---
 

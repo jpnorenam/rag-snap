@@ -13,6 +13,7 @@ import (
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/processing"
+	"github.com/jpnorenam/rag-snap/cmd/cli/config"
 	"github.com/jpnorenam/rag-snap/pkg/storage"
 )
 
@@ -103,6 +104,81 @@ func (s *Server) handleEngineInit(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	respondAsync(w, op.url(), op.view())
+}
+
+// swagger:route GET /1.0/knowledge-engine/models knowledge engineModelsList
+//
+// List the engine's registered models.
+//
+// Returns every model registered in the snap's model group with its deployment
+// state, size, and worker-node count, plus the engine role it serves
+// ("embedding", "rerank", or none). Models with no role are not referenced by the
+// engine and are what a prune reclaims.
+//
+//	Responses:
+//	  200: syncResponse
+//	  403: errorResponse
+//	  500: errorResponse
+func (s *Server) handleEngineModelsList(w http.ResponseWriter, r *http.Request) {
+	client, err := s.clients.openSearchClient()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	embedding, _ := config.GetString(s.ctx.Config, knowledge.ConfEmbeddingModelID)
+	rerank, _ := config.GetString(s.ctx.Config, knowledge.ConfRerankModelID)
+
+	models, err := client.ListModels(r.Context(), embedding, rerank)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if models == nil {
+		models = []knowledge.ModelInfo{}
+	}
+
+	respondSync(w, models)
+}
+
+// swagger:route DELETE /1.0/knowledge-engine/models/{id} knowledge engineModelDelete
+//
+// Undeploy and delete a model.
+//
+// Frees the model's memory on the ML nodes and removes it. A model the engine
+// currently uses is refused unless "force=true" is given, since removing it
+// breaks ingest and search until the engine is initialized again.
+//
+//	Responses:
+//	  200: syncResponse
+//	  400: errorResponse
+//	  403: errorResponse
+//	  500: errorResponse
+func (s *Server) handleEngineModelDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+
+	client, err := s.clients.openSearchClient()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	embedding, _ := config.GetString(s.ctx.Config, knowledge.ConfEmbeddingModelID)
+	rerank, _ := config.GetString(s.ctx.Config, knowledge.ConfRerankModelID)
+
+	if role := knowledge.ModelRole(id, embedding, rerank); role != "" && r.URL.Query().Get("force") != "true" {
+		respondError(w, http.StatusBadRequest,
+			fmt.Sprintf("model %s is the engine's %s model; pass force=true to remove it anyway", id, role))
+		return
+	}
+
+	if err := client.DeleteModel(r.Context(), id); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	log.Printf("knowledge engine: deleted model %s", id)
+	respondSync(w, map[string]string{"id": id})
 }
 
 // exportRequest is the body of POST /1.0/knowledge/{name}/export.
