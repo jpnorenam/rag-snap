@@ -309,6 +309,8 @@ websocket URL to dial for streamed tokens and `<think>` blocks.
 | `POST /1.0/knowledge/{name}/export` | async | Export a base |
 | `POST /1.0/knowledge/import` | async | Import a base |
 | `POST /1.0/knowledge-engine` | async | Initialise models/pipelines/indexes |
+| `GET /1.0/knowledge-engine/models` | sync | List registered models with state, size, and role |
+| `DELETE /1.0/knowledge-engine/models/{id}` | sync | Undeploy and delete a model (`?force=true` if in use) |
 | `POST /1.0/search` | sync | Hybrid search |
 | `POST /1.0/chat` | async (ws) | Start an interactive chat session |
 | `POST /1.0/answer/batch` | async | Run a prepared batch manifest |
