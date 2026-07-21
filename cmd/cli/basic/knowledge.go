@@ -11,6 +11,7 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/processing"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
+	"github.com/jpnorenam/rag-snap/internal/apiclient"
 	"github.com/spf13/cobra"
 )
 
@@ -98,17 +99,11 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				op, err := waitWithProgress(dc, opURL, "Initializing knowledge engine", "", "")
-				if err != nil {
-					return err
-				}
-				if embedding := op.MetadataString("embedding_model_id"); embedding != "" {
-					fmt.Printf("Embedding model ID: %s\n", embedding)
-				}
-				if rerank := op.MetadataString("rerank_model_id"); rerank != "" {
-					fmt.Printf("Rerank model ID: %s\n", rerank)
-				}
-				return nil
+				op, waitErr := waitWithProgress(dc, opURL, "Initializing knowledge engine", "", "")
+				// Report before returning waitErr: an init that fails late still
+				// resolved the model IDs, and they are what the operator needs.
+				cmd.printEngineInitResult(op)
+				return waitErr
 			}
 
 			client, err := cmd.opensearchClient()
@@ -116,7 +111,18 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 				return err
 			}
 
-			return client.InitPipelines(context.Background())
+			// Direct mode has no daemon to write the config, so print the command
+			// that does it, as each ID is resolved.
+			hooks := knowledge.InitHooks{
+				OnEmbeddingModel: func(id string) {
+					printModelID("Embedding", knowledge.ConfEmbeddingModelID, id, false)
+				},
+				OnRerankModel: func(id string) {
+					printModelID("Rerank", knowledge.ConfRerankModelID, id, false)
+				},
+			}
+
+			return client.InitPipelines(context.Background(), hooks)
 		},
 	}
 
@@ -124,6 +130,65 @@ func (cmd *knowledgeCommand) initCommand() *cobra.Command {
 	cobraCmd.Flags().StringVarP(&crossEncoder, "cross-encoder", "c", "", "Cross-encoder model name")
 
 	return cobraCmd
+}
+
+// Operation metadata keys the daemon reports a knowledge-engine init under. They
+// mirror internal/api's constants, kept here so the CLI does not depend on the
+// server package.
+const (
+	metaEmbeddingModelID = "embedding_model_id"
+	metaRerankModelID    = "rerank_model_id"
+	metaPersistedSuffix  = "_persisted"
+)
+
+// printModelID reports a model ID resolved by init, telling the operator either
+// that the configuration is already done or how to do it. Silence here is what
+// made a daemon-mode init look like it had produced nothing.
+func printModelID(label, confKey, id string, persisted bool) {
+	fmt.Printf("%s model ID: %s\n", label, id)
+	if persisted {
+		fmt.Printf("  Saved to the package configuration (%s).\n", confKey)
+		return
+	}
+	fmt.Printf("  %s\n", common.SuggestSetModelID(confKey, id))
+}
+
+// printEngineInitResult reports the model IDs of a daemon-driven init. It prefers
+// the operation metadata, falls back to the configuration (the daemon may have
+// persisted an ID it then failed to report), and says so plainly when it has
+// neither — the operator must never be left guessing whether init produced models.
+func (cmd *knowledgeCommand) printEngineInitResult(op *apiclient.Operation) {
+	models := []struct {
+		label   string
+		confKey string
+		metaKey string
+	}{
+		{"Embedding", knowledge.ConfEmbeddingModelID, metaEmbeddingModelID},
+		{"Rerank", knowledge.ConfRerankModelID, metaRerankModelID},
+	}
+
+	for _, m := range models {
+		var id string
+		var persisted bool
+		if op != nil {
+			id = op.MetadataString(m.metaKey)
+			persisted = op.MetadataBool(m.metaKey + metaPersistedSuffix)
+		}
+
+		if id == "" {
+			// Nothing reported: an already-configured value is still the truth
+			// about what the engine will use, so show it rather than nothing.
+			if configured, err := getConfigString(cmd.Context, m.confKey); err == nil && configured != "" {
+				fmt.Printf("%s model ID: %s (from the existing configuration; init reported none)\n", m.label, configured)
+				continue
+			}
+			fmt.Printf("%s model ID: unknown — the daemon reported none.\n", m.label)
+			fmt.Printf("  %s\n", common.SuggestServerLogs())
+			continue
+		}
+
+		printModelID(m.label, m.confKey, id, persisted)
+	}
 }
 
 func (cmd *knowledgeCommand) listCommand() *cobra.Command {

@@ -58,10 +58,18 @@ type headerTransport struct {
 	transport http.RoundTripper
 }
 
+// InitHooks receives facts Init resolves early, so a caller can surface them
+// before the later steps run — and before they can fail. The model IDs are known
+// a third of the way into Init but are useless to an operator who only learns
+// them if every remaining step succeeds. Individual fields may be nil.
+type InitHooks struct {
+	OnEmbeddingModel func(id string)
+	OnRerankModel    func(id string)
+}
+
 // InitPipelines initializes OpenSearch pipelines, models, indexes, and templates.
-// InitPipelines initializes OpenSearch pipelines, models, indexes, and templates.
-func (c *OpenSearchClient) InitPipelines(ctx context.Context) error {
-	if err := c.Init(ctx); err != nil {
+func (c *OpenSearchClient) InitPipelines(ctx context.Context, hooks InitHooks) error {
+	if err := c.Init(ctx, hooks); err != nil {
 		return fmt.Errorf("error initializing OpenSearch client: %w", err)
 	}
 	return nil
@@ -150,8 +158,9 @@ func withProgress(message string, fn func() error) error {
 
 // Init initializes the OpenSearch client by setting up models and pipelines.
 // It creates or retrieves the model group, deploys models, and creates pipelines.
-// The resolved model IDs are persisted to the snap config via cfg.
-func (c *OpenSearchClient) Init(ctx context.Context) error {
+// Resolved model IDs are reported through hooks as soon as they are known; what
+// the caller does with them (print, persist) is its own concern.
+func (c *OpenSearchClient) Init(ctx context.Context, hooks InitHooks) error {
 	// Get or create the model group
 	var modelGroupID string
 	if err := withProgress("Creating model group", func() error {
@@ -169,10 +178,14 @@ func (c *OpenSearchClient) Init(ctx context.Context) error {
 			return err
 		}
 		c.embeddingModelID = embeddingModelID
-		fmt.Printf("\n run `sudo rag set --package %s=\"%s\"`\n", ConfEmbeddingModelID, embeddingModelID)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("error setting up embedding model: %w", err)
+	}
+	// Report outside the closure: the spinner is stopped by then, so a hook that
+	// writes to the terminal does not fight it for the line.
+	if hooks.OnEmbeddingModel != nil {
+		hooks.OnEmbeddingModel(c.embeddingModelID)
 	}
 
 	// Register and deploy the cross-encoder for reranking
@@ -182,10 +195,12 @@ func (c *OpenSearchClient) Init(ctx context.Context) error {
 			return err
 		}
 		c.rerankModelID = rerankModelID
-		fmt.Printf("run `sudo rag set --package %s=\"%s\"`\n", ConfRerankModelID, rerankModelID)
 		return nil
 	}); err != nil {
 		return fmt.Errorf("error setting up rerank model: %w", err)
+	}
+	if hooks.OnRerankModel != nil {
+		hooks.OnRerankModel(c.rerankModelID)
 	}
 
 	// Create or update the ingest pipeline

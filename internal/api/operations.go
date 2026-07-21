@@ -121,6 +121,16 @@ func (op *Operation) UpdateMetadata(fields map[string]any) {
 	op.registry.publish(op)
 }
 
+// MetadataString reads a string field from the operation metadata, returning ""
+// when the key is absent or holds another type. Used by running work to check
+// what it has already reported.
+func (op *Operation) MetadataString(key string) string {
+	op.mu.Lock()
+	defer op.mu.Unlock()
+	s, _ := op.metadata[key].(string)
+	return s
+}
+
 // setStatus moves the operation to a new status code, recording an error
 // message for failure, closing the done channel on the first terminal
 // transition, and publishing an event.

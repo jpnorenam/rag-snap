@@ -53,9 +53,14 @@ export interface SourceMetadata {
 }
 
 // EngineInitResult carries the model IDs reported by the engine-init operation.
+// The daemon reports each ID as soon as it resolves it — so they are present on a
+// failed operation too — and flags whether it managed to persist the ID to the
+// package configuration itself.
 export interface EngineInitResult {
   embedding_model_id?: string;
   rerank_model_id?: string;
+  embedding_model_id_persisted?: boolean;
+  rerank_model_id_persisted?: boolean;
 }
 
 // BatchItem is one entry of a batch ingest request (JSON), mirroring the
