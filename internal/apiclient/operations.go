@@ -94,6 +94,17 @@ func (op *Operation) MetadataInt(key string) int {
 	return 0
 }
 
+// MetadataBool reads a boolean field from an operation's metadata. Returns false
+// when absent, which callers treat as "the daemon did not claim this", not as a
+// denial.
+func (op *Operation) MetadataBool(key string) bool {
+	if op.Metadata == nil {
+		return false
+	}
+	b, _ := op.Metadata[key].(bool)
+	return b
+}
+
 // MetadataString reads a string field from an operation's metadata. Returns ""
 // when absent.
 func (op *Operation) MetadataString(key string) string {

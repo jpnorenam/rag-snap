@@ -26,23 +26,38 @@ export default function EngineGate({ notify, onInitialized }: Props) {
     (op: OperationView) => {
       if (op.id !== opId) return;
       setBusy(false);
+
+      const meta = op.metadata as EngineInitResult;
+      const embedding = meta.embedding_model_id ?? "";
+      const rerank = meta.rerank_model_id ?? "";
+      // Only the IDs the daemon could not store itself are the operator's
+      // problem; the rest are already in the package configuration.
+      const unsaved = [
+        embedding && !meta.embedding_model_id_persisted
+          ? `knowledge.model.embedding = ${embedding}`
+          : "",
+        rerank && !meta.rerank_model_id_persisted ? `knowledge.model.rerank = ${rerank}` : "",
+      ].filter(Boolean);
+      const snippet = unsaved.length > 0 ? unsaved.join("\n") : undefined;
+
       if (statusOf(op) === "succeeded") {
-        const meta = op.metadata as EngineInitResult;
-        const embedding = meta.embedding_model_id ?? "";
-        const rerank = meta.rerank_model_id ?? "";
-        const snippet =
-          embedding || rerank
-            ? `knowledge.model.embedding = ${embedding}\nknowledge.model.rerank   = ${rerank}`
-            : undefined;
         notify({
           kind: "positive",
-          message: "Knowledge engine initialized. Embedding and rerank models are ready.",
+          message: snippet
+            ? "Knowledge engine initialized. Set these model IDs in the configuration to finish."
+            : "Knowledge engine initialized. Embedding and rerank models are ready and configured.",
           snippet,
         });
         onInitialized();
-      } else {
-        notify({ kind: "negative", message: op.err || "Engine initialization failed." });
+        return;
       }
+
+      // A late failure still resolved models: report them rather than lose them.
+      notify({
+        kind: "negative",
+        message: op.err || "Engine initialization failed.",
+        snippet,
+      });
     },
     [opId, notify, onInitialized]
   );

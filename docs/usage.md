@@ -74,6 +74,20 @@ rag-cli.rag knowledge init [--sentence-transformer <model>] [--cross-encoder <mo
 rag-cli.rag knowledge init
 ```
 
+It reports the model IDs it resolved as soon as it has them — so a failure in a later step still
+tells you what was registered. When the `ragd` daemon is running it also writes them to the
+package configuration for you:
+
+```
+Embedding model ID: d13rX58Bao98vwZu4-qa
+  Saved to the package configuration (knowledge.model.embedding).
+Rerank model ID: el3sX58Bao98vwZuduqL
+  Saved to the package configuration (knowledge.model.rerank).
+```
+
+Without the daemon (or if the daemon could not write the configuration), it prints the command to
+run instead: `sudo rag-cli.rag set --package knowledge.model.embedding="<id>"`.
+
 ---
 
 ### `knowledge list`

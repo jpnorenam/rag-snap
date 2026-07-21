@@ -196,12 +196,16 @@ sudo sh -c "tr '\0' '\n' < /proc/\$(pgrep -x ragd)/environ" | grep -cE '^(CHAT_A
 rag-cli.rag knowledge init
 ```
 
-This prints embedding/rerank model IDs — set them:
+This prints the embedding and rerank model IDs it resolved. With the `ragd` daemon running, the
+daemon writes them to the package configuration itself and the command says so. Otherwise set them
+yourself, using the IDs printed above:
 
 ```bash
 sudo rag-cli.rag set --package knowledge.model.embedding=<embedding-model-id>
 sudo rag-cli.rag set --package knowledge.model.rerank=<rerank-model-id>
 ```
+
+Check what the engine will use with `rag-cli.rag get knowledge.model`.
 
 ---
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,12 +16,46 @@ import (
 	"github.com/jpnorenam/rag-snap/pkg/storage"
 )
 
+// Operation metadata keys reporting what a knowledge-engine init resolved. The
+// CLI and the browser UI read these; the "_persisted" companion says whether the
+// daemon managed to write the ID to package config, so a client knows whether the
+// operator still has to do it by hand.
+const (
+	metaEmbeddingModelID = "embedding_model_id"
+	metaRerankModelID    = "rerank_model_id"
+	metaPersistedSuffix  = "_persisted"
+)
+
+// recordModelID publishes a resolved model ID to the operation and persists it to
+// package config. Persistence is best-effort and never fails the operation: an
+// operator can always set the key by hand, but losing the ID because a config
+// write failed leaves them with nothing to set.
+func (s *Server) recordModelID(op *Operation, confKey, metaKey, id string) {
+	if id == "" {
+		return
+	}
+
+	persisted := true
+	if err := s.ctx.Config.Set(confKey, id, storage.PackageConfig); err != nil {
+		persisted = false
+		log.Printf("knowledge engine init: could not persist %s=%s: %v", confKey, id, err)
+	} else {
+		log.Printf("knowledge engine init: %s=%s (saved to package config)", confKey, id)
+	}
+
+	op.UpdateMetadata(map[string]any{
+		metaKey:                       id,
+		metaKey + metaPersistedSuffix: persisted,
+	})
+}
+
 // swagger:route POST /1.0/knowledge-engine knowledge engineInit
 //
 // Initialize the knowledge engine.
 //
-// Sets up models, pipelines, and indexes as an async operation. On success the
-// operation metadata reports the resolved model IDs.
+// Sets up models, pipelines, and indexes as an async operation. The operation
+// metadata reports each resolved model ID as soon as it is known — including when
+// a later step fails — along with whether it was persisted to package config.
 //
 //	Responses:
 //	  202: asyncResponse
@@ -37,30 +72,30 @@ func (s *Server) handleEngineInit(w http.ResponseWriter, _ *http.Request) {
 		"Initializing knowledge engine",
 		map[string][]string{"knowledge": {"/1.0/knowledge"}}, false,
 		func(ctx context.Context, op *Operation) error {
-			if err := client.InitPipelines(ctx); err != nil {
-				return err
+			// Record each model ID the moment init resolves it, rather than after
+			// the whole task: the IDs are known a third of the way in, and a
+			// failure in a later step must not leave the caller with nothing to
+			// configure. There is no operator watching the daemon's stdout.
+			hooks := knowledge.InitHooks{
+				OnEmbeddingModel: func(id string) {
+					s.recordModelID(op, knowledge.ConfEmbeddingModelID, metaEmbeddingModelID, id)
+				},
+				OnRerankModel: func(id string) {
+					s.recordModelID(op, knowledge.ConfRerankModelID, metaRerankModelID, id)
+				},
 			}
-			// Take the freshly-resolved model IDs directly from the client and
-			// persist them to package-scoped config so chat/rerank/search work
-			// after a daemon-driven init without a manual `config set`. There is
-			// no operator watching stdout to copy the printed `rag set` hints.
-			embedding := client.EmbeddingModelID()
-			rerank := client.RerankModelID()
-			if embedding != "" {
-				if err := s.ctx.Config.Set(knowledge.ConfEmbeddingModelID, embedding, storage.PackageConfig); err != nil {
-					return fmt.Errorf("persisting embedding model id: %w", err)
-				}
+			initErr := client.InitPipelines(ctx, hooks)
+
+			// Safety net for a hook that never fired (an ID resolved but reported
+			// as empty, or a future init path that skips the hooks): take what the
+			// client holds so the operation still reports the IDs.
+			if op.MetadataString(metaEmbeddingModelID) == "" {
+				s.recordModelID(op, knowledge.ConfEmbeddingModelID, metaEmbeddingModelID, client.EmbeddingModelID())
 			}
-			if rerank != "" {
-				if err := s.ctx.Config.Set(knowledge.ConfRerankModelID, rerank, storage.PackageConfig); err != nil {
-					return fmt.Errorf("persisting rerank model id: %w", err)
-				}
+			if op.MetadataString(metaRerankModelID) == "" {
+				s.recordModelID(op, knowledge.ConfRerankModelID, metaRerankModelID, client.RerankModelID())
 			}
-			op.UpdateMetadata(map[string]any{
-				"embedding_model_id": embedding,
-				"rerank_model_id":    rerank,
-			})
-			return nil
+			return initErr
 		},
 	)
 	if err != nil {

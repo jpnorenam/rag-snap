@@ -592,8 +592,9 @@ paths:
     /1.0/knowledge-engine:
         post:
             description: |-
-                Sets up models, pipelines, and indexes as an async operation. On success the
-                operation metadata reports the resolved model IDs.
+                Sets up models, pipelines, and indexes as an async operation. The operation
+                metadata reports each resolved model ID as soon as it is known — including when
+                a later step fails — along with whether it was persisted to package config.
             operationId: engineInit
             responses:
                 "202":
