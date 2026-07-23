@@ -169,7 +169,7 @@ it directly):
 ```bash
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
 printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\n' \
-  "$YOUR_CHAT_KEY" "$YOUR_OPENSEARCH_USER" "$YOUR_OPENSEARCH_PASSWORD" | \
+  "$CHAT_API_KEY" "$OPENSEARCH_USERNAME" "$OPENSEARCH_PASSWORD" | \
   sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf >/dev/null
 sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
 sudo systemctl daemon-reload
