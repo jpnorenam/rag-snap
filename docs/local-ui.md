@@ -73,6 +73,41 @@ unavailable the indicator silently falls back to polling, so it keeps working wi
 banner as long as the REST API is reachable. This mirrors the CLI, where the same operations are
 driven from commands like `rag-cli.rag k ingest …`.
 
+### Knowledge bases: ingesting sources
+
+The **Knowledge bases** section manages bases and their sources in the browser. Opening a base
+shows its sources; **Ingest document** ingests a single source, with four modes:
+
+- **Upload file** / **From URL** — a document upload or a static page crawl, with a source
+  identifier (prefilled from the filename) and an optional knowledge label.
+- **GitHub repo** / **Gitea repo** — browser parity with the repository job types of
+  `rag-cli.rag k ingest --batch`. Give the repository (`owner/repo` for GitHub, the full URL for
+  Gitea), an optional branch (defaults to the repository's default branch), an optional path
+  prefix (e.g. `docs/`), and the file extensions to include — at least one is required, since a
+  repository ingest only fetches matching files. **Preview files** lists what currently matches
+  (count plus a sample of paths) before you commit to the ingestion; the preview is advisory and
+  re-resolved at ingest time. Each matched file becomes its own source, named by its path within
+  the repository.
+
+Repository access uses the daemon's `GITHUB_TOKEN` / `GITEA_TOKEN` environment variables — the
+UI never asks for or stores tokens. If the daemon lacks the token, preview and ingest fail with
+the exact variable name to set.
+
+**Batch ingest** covers many sources at once, in two modes:
+
+- **Upload manifest** — upload the same YAML manifest `rag-cli.rag k ingest --batch` accepts.
+  Entries are previewed with their type before anything starts; local `file` entries are shown
+  but excluded, since the daemon cannot read paths on your machine — upload those directly
+  instead. **Edit in builder** loads the parsed jobs into the builder.
+- **Build manifest** — compose the manifest visually: add jobs (`url`, `github-repo`,
+  `gitea-repo`), fill their fields with inline validation, and preview each repository job's
+  match count. **Download YAML** saves the manifest in the exact schema the CLI accepts, so a
+  batch built in the browser can be re-run later with `rag-cli.rag k ingest <kb> --batch`;
+  **Start batch** runs the jobs now as a single tracked operation.
+
+Re-running a batch is safe by default: sources already ingested are skipped unless **Force
+re-ingest** is set, which replaces them (the same semantics as the CLI).
+
 ### Prompts
 
 The **Prompts** page is the browser equivalent of `rag-cli.rag prompt init`. It shows the three
@@ -145,7 +180,14 @@ The **Answer RFPs** section is browser parity with the CLI's `answer batch` (and
 - **Run a manifest** — upload a YAML batch manifest (the same format `rag-cli.rag answer batch
   <manifest.yaml>` accepts). The manifest is parsed and previewed in the browser (name, target
   knowledge bases, and the numbered question list) before anything runs; an invalid manifest
-  shows a validation error and is never sent to the daemon. Set a temperature (default `0.1`) and
+  shows a validation error and is never sent to the daemon. When the manifest carries a `domains:`
+  block (see [Domain routing](usage.md#domain-routing)), the preview adds a **Domain routing**
+  summary: each entry's pattern, its context, and how many questions it would apply to — including
+  entries that reach nothing, shown with a count of zero, since a pattern that matches no question
+  is usually the mistake worth catching before a run. Each question in the list is annotated with
+  the pattern it resolves to, or *no domain* where the table reaches it for nothing. The summary is
+  advisory: it is computed in the browser to let you check the table before spending a run, while
+  the domain recorded on each answer is what actually applied. Set a temperature (default `0.1`) and
   **Run batch**: the run is a tracked operation, so its progress (answered *N* of *M*) shows in
   the section and in the top-bar operations indicator, and it can be cancelled there. When it
   finishes, the results open in the review surface. A run survives navigation — leave the page and
@@ -162,6 +204,9 @@ The **Answer RFPs** section is browser parity with the CLI's `answer batch` (and
   — deselect, edit inline, or add your own, with a running selected-of-total count. **(3)** choose
   knowledge bases, a temperature, and a manifest name, then either **Download manifest** (writes
   YAML the CLI accepts, without running) or **Run batch** (runs it and opens the review surface).
+  A downloaded manifest carries the same commented-out `domains:` block `answer batch --build`
+  writes, so routing can be added by uncommenting and filling it in; until then the manifest runs
+  with no routing.
   The wizard warns you before you navigate away with an unsaved manifest; cancelling while the
   document is being read or a column extracted just returns you to the previous step.
 - **Review results** — open a previously exported results JSON to review the answers without
@@ -169,7 +214,11 @@ The **Answer RFPs** section is browser parity with the CLI's `answer batch` (and
 
 The review surface renders each question with its answer; failed or empty answers are flagged
 rather than shown blank, and **Export JSON** downloads the results in the same format the CLI
-writes. (Per-question source provenance is not shown yet — the batch API does not return it.)
+writes. A question that was routed through a `domains` entry shows **Domain** with that entry's
+pattern above its answer — this is the authoritative record of what applied, taken from the run
+itself rather than recomputed. Nothing is shown for a question that matched no entry, or for a
+results file written before domain routing existed. (Per-question source provenance is not shown
+yet — the batch API does not return it.)
 
 ---
 

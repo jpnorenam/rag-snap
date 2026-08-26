@@ -19,7 +19,8 @@ import (
 )
 
 // Question is a single extracted RFP question, compatible with the 'answer batch' YAML format.
-// Source is written when present (e.g. the sheet name for XLSX) and is ignored by 'answer batch'.
+// Source is written when present (e.g. the sheet name for XLSX); 'answer batch' reads it as the
+// fallback domain match key for questions whose id is a bare sequence number.
 type Question struct {
 	ID       string `yaml:"id"`
 	Question string `yaml:"question"`
@@ -500,6 +501,99 @@ func extractByQuestionMark(text string) []Question {
 	return questions
 }
 
+// domainsStubPreamble introduces the commented-out domains block. It states the
+// resolution rules the operator needs to edit the block correctly, and warns
+// that an uncommented but unfilled entry is rejected rather than ignored.
+const domainsStubPreamble = `#
+# Optional domain routing. Uncomment and fill in to answer each group of
+# questions within a stated requirement domain; leave it commented out to answer
+# every question the same way. An entry needs a context, keywords, or both --
+# uncommented but unfilled, the block is rejected rather than ignored. The most
+# specific matching pattern wins, and patterns may use * and ?. A question id is
+# matched first; an id that is a bare sequence number is matched against its
+# source instead. The patterns below are the id prefixes and sources this
+# document produced, not a suggested grouping.
+#
+`
+
+// domainsStub renders the commented-out 'domains:' block written above the
+// encoded manifest. It is comment text only: nothing is added to Manifest, so a
+// built manifest still round-trips through the encoder and an unedited stub
+// cannot affect a run.
+//
+// Candidate patterns come from what the extraction observed. A question with a
+// non-digit id prefix ("C" for "C4", "J" for "J1.3") suggests that prefix as a
+// glob; a question whose id is a bare sequence number has no prefix to route on,
+// so its source — the only key the resolver can match such an id against — is
+// suggested instead. Prefixes are deliberately coarse: refining "J*" into
+// "J1.*" is the operator's call, which is why the preamble disclaims the
+// grouping.
+func domainsStub(questions []Question) string {
+	type candidate struct {
+		pattern string
+		by      string
+		count   int
+	}
+	var candidates []candidate
+	index := make(map[string]int, len(questions))
+	add := func(pattern, by string) {
+		key := by + "\x00" + pattern
+		if i, ok := index[key]; ok {
+			candidates[i].count++
+			return
+		}
+		index[key] = len(candidates)
+		candidates = append(candidates, candidate{pattern: pattern, by: by, count: 1})
+	}
+	for _, q := range questions {
+		if prefix := idPrefix(q.ID); prefix != "" {
+			add(prefix+"*", "id prefix")
+			continue
+		}
+		if source := strings.TrimSpace(q.Source); source != "" {
+			add(source, "source")
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString(domainsStubPreamble)
+	b.WriteString("# domains:\n")
+	if len(candidates) == 0 {
+		b.WriteString("#   - match: \"*\"   # no id prefixes or sources observed; edit this pattern\n")
+		b.WriteString("#     context: \"\"   # one sentence naming the requirement domain\n")
+		b.WriteString("#     keywords: []   # optional retrieval terms, a few at most\n")
+		b.WriteString("#\n")
+		return b.String()
+	}
+	for i, c := range candidates {
+		fmt.Fprintf(&b, "#   - match: %q   # %d question(s) by %s\n", c.pattern, c.count, c.by)
+		// The placeholders are annotated once, on the first entry, so a long
+		// candidate list stays readable.
+		if i == 0 {
+			b.WriteString("#     context: \"\"   # one sentence naming the requirement domain\n")
+			b.WriteString("#     keywords: []   # optional retrieval terms, a few at most\n")
+			continue
+		}
+		b.WriteString("#     context: \"\"\n")
+		b.WriteString("#     keywords: []\n")
+	}
+	b.WriteString("#\n")
+	return b.String()
+}
+
+// idPrefix returns the leading run of non-digit characters in a question id, or
+// "" when the id is empty or starts with a digit (the bare-sequence-number case
+// the source fallback exists for).
+func idPrefix(id string) string {
+	trimmed := strings.TrimSpace(id)
+	for i, r := range trimmed {
+		if r >= '0' && r <= '9' {
+			return trimmed[:i]
+		}
+	}
+	return trimmed
+}
+
 // WriteManifest marshals manifest to YAML and writes it to path with 2-space indentation.
 func WriteManifest(path string, m *Manifest) error {
 	f, err := os.Create(path)
@@ -512,6 +606,9 @@ func WriteManifest(path string, m *Manifest) error {
 		time.Now().UTC().Format("2006-01-02 15:04:05 UTC"))
 	if _, err := f.WriteString(header); err != nil {
 		return fmt.Errorf("writing header: %w", err)
+	}
+	if _, err := f.WriteString(domainsStub(m.Questions)); err != nil {
+		return fmt.Errorf("writing domains stub: %w", err)
 	}
 
 	enc := yaml.NewEncoder(f)

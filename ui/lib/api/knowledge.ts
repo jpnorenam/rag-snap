@@ -188,6 +188,30 @@ export async function ingestUrl(
   return metadata;
 }
 
+// RepoPreview is the daemon's view of the files a repo ingest would match:
+// a bounded sample of paths, the full match count, and whether the upstream
+// listing was truncated.
+export interface RepoPreview {
+  files: string[];
+  total: number;
+  truncated: boolean;
+}
+
+// previewRepo lists the files a github/gitea batch item would ingest, without
+// ingesting. Fails with the daemon's env-var hint when its token is missing.
+export async function previewRepo(
+  item: Pick<BatchItem, "type" | "source" | "branch" | "path" | "extensions">
+): Promise<RepoPreview> {
+  const preview = await postSync<RepoPreview>("/1.0/knowledge/repo-preview", {
+    type: item.type,
+    source: item.source,
+    branch: item.branch || undefined,
+    path: item.path || undefined,
+    extensions: item.extensions?.length ? item.extensions : undefined,
+  });
+  return { ...preview, files: preview.files ?? [] };
+}
+
 // ingestBatch runs a batch of items as a single operation.
 export async function ingestBatch(
   name: string,

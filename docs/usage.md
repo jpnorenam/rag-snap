@@ -354,6 +354,9 @@ Supported job types: local files, static web pages, GitHub repositories, and Git
 repositories. Repository jobs walk the entire tree and ingest every file that matches the
 configured extensions and optional path filter.
 
+> **Tip:** the [local web UI](local-ui.md) can build this manifest visually (with a per-repository
+> file preview), run it directly, or download it for use with this command.
+
 ```
 rag-cli.rag knowledge ingest --batch <config.yaml> [--force]
 ```
@@ -363,10 +366,19 @@ rag-cli.rag knowledge ingest --batch <config.yaml> [--force]
 | `--force` | `false` | Re-ingest sources that are already present in the knowledge base. By default, any source whose `source_id` is already recorded with status `completed` is skipped silently. Pass `--force` to override this and re-ingest regardless — the existing chunks are removed first, so the source is replaced rather than duplicated. |
 
 > **Default deduplication behaviour:** Each source is identified by its `source_id` (the file path,
-> URL, or repository file path). On every run the system checks whether that ID is already marked
-> as `completed` in the metadata index. If it is, the source is skipped and a message is printed.
-> This makes repeated runs of the same batch file safe — only new or previously-failed sources are
-> ingested. Use `--force` when you want to refresh content that has changed since the last ingest.
+> URL, or repo-qualified path for repository jobs). On every run the system checks whether that ID is
+> already marked as `completed` in the metadata index. If it is, the source is skipped and a message
+> is printed. This makes repeated runs of the same batch file safe — only new or previously-failed
+> sources are ingested. Use `--force` when you want to refresh content that has changed since the
+> last ingest.
+
+> **Source IDs are global.** The metadata index is keyed by `source_id` alone, not by
+> `(source_id, target_kb)`, so an ID collision across knowledge bases causes the second source to be
+> skipped — or, under `--force`, to overwrite the first one's metadata record. Repository jobs
+> therefore qualify each file with its repository (`owner/repo/<path>` for `github-repo`,
+> `host/owner/repo/<path>` for `gitea-repo`) so that, for example, `README.md` in two different repos
+> does not collapse onto one ID. When setting `name` explicitly, choose an ID unique across the whole
+> cluster.
 
 #### YAML schema
 
@@ -389,7 +401,7 @@ jobs:
 |---|---|---|---|
 | `type` | all | Yes | Job type: `file`, `url`, `github-repo`, or `gitea-repo` |
 | `source` | all | Yes | For `file`: absolute or relative path. For `url`: `https://` URL. For `github-repo`: `"owner/repo"` or `"https://github.com/owner/repo"`. For `gitea-repo`: full URL `"https://{host}/{owner}/{repo}"`. |
-| `name` | all | No | Source identifier used in `metadata`, `forget`, and search results. Defaults to the filename (for `file`/`url`) or file path within the repo (for repository jobs). Must be unique across the cluster. |
+| `name` | all | No | Source identifier used in `metadata`, `forget`, and search results. Defaults to the filename (for `file`/`url`) or the repo-qualified path — `owner/repo/<path>`, `host/owner/repo/<path>` for Gitea — for repository jobs. Must be unique across the cluster. |
 | `target_kb` | all | No | Knowledge base name. Defaults to `default`. The base must already exist (`knowledge create`). |
 | `branch` | repo types | No | Branch to read from. Defaults to the repository's default branch. |
 | `path` | repo types | No | Restrict ingestion to files under this subdirectory (e.g. `docs/`). Omit to process the entire repository. |
@@ -1184,9 +1196,15 @@ knowledge_bases:              # optional; defaults to the default knowledge base
   - <name>
 prompt: <system_prompt>       # optional; overrides the default RAG system prompt for the whole batch
 prompt_ref: <variant_name>    # optional; use a stored answer_system_prompt variant (daemon only; not with 'prompt')
+domains:                      # optional; answer groups of questions within a stated requirement domain
+  - match: <glob>             # question id (or source) pattern this entry applies to
+    context: <text>           # optional if keywords are given; one sentence naming the domain
+    keywords: [<term>, ...]   # optional if context is given; extra retrieval terms
 questions:
   - id: <identifier>          # optional; included in the output file for traceability
     question: <text>
+    keywords: [<term>, ...]   # optional; extra retrieval terms for this question
+    source: <text>            # optional; origin label, also a domain routing fallback
 ```
 
 | Field | Required | Description |
@@ -1196,8 +1214,78 @@ questions:
 | `knowledge_bases` | No | List of knowledge base names to search for context. Defaults to the `default` base. |
 | `prompt` | No | Custom system prompt for the entire batch. Overrides the built-in RAG answer prompt. `source_rules` is appended to it. Mutually exclusive with `prompt_ref`. |
 | `prompt_ref` | No | Name of a stored `answer_system_prompt` variant to run the batch on (see [Prompt](#prompt)). Requires the `ragd` daemon; mutually exclusive with `prompt`. The resolved `variant@version` is recorded in the output JSON. |
-| `questions[].id` | No | Identifier for the question, used in the output JSON for traceability. |
+| `domains` | No | Routing table mapping question ids to requirement domains. Omit it and every question is answered the same way — see [Domain routing](#domain-routing). |
+| `domains[].match` | Yes | Glob matched against the question id (`*` and `?` supported), case-insensitive. Two entries may not declare the same pattern. |
+| `domains[].context` | No\* | One sentence naming the requirement domain. Appended to that question's prompt as `Requirement domain: <context> Answer within this domain.` |
+| `domains[].keywords` | No\* | Retrieval terms added to the lexical query for questions this entry matches, after the question's own `keywords`. |
+| `questions[].id` | No | Identifier for the question, used in the output JSON for traceability and as the key `domains` routes on. |
 | `questions[].question` | Yes | The question text sent to the LLM. |
+| `questions[].keywords` | No | Retrieval terms for this question. They lead the lexical query, ahead of any domain keywords and the generated ones, so they have the highest BM25 priority. |
+| `questions[].source` | No | Where the question came from — a spreadsheet sheet name or document section, populated by `answer batch --build`. Also the key `domains` falls back to when the id is a bare sequence number. |
+
+\* An entry needs a `context`, `keywords`, or both. An entry with neither is rejected, not ignored,
+so an uncommented but unfilled block fails before the first question is answered rather than
+running as if no routing were configured.
+
+#### Domain routing
+
+By default every question in a batch is answered the same way. An optional `domains:` block scopes
+groups of questions to a stated requirement domain: the matched entry's `context` is added to that
+question's prompt, and its `keywords` are added to that question's retrieval query. Which entry
+applied is recorded on each answer in the output JSON, so the routing is auditable after the fact.
+
+Resolution is deterministic and happens in the CLI, not by instructing the model:
+
+- **Matching key.** The question's `id` is matched first, case-insensitively. Patterns may use `*`
+  (any run of characters) and `?` (one character).
+- **Most specific wins.** Where several patterns match, the one with the most literal
+  (non-wildcard) characters wins — `J1.*` beats `J*` for `J1.4`. Ties go to the entry listed
+  first, so the table needs no particular ordering.
+- **Catch-all.** A `match: "*"` entry matches every question, and being the least specific it only
+  applies where nothing else does.
+- **Source fallback.** When an id is a bare sequence number (`"17"`) it carries no domain prefix to
+  route on, so the question's `source` is matched instead — but only if the id itself matched
+  nothing. An id that matched is never re-matched against its source, and a `*` catch-all counts as
+  matching the id, so it pre-empts the fallback.
+- **No match.** A question no entry reaches is answered exactly as it would be with no `domains:`
+  block at all, and its `domain` is absent from the output.
+- **A question with no `id`** can only be reached by a catch-all: the id is matched verbatim, with
+  no substitution of the question's position in the file.
+
+Keep `keywords` on a domain few and domain-defining. They are merged after the question's own
+keywords, but a broad domain contributing many terms can pull BM25 toward the domain's vocabulary
+and away from what the individual question actually asks. An entry that only needs to scope the
+answer should carry `context` alone.
+
+**Example — a routed manifest**
+
+```yaml
+version: "1.0"
+knowledge_bases:
+  - vendor-docs
+domains:
+  - match: "C*"
+    context: "Compute platform capabilities, including CPU features and NUMA topology."
+    keywords: [sriov, numa]
+  - match: "J*"
+    context: "Hardware supply and warranty terms."
+  - match: "J1.*"
+    context: "Storage hardware supplied by the incumbent vendor."
+  - match: "GIS Deliverables"
+    context: "Geographic information system deliverables and their acceptance criteria."
+questions:
+  - id: "C4"
+    question: "Do you support SR-IOV passthrough?"       # → C*
+  - id: "J1.4"
+    question: "What is the warranty on the disk shelves?" # → J1.* (more literals than J*)
+  - id: "J2.1"
+    question: "What is the lead time on spares?"          # → J*
+  - id: "17"
+    question: "List the map layers delivered at each milestone."
+    source: "GIS Deliverables"                            # → matched on source, id is a bare number
+  - id: "A9"
+    question: "Who is the named account manager?"         # → no entry; answered undomained
+```
 
 **Example manifest**
 
@@ -1245,15 +1333,24 @@ Results are written to `batch-results-YYYYMMDD-HHMMSS.json` in the current worki
 {
   "generated_at": "2025-02-25T14:30:22Z",
   "model": "mistral.mistral-large-3-675b-instruct",
+  "prompt": "rfp-govco-2026@3",
   "results": [
     {
       "id": "security-policy",
       "question": "What is the data retention policy?",
-      "answer": "Data is retained for 90 days by default, configurable up to 7 years for compliance tiers."
+      "answer": "Data is retained for 90 days by default, configurable up to 7 years for compliance tiers.",
+      "domain": "C*"
     }
   ]
 }
 ```
+
+Two fields record how each answer was produced, and both are omitted when they do not apply:
+
+| Field | Present when | Description |
+|---|---|---|
+| `prompt` | A `prompt_ref` resolved | The `answer_system_prompt` variant that drove the run, as `variant@version`. Absent for the built-in default prompt and for an inline `prompt`. |
+| `results[].domain` | The question matched a `domains` entry | The `match` pattern of the entry that applied, which identifies exactly one entry. Absent when the manifest carried no `domains` block, or when the question matched no entry. |
 
 > **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run)
 > prints the error and moves on. All answers collected before the failure are still written to the
@@ -1358,8 +1455,33 @@ The manifest is compatible with `answer batch` (same YAML schema). The `source` 
 for XLSX and multi-table PDF extractions so you can trace each answer back to the original sheet or
 table.
 
+Above the manifest, a commented-out `domains:` block is written as a starting point for
+[domain routing](#domain-routing). It is comment text only — the manifest runs with no routing until
+you uncomment and fill it in — and the patterns it suggests are the id prefixes and sources this
+particular document produced, not a recommended grouping. A question whose id carries a non-digit
+prefix (`C4` → `C*`) suggests that prefix; a question whose id is a bare sequence number has no
+prefix to route on, so its `source` is suggested instead.
+
 ```yaml
 # Generated by rag-cli answer batch --build on 2026-04-29 10:00:00 UTC
+#
+# Optional domain routing. Uncomment and fill in to answer each group of
+# questions within a stated requirement domain; leave it commented out to answer
+# every question the same way. An entry needs a context, keywords, or both --
+# uncommented but unfilled, the block is rejected rather than ignored. The most
+# specific matching pattern wins, and patterns may use * and ?. A question id is
+# matched first; an id that is a bare sequence number is matched against its
+# source instead. The patterns below are the id prefixes and sources this
+# document produced, not a suggested grouping.
+#
+# domains:
+#   - match: "6 Project Background and Scope"   # 1 question(s) by source
+#     context: ""   # one sentence naming the requirement domain
+#     keywords: []   # optional retrieval terms, a few at most
+#   - match: "12 Operational Risk"   # 1 question(s) by source
+#     context: ""
+#     keywords: []
+#
 version: "1.0"
 knowledge_bases:
   - project-docs
@@ -1371,6 +1493,10 @@ questions:
     question: "What SLA do you offer for critical incidents?"
     source: "12 Operational Risk"
 ```
+
+> **Tip:** when the extraction assigned bare sequence numbers as ids, uncommenting the suggested
+> source patterns is usually all the routing you need — each sheet or document section becomes one
+> requirement domain. Give every entry you keep a `context`, and delete the ones you do not want.
 
 ---
 

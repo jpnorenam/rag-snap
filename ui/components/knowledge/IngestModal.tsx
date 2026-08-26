@@ -4,7 +4,13 @@ import { useId, useState } from "react";
 import FileDropzone from "@/components/knowledge/FileDropzone";
 import { ApiError, errorMessage } from "@/lib/api/envelope";
 import type { OperationView } from "@/lib/api/operations";
-import { ingestFile, ingestUrl } from "@/lib/api/knowledge";
+import {
+  ingestBatch,
+  ingestFile,
+  ingestUrl,
+  previewRepo,
+  type RepoPreview,
+} from "@/lib/api/knowledge";
 import { useModalDialog } from "@/lib/useModalDialog";
 
 interface Props {
@@ -14,7 +20,7 @@ interface Props {
   onClose: () => void;
 }
 
-type Mode = "upload" | "url";
+type Mode = "upload" | "url" | "github" | "gitea";
 
 // LABEL_PATTERN mirrors the daemon's knowledge-label format.
 const LABEL_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -28,13 +34,30 @@ function slugify(filename: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
-// IngestModal ingests a single document by file upload or URL, with an optional
-// force re-ingest. It closes on submit; the row appears when the tracked
+// normalizeExtensions parses a comma/space-separated extension list into the
+// dotted, lowercased, deduplicated form the daemon filters on.
+export function normalizeExtensions(text: string): string[] {
+  const seen = new Set<string>();
+  for (const raw of text.split(/[\s,]+/)) {
+    const t = raw.trim().toLowerCase().replace(/^\.+/, "");
+    if (t) seen.add("." + t);
+  }
+  return [...seen];
+}
+
+// IngestModal ingests a single source by file upload, URL, or a GitHub/Gitea
+// repository, with an optional force re-ingest. Repo modes expand server-side
+// into one source per matched file and offer an advisory pre-ingest preview of
+// the matched paths. It closes on submit; rows appear when the tracked
 // operation completes. A duplicate-id error without force keeps the modal open.
 export default function IngestModal({ name, defaultLabel, onStarted, onClose }: Props) {
   const titleId = useId();
   const urlId = useId();
   const sourceId = useId();
+  const repoSourceId = useId();
+  const branchId = useId();
+  const pathId = useId();
+  const extensionsId = useId();
   const labelId = useId();
   const forceId = useId();
   const { dialogRef, onKeyDown } = useModalDialog(onClose);
@@ -44,16 +67,78 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
   const [url, setUrl] = useState("");
   const [sid, setSid] = useState("");
   const [sidTouched, setSidTouched] = useState(false);
+  const [repoSource, setRepoSource] = useState("");
+  const [branch, setBranch] = useState("");
+  const [repoPath, setRepoPath] = useState("");
+  const [extensionsText, setExtensionsText] = useState("");
+  const [extensions, setExtensions] = useState<string[]>([]);
   const [label, setLabel] = useState("");
   const [force, setForce] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sidError, setSidError] = useState<string | null>(null);
   const [labelError, setLabelError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<RepoPreview | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+
+  const isRepo = mode === "github" || mode === "gitea";
 
   const chooseFile = (f: File | null) => {
     setFile(f);
     if (f && !sidTouched) setSid(slugify(f.name));
+  };
+
+  // Any change to what a repo job matches invalidates a shown preview.
+  const invalidatePreview = () => setPreview(null);
+
+  const normalizeExts = () => {
+    const exts = normalizeExtensions(extensionsText);
+    setExtensions(exts);
+    setExtensionsText(exts.join(", "));
+    return exts;
+  };
+
+  // validateRepo returns the repo fields to submit, or null after setting a
+  // form-level error.
+  const validateRepo = (): { source: string; exts: string[] } | null => {
+    const source = repoSource.trim();
+    if (mode === "github" && !/^(https:\/\/github\.com\/)?[^/\s]+\/[^/\s]+/.test(source)) {
+      setError("Enter a GitHub repository as owner/repo or https://github.com/owner/repo.");
+      return null;
+    }
+    if (mode === "gitea" && !/^https?:\/\/[^/\s]+\/[^/\s]+\/[^/\s]+/.test(source)) {
+      setError("Enter a full Gitea repository URL, e.g. https://gitea.example.com/owner/repo.");
+      return null;
+    }
+    const exts = normalizeExts();
+    if (exts.length === 0) {
+      setError("Enter at least one file extension — a repo ingest only fetches matching files.");
+      return null;
+    }
+    return { source, exts };
+  };
+
+  const runPreview = async () => {
+    setError(null);
+    setPreview(null);
+    const repo = validateRepo();
+    if (!repo) return;
+    setPreviewBusy(true);
+    try {
+      setPreview(
+        await previewRepo({
+          type: mode as "github" | "gitea",
+          source: repo.source,
+          branch: branch.trim() || undefined,
+          path: repoPath.trim() || undefined,
+          extensions: repo.exts,
+        })
+      );
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setPreviewBusy(false);
+    }
   };
 
   const submit = async () => {
@@ -68,6 +153,11 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
       setError("Enter a valid http(s) URL.");
       return;
     }
+    let repo: { source: string; exts: string[] } | null = null;
+    if (isRepo) {
+      repo = validateRepo();
+      if (!repo) return;
+    }
     const trimmedLabel = label.trim();
     if (trimmedLabel && !LABEL_PATTERN.test(trimmedLabel)) {
       setLabelError(
@@ -77,15 +167,32 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
     }
     setBusy(true);
     try {
-      const op =
-        mode === "upload"
-          ? await ingestFile(name, file as File, sid.trim(), force, trimmedLabel || undefined)
-          : await ingestUrl(name, url.trim(), sid.trim(), force, trimmedLabel || undefined);
+      let op: OperationView;
+      if (mode === "upload") {
+        op = await ingestFile(name, file as File, sid.trim(), force, trimmedLabel || undefined);
+      } else if (mode === "url") {
+        op = await ingestUrl(name, url.trim(), sid.trim(), force, trimmedLabel || undefined);
+      } else {
+        op = await ingestBatch(
+          name,
+          [
+            {
+              type: mode,
+              source: (repo as { source: string }).source,
+              branch: branch.trim() || undefined,
+              path: repoPath.trim() || undefined,
+              extensions: (repo as { exts: string[] }).exts,
+              label: trimmedLabel || undefined,
+            },
+          ],
+          force
+        );
+      }
       onStarted(op);
     } catch (e) {
       setBusy(false);
       // Duplicate source id without force: keep the modal open, field-level.
-      if (e instanceof ApiError && e.code === 409) {
+      if (!isRepo && e instanceof ApiError && e.code === 409) {
         setSidError(
           `Source “${sid.trim()}” already exists. Enable force re-ingest to replace it.`
         );
@@ -94,6 +201,13 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
       setError(errorMessage(e));
     }
   };
+
+  const modeTabs: { value: Mode; text: string }[] = [
+    { value: "upload", text: "Upload file" },
+    { value: "url", text: "From URL" },
+    { value: "github", text: "GitHub repo" },
+    { value: "gitea", text: "Gitea repo" },
+  ];
 
   return (
     <div className="p-modal app-modal" onClick={onClose} onKeyDown={onKeyDown}>
@@ -120,30 +234,26 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
         >
           <div className="p-form__group" role="radiogroup" aria-label="Source">
             <div className="kb-ingest__tabs">
-              <label className="p-radio kb-ingest__tab">
-                <input
-                  type="radio"
-                  className="p-radio__input"
-                  name="ingest-mode"
-                  checked={mode === "upload"}
-                  onChange={() => setMode("upload")}
-                />
-                <span className="p-radio__label">Upload file</span>
-              </label>
-              <label className="p-radio kb-ingest__tab">
-                <input
-                  type="radio"
-                  className="p-radio__input"
-                  name="ingest-mode"
-                  checked={mode === "url"}
-                  onChange={() => setMode("url")}
-                />
-                <span className="p-radio__label">From URL</span>
-              </label>
+              {modeTabs.map((tab) => (
+                <label key={tab.value} className="p-radio kb-ingest__tab">
+                  <input
+                    type="radio"
+                    className="p-radio__input"
+                    name="ingest-mode"
+                    checked={mode === tab.value}
+                    onChange={() => {
+                      setMode(tab.value);
+                      setError(null);
+                      setPreview(null);
+                    }}
+                  />
+                  <span className="p-radio__label">{tab.text}</span>
+                </label>
+              ))}
             </div>
           </div>
 
-          {mode === "upload" ? (
+          {mode === "upload" && (
             <div className={`p-form__group ${error ? "p-form-validation is-error" : ""}`}>
               <FileDropzone
                 label="Document"
@@ -153,7 +263,9 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
               />
               {error && <p className="p-form-validation__message">{error}</p>}
             </div>
-          ) : (
+          )}
+
+          {mode === "url" && (
             <div className={`p-form__group ${error ? "p-form-validation is-error" : ""}`}>
               <label htmlFor={urlId}>URL</label>
               <input
@@ -167,26 +279,163 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
             </div>
           )}
 
-          <div className={`p-form__group ${sidError ? "p-form-validation is-error" : ""}`}>
-            <label htmlFor={sourceId}>Source ID</label>
-            <input
-              id={sourceId}
-              type="text"
-              value={sid}
-              autoComplete="off"
-              onChange={(e) => {
-                setSid(e.target.value);
-                setSidTouched(true);
-              }}
-            />
-            {sidError ? (
-              <p className="p-form-validation__message">{sidError}</p>
-            ) : (
-              <p className="p-form-help-text">
-                The stable identifier used by forget and metadata.
-              </p>
-            )}
-          </div>
+          {isRepo && (
+            <>
+              <div className={`p-form__group ${error ? "p-form-validation is-error" : ""}`}>
+                <label htmlFor={repoSourceId}>Repository</label>
+                <input
+                  id={repoSourceId}
+                  type="text"
+                  value={repoSource}
+                  autoComplete="off"
+                  placeholder={
+                    mode === "github" ? "owner/repo" : "https://gitea.example.com/owner/repo"
+                  }
+                  onChange={(e) => {
+                    setRepoSource(e.target.value);
+                    invalidatePreview();
+                  }}
+                />
+                {error ? (
+                  <p className="p-form-validation__message">{error}</p>
+                ) : (
+                  <p className="p-form-help-text">
+                    Files are fetched with the daemon’s{" "}
+                    <code>{mode === "github" ? "GITHUB_TOKEN" : "GITEA_TOKEN"}</code> environment
+                    variable.
+                  </p>
+                )}
+              </div>
+
+              <div className="p-form__group">
+                <label htmlFor={branchId}>Branch (optional)</label>
+                <input
+                  id={branchId}
+                  type="text"
+                  value={branch}
+                  autoComplete="off"
+                  onChange={(e) => {
+                    setBranch(e.target.value);
+                    invalidatePreview();
+                  }}
+                />
+                <p className="p-form-help-text">Defaults to the repository’s default branch.</p>
+              </div>
+
+              <div className="p-form__group">
+                <label htmlFor={pathId}>Path prefix (optional)</label>
+                <input
+                  id={pathId}
+                  type="text"
+                  value={repoPath}
+                  autoComplete="off"
+                  placeholder="docs/"
+                  onChange={(e) => {
+                    setRepoPath(e.target.value);
+                    invalidatePreview();
+                  }}
+                />
+                <p className="p-form-help-text">Only files under this path are ingested.</p>
+              </div>
+
+              <div className="p-form__group">
+                <label htmlFor={extensionsId}>File extensions</label>
+                <input
+                  id={extensionsId}
+                  type="text"
+                  value={extensionsText}
+                  autoComplete="off"
+                  placeholder=".md, .rst, .txt"
+                  onChange={(e) => {
+                    setExtensionsText(e.target.value);
+                    invalidatePreview();
+                  }}
+                  onBlur={normalizeExts}
+                />
+                {extensions.length > 0 && (
+                  <p className="kb-ingest__ext-chips" aria-label="Extensions to ingest">
+                    {extensions.map((ext) => (
+                      <span key={ext} className="p-chip">
+                        <span className="p-chip__value">{ext}</span>
+                      </span>
+                    ))}
+                  </p>
+                )}
+                <p className="p-form-help-text">
+                  Comma-separated; only matching files are ingested.
+                </p>
+              </div>
+
+              <div className="p-form__group">
+                <button
+                  type="button"
+                  className="p-button u-no-margin--bottom"
+                  disabled={previewBusy}
+                  onClick={() => void runPreview()}
+                >
+                  {previewBusy ? (
+                    <>
+                      <i className="p-icon--spinner u-animation--spin" aria-hidden="true" />{" "}
+                      Previewing…
+                    </>
+                  ) : (
+                    "Preview files"
+                  )}
+                </button>
+                {preview && (
+                  <div className="kb-ingest__preview" aria-live="polite">
+                    <p className="u-no-margin--bottom">
+                      <strong>{preview.total}</strong> file{preview.total === 1 ? "" : "s"} match
+                      {preview.total === 1 ? "es" : ""}.
+                      {preview.truncated && (
+                        <span className="u-text--muted">
+                          {" "}
+                          The repository listing was truncated; more files may exist.
+                        </span>
+                      )}
+                    </p>
+                    {preview.files.length > 0 && (
+                      <ul className="p-list kb-ingest__preview-list">
+                        {preview.files.map((f) => (
+                          <li key={f} className="p-list__item">
+                            <code>{f}</code>
+                          </li>
+                        ))}
+                        {preview.total > preview.files.length && (
+                          <li className="p-list__item u-text--muted">
+                            …and {preview.total - preview.files.length} more
+                          </li>
+                        )}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+
+          {!isRepo && (
+            <div className={`p-form__group ${sidError ? "p-form-validation is-error" : ""}`}>
+              <label htmlFor={sourceId}>Source ID</label>
+              <input
+                id={sourceId}
+                type="text"
+                value={sid}
+                autoComplete="off"
+                onChange={(e) => {
+                  setSid(e.target.value);
+                  setSidTouched(true);
+                }}
+              />
+              {sidError ? (
+                <p className="p-form-validation__message">{sidError}</p>
+              ) : (
+                <p className="p-form-help-text">
+                  The stable identifier used by forget and metadata.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className={`p-form__group ${labelError ? "p-form-validation is-error" : ""}`}>
             <label htmlFor={labelId}>Label (optional)</label>
@@ -226,7 +475,11 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
               />
               <span className="p-checkbox__label">Force re-ingest</span>
             </label>
-            <p className="p-form-help-text u-text--muted">Replace an existing source with the same ID.</p>
+            <p className="p-form-help-text u-text--muted">
+              {isRepo
+                ? "Replace already-ingested files instead of skipping them."
+                : "Replace an existing source with the same ID."}
+            </p>
           </div>
 
           <footer className="p-modal__footer">
@@ -234,7 +487,7 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
               Cancel
             </button>
             <button type="submit" className="p-button--positive u-no-margin--bottom" disabled={busy}>
-              {busy ? "Starting…" : "Ingest"}
+              {busy ? "Starting…" : isRepo ? "Ingest repository" : "Ingest"}
             </button>
           </footer>
         </form>

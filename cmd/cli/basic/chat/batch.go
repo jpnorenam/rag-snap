@@ -53,35 +53,45 @@ func splitKeywords(s string) []string {
 	return out
 }
 
-// mergeKeywords places manifest keywords first (higher priority), then appends
-// generated keywords that are not already present, deduplicating case-insensitively.
+// mergeKeywords places the leading keyword lists first (higher priority), in the
+// order they are given, then appends generated keywords that are not already
+// present, deduplicating case-insensitively across all tiers and keeping each
+// term at its first occurrence.
 // generated is a space-separated keyword string from rewriteSearchQuery.
-// manifestKWs are the optional keywords from the batch manifest.
+// leading holds the higher-priority tiers, highest first: the question's own
+// manifest keywords, then any resolved domain's keywords.
 // Returns a space-separated string ready for use as a lexical search query.
-func mergeKeywords(generated string, manifestKWs []string) string {
-	if len(manifestKWs) == 0 {
+func mergeKeywords(generated string, leading ...[]string) string {
+	total := 0
+	for _, list := range leading {
+		total += len(list)
+	}
+	if total == 0 {
 		return generated
 	}
 
-	// Manifest keywords lead; build seen set from them first.
+	// Leading tiers lead; build the seen set from them first.
 	genFields := strings.Fields(generated)
-	seen := make(map[string]struct{}, len(manifestKWs)+len(genFields))
-	merged := make([]string, 0, len(manifestKWs)+len(genFields))
-	for _, kw := range manifestKWs {
+	seen := make(map[string]struct{}, total+len(genFields))
+	merged := make([]string, 0, total+len(genFields))
+	add := func(kw string) {
 		lower := strings.ToLower(kw)
-		if _, exists := seen[lower]; !exists {
-			seen[lower] = struct{}{}
-			merged = append(merged, kw)
+		if _, exists := seen[lower]; exists {
+			return
+		}
+		seen[lower] = struct{}{}
+		merged = append(merged, kw)
+	}
+
+	for _, list := range leading {
+		for _, kw := range list {
+			add(kw)
 		}
 	}
 
-	// Append generated keywords not already covered by manifest keywords.
+	// Append generated keywords not already covered by a leading tier.
 	for _, kw := range genFields {
-		lower := strings.ToLower(kw)
-		if _, exists := seen[lower]; !exists {
-			seen[lower] = struct{}{}
-			merged = append(merged, kw)
-		}
+		add(kw)
 	}
 
 	return strings.Join(merged, " ")
@@ -89,8 +99,23 @@ func mergeKeywords(generated string, manifestKWs []string) string {
 
 // BatchQuestion describes a single Q&A task within a batch manifest.
 type BatchQuestion struct {
-	ID       string      `yaml:"id,omitempty"`
-	Question string      `yaml:"question"`
+	ID       string `yaml:"id,omitempty"`
+	Question string `yaml:"question"`
+	// Source names where the question came from in the extracted document (a
+	// sheet or section name). It is the fallback domain match key for questions
+	// whose ID is a bare sequence number, which carries no domain prefix.
+	Source   string      `yaml:"source,omitempty"`
+	Keywords KeywordList `yaml:"keywords,omitempty"`
+}
+
+// Domain describes a requirement domain within a batch: a glob matched against a
+// question's ID (or, for bare numeric IDs, its Source), the prose Context
+// injected into that question's turn, and optional Keywords the question
+// inherits for retrieval. An entry must carry at least one of Context and
+// Keywords.
+type Domain struct {
+	Match    string      `yaml:"match"`
+	Context  string      `yaml:"context,omitempty"`
 	Keywords KeywordList `yaml:"keywords,omitempty"`
 }
 
@@ -106,7 +131,11 @@ type BatchManifest struct {
 	// and requires a running daemon; a daemonless run with PromptRef set is an
 	// error. Unlike Prompt, it replaces the answer system prompt outright rather
 	// than being combined with the source rules.
-	PromptRef string          `yaml:"prompt_ref,omitempty"`
+	PromptRef string `yaml:"prompt_ref,omitempty"`
+	// Domains optionally routes questions to requirement domains by ID. It is
+	// resolved once per question before answering; see CompileDomains. A manifest
+	// without it behaves exactly as one did before domain routing existed.
+	Domains   []Domain        `yaml:"domains,omitempty"`
 	Questions []BatchQuestion `yaml:"questions"`
 }
 
@@ -115,6 +144,10 @@ type BatchResult struct {
 	ID       string `json:"id,omitempty"`
 	Question string `json:"question"`
 	Answer   string `json:"answer"`
+	// Domain records which domains entry was applied, identified by its matched
+	// pattern. Empty when the question resolved to no domain. It is the routing
+	// audit trail: which rule produced this answer.
+	Domain string `json:"domain,omitempty"`
 }
 
 // BatchOutput is the structured result of a batch run: the resolved model, a
@@ -164,6 +197,19 @@ func (h BatchHooks) failure(i, total int, q BatchQuestion, err error) {
 	}
 }
 
+// batchSystemPrompt resolves the system prompt for a batch run. It is built once
+// and sent verbatim with every question, so it stays a stable cacheable prefix
+// across the run — per-question scoping such as the resolved requirement domain
+// goes in the turn instead (see buildRAGPrompt).
+func batchSystemPrompt(manifest *BatchManifest, prompts PromptConfig) string {
+	if manifest.Prompt == "" {
+		return prompts.AnswerSystemPrompt
+	}
+	// Append the non-negotiable source rules so custom prompts cannot
+	// accidentally bypass [CANONICAL]/[UPSTREAM] grounding behaviour.
+	return manifest.Prompt + "\n\n" + prompts.SourceRules
+}
+
 // LoadBatchManifest reads and parses a batch chat YAML manifest file.
 func LoadBatchManifest(path string) (*BatchManifest, error) {
 	data, err := os.ReadFile(path)
@@ -181,6 +227,12 @@ func LoadBatchManifest(path string) (*BatchManifest, error) {
 		if q.Question == "" {
 			return nil, fmt.Errorf("question %d has an empty question field", i+1)
 		}
+	}
+	// RunBatch compiles the domains list too; doing it here as well means the CLI
+	// reports a malformed block at load time, before connecting to OpenSearch or
+	// the inference server.
+	if _, err := CompileDomains(manifest.Domains); err != nil {
+		return nil, err
 	}
 	return &manifest, nil
 }
@@ -203,11 +255,18 @@ func RunBatch(
 	hooks BatchHooks,
 	verbose bool,
 ) (*BatchOutput, error) {
+	// Compile the routing table before anything else, so a malformed block fails
+	// the run rather than being discovered partway through it. Every caller —
+	// the CLI's direct path, the daemon, any future one — validates here.
+	domains, err := CompileDomains(manifest.Domains)
+	if err != nil {
+		return nil, err
+	}
+
 	client := openai.NewClient(clientOptions(baseURL)...)
 
 	modelName := manifest.Model
 	if modelName == "" {
-		var err error
 		modelName, err = findModelName(baseURL, verbose)
 		if err != nil {
 			return nil, fmt.Errorf("resolving model name: %w", err)
@@ -230,12 +289,7 @@ func RunBatch(
 		ActiveKapaGroups: manifest.KapaSourceGroups,
 	}
 
-	defaultSystemPrompt := prompts.AnswerSystemPrompt
-	if manifest.Prompt != "" {
-		// Append the non-negotiable source rules so custom prompts cannot
-		// accidentally bypass [CANONICAL]/[UPSTREAM] grounding behaviour.
-		defaultSystemPrompt = manifest.Prompt + "\n\n" + prompts.SourceRules
-	}
+	defaultSystemPrompt := batchSystemPrompt(manifest, prompts)
 
 	total := len(manifest.Questions)
 	results := make([]BatchResult, 0, total)
@@ -246,10 +300,21 @@ func RunBatch(
 		}
 		hooks.start(i, total, q)
 
+		// Resolve the requirement domain once per question: it scopes the turn,
+		// contributes retrieval keywords, and is recorded on the result.
+		var domainContext, domainMatch string
+		var domainKeywords []string
+		if domain := domains.Resolve(q.ID, q.Source); domain != nil {
+			domainContext = domain.Context
+			domainMatch = domain.Match
+			domainKeywords = domain.Keywords
+		}
+
 		// nil history: each question is extracted in isolation, with no prior conversation context.
 		lexicalQuery := rewriteSearchQuery(client, modelName, nil, q.Question, verbose)
-		// Manifest keywords lead in the lexical query (higher BM25 priority).
-		lexicalQuery = mergeKeywords(lexicalQuery, q.Keywords)
+		// Manifest keywords lead in the lexical query (higher BM25 priority),
+		// then the resolved domain's, then the generated ones.
+		lexicalQuery = mergeKeywords(lexicalQuery, q.Keywords, domainKeywords)
 
 		// Use the full merged lexical query (manifest + generated keywords) to
 		// steer the vector search as well. This ensures that user-provided keywords
@@ -264,7 +329,7 @@ func RunBatch(
 		// Skip the LLM call entirely and emit the fixed no-answer string to avoid
 		// the model hallucinating from parametric knowledge.
 		if ragContext == "" {
-			result := BatchResult{ID: q.ID, Question: q.Question, Answer: noContextAnswer}
+			result := BatchResult{ID: q.ID, Question: q.Question, Answer: noContextAnswer, Domain: domainMatch}
 			results = append(results, result)
 			hooks.result(i, total, result)
 			continue
@@ -273,7 +338,7 @@ func RunBatch(
 		resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 			Messages: []openai.ChatCompletionMessageParamUnion{
 				openai.SystemMessage(defaultSystemPrompt),
-				openai.UserMessage(buildRAGPrompt(ragContext, q.Question)),
+				openai.UserMessage(buildRAGPrompt(ragContext, domainContext, q.ID, q.Question)),
 			},
 			Model:       modelName,
 			Temperature: openai.Float(temperature),
@@ -296,7 +361,7 @@ func RunBatch(
 			answer = StripThinkTags(resp.Choices[0].Message.Content)
 		}
 
-		result := BatchResult{ID: q.ID, Question: q.Question, Answer: answer}
+		result := BatchResult{ID: q.ID, Question: q.Question, Answer: answer, Domain: domainMatch}
 		results = append(results, result)
 		hooks.result(i, total, result)
 	}

@@ -323,8 +323,33 @@ const ragChatSystemPrompt = "You are a Canonical technical assistant. Apply thes
 	"4. FORMAT: Be concise and direct. Use bullet points when listing multiple items. You may ask a clarifying question if the query is ambiguous.\n" +
 	"5. NO ANSWER: If the context does not contain enough information, say so plainly and do not speculate."
 
-// buildRAGPrompt wraps the user's original prompt with the retrieved
-// context so the LLM can ground its answer.
-func buildRAGPrompt(ragContext, prompt string) string {
-	return fmt.Sprintf("Context:\n%s\n\nQuestion: %s", ragContext, prompt)
+// buildRAGPrompt wraps the user's original prompt with the retrieved context so
+// the LLM can ground its answer.
+//
+// domainContext and id are the batch pipeline's per-question scoping: they carry
+// the resolved requirement domain and the question's manifest id. Both are
+// optional and empty for interactive chat. They belong here rather than in the
+// system prompt so the system prompt stays byte-identical across a batch run,
+// and because a domain scopes one question rather than the whole run. With both
+// empty the result is the plain "Context / Question" form.
+func buildRAGPrompt(ragContext, domainContext, id, prompt string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Context:\n%s", ragContext)
+
+	if domain := strings.TrimSpace(domainContext); domain != "" {
+		// Terminate the operator's prose so the instruction that follows reads
+		// as its own sentence rather than running on from it.
+		if !strings.HasSuffix(domain, ".") && !strings.HasSuffix(domain, "!") && !strings.HasSuffix(domain, "?") {
+			domain += "."
+		}
+		fmt.Fprintf(&b, "\n\nRequirement domain: %s Answer within this domain.", domain)
+	}
+
+	b.WriteString("\n\nQuestion")
+	if qid := strings.TrimSpace(id); qid != "" {
+		fmt.Fprintf(&b, " [%s]", qid)
+	}
+	fmt.Fprintf(&b, ": %s", prompt)
+
+	return b.String()
 }

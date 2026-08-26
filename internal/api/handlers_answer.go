@@ -27,16 +27,47 @@ type batchManifestRequest struct {
 	Prompt         string   `json:"prompt,omitempty"`
 	// PromptRef names a stored answer_system_prompt variant to run this batch on.
 	// It is mutually exclusive with the inline Prompt.
-	PromptRef   string                 `json:"prompt_ref,omitempty"`
+	PromptRef string `json:"prompt_ref,omitempty"`
+	// Domains routes questions to requirement domains by id, applied identically
+	// to the CLI's direct path.
+	Domains     []batchDomainRequest   `json:"domains,omitempty"`
 	Temperature *float64               `json:"temperature,omitempty"`
 	Questions   []batchQuestionRequest `json:"questions"`
 }
 
 // batchQuestionRequest is a single question in a posted manifest.
 type batchQuestionRequest struct {
-	ID       string   `json:"id,omitempty"`
-	Question string   `json:"question"`
+	ID       string `json:"id,omitempty"`
+	Question string `json:"question"`
+	// Source is where the question came from in the extracted document; it is the
+	// fallback domain match key for questions whose id is a bare sequence number.
+	Source   string   `json:"source,omitempty"`
 	Keywords []string `json:"keywords,omitempty"`
+}
+
+// batchDomainRequest is a single domain-routing entry in a posted manifest.
+type batchDomainRequest struct {
+	Match    string   `json:"match"`
+	Context  string   `json:"context,omitempty"`
+	Keywords []string `json:"keywords,omitempty"`
+}
+
+// domains converts the request's routing entries to the chat package's type. It
+// is shared by toManifest and the handler's pre-flight validation so both see
+// exactly the same list.
+func (req batchManifestRequest) domains() []chat.Domain {
+	if len(req.Domains) == 0 {
+		return nil
+	}
+	domains := make([]chat.Domain, len(req.Domains))
+	for i, d := range req.Domains {
+		domains[i] = chat.Domain{
+			Match:    d.Match,
+			Context:  d.Context,
+			Keywords: chat.KeywordList(d.Keywords),
+		}
+	}
+	return domains
 }
 
 // toManifest converts the API request to the chat package's manifest type.
@@ -46,6 +77,7 @@ func (req batchManifestRequest) toManifest() *chat.BatchManifest {
 		questions[i] = chat.BatchQuestion{
 			ID:       q.ID,
 			Question: q.Question,
+			Source:   q.Source,
 			Keywords: chat.KeywordList(q.Keywords),
 		}
 	}
@@ -54,6 +86,7 @@ func (req batchManifestRequest) toManifest() *chat.BatchManifest {
 		Model:          req.Model,
 		KnowledgeBases: req.KnowledgeBases,
 		Prompt:         req.Prompt,
+		Domains:        req.domains(),
 		Questions:      questions,
 	}
 }
@@ -65,9 +98,17 @@ func (req batchManifestRequest) toManifest() *chat.BatchManifest {
 // Runs a prepared batch manifest of questions through the RAG+LLM pipeline as
 // an async operation. Progress is reported in the operation metadata across the
 // questions, and the structured results are stored on the operation for
-// retrieval on completion. To derive a manifest from a document, use the
-// separate POST /1.0/answer/build endpoint (Tika extraction + optional LLM
-// refinement); this run endpoint accepts only a prepared manifest.
+// retrieval on completion. Each result under the operation metadata's "results"
+// key carries the question's "id", "question", "answer", and — when the
+// manifest's "domains" block routed it — the "domain" pattern that matched, so
+// the routing is auditable per answer. To derive a manifest from a document,
+// use the separate POST /1.0/answer/build endpoint (Tika extraction + optional
+// LLM refinement); this run endpoint accepts only a prepared manifest.
+//
+// A 400 is returned for a manifest with no questions, a question with an empty
+// question field, both "prompt" and "prompt_ref" set, or an invalid "domains"
+// entry (empty "match", an entry with neither "context" nor "keywords", a
+// malformed glob pattern, or a duplicate "match").
 //
 //	Responses:
 //	  202: asyncResponse
@@ -94,6 +135,13 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusBadRequest, fmt.Sprintf("question %d has an empty question field", i+1))
 			return
 		}
+	}
+	// Validate the routing table here so a malformed block fails the request
+	// before an operation exists, matching the prompt/prompt_ref conflict above.
+	// RunBatch compiles it again; this is the fail-fast, not the enforcement.
+	if _, err := chat.CompileDomains(req.domains()); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	baseURL := s.clients.openAIURL()

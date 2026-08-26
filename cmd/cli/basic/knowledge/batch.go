@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/processing"
 	"gopkg.in/yaml.v3"
@@ -51,6 +52,9 @@ func ProcessBatch(ctx context.Context, client *OpenSearchClient, tikaURL string,
 			return fmt.Errorf("job %d (%s): %w", i+1, job.Source, err)
 		}
 	}
+	if err := checkBatchTargets(ctx, client, batchCfg.Jobs); err != nil {
+		return err
+	}
 
 	fmt.Printf("Found %d jobs in batch file version %s\n", len(batchCfg.Jobs), batchCfg.Version)
 
@@ -67,12 +71,49 @@ func ProcessBatch(ctx context.Context, client *OpenSearchClient, tikaURL string,
 	return nil
 }
 
+// checkBatchTargets verifies every job's target knowledge base exists before any
+// job runs. Without this, a missing base surfaces as a per-file 404 from the
+// first mapping read inside the ingest core, once for every file in the batch.
+func checkBatchTargets(ctx context.Context, client *OpenSearchClient, jobs []BatchJob) error {
+	checked := make(map[string]bool, len(jobs))
+	var missing []string
+	for _, job := range jobs {
+		index := jobTargetIndex(job)
+		if checked[index] {
+			continue
+		}
+		checked[index] = true
+
+		exists, err := client.IndexExists(ctx, index)
+		if err != nil {
+			return fmt.Errorf("checking knowledge base %q: %w", index, err)
+		}
+		if !exists {
+			name, nameErr := KnowledgeBaseNameFromIndex(index)
+			if nameErr != nil {
+				name = index
+			}
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("knowledge base(s) not found: %s\nCreate them first, e.g. 'rag-cli.rag k create %s'",
+		strings.Join(missing, ", "), missing[0])
+}
+
+// jobTargetIndex returns the full index name a job ingests into.
+func jobTargetIndex(job BatchJob) string {
+	if job.TargetKB == "" {
+		return DefaultIndexName()
+	}
+	return FullIndexName(job.TargetKB)
+}
+
 // processSingleJob ingests one job from a batch config into OpenSearch.
 func processSingleJob(ctx context.Context, client *OpenSearchClient, tikaURL string, job BatchJob, force bool) error {
-	targetIndex := FullIndexName(job.TargetKB)
-	if job.TargetKB == "" {
-		targetIndex = DefaultIndexName()
-	}
+	targetIndex := jobTargetIndex(job)
 
 	switch job.Type {
 	case "file":
@@ -120,9 +161,12 @@ func processGitHubRepoJob(ctx context.Context, client *OpenSearchClient, tikaURL
 	}
 
 	token := os.Getenv("GITHUB_TOKEN")
-	entries, err := processing.ListGitHubRepoFiles(owner, repo, job.Branch, job.Path, job.Extensions, token)
+	entries, truncated, err := processing.ListGitHubRepoFiles(owner, repo, job.Branch, job.Path, job.Extensions, token)
 	if err != nil {
 		return fmt.Errorf("listing repository files: %w", err)
+	}
+	if truncated {
+		fmt.Println("Warning: repository tree is truncated (>100k files); some files may be skipped")
 	}
 
 	fmt.Printf("Found %d files in %s/%s\n", len(entries), owner, repo)
@@ -134,7 +178,7 @@ func processGitHubRepoJob(ctx context.Context, client *OpenSearchClient, tikaURL
 			fmt.Printf("  skip %s: %v\n", entry.Path, err)
 			continue
 		}
-		if ingestErr := ingestAndIndex(ctx, client, tikaURL, tempPath, entry.Path, targetIndex, job.Label, force); ingestErr != nil {
+		if ingestErr := ingestAndIndex(ctx, client, tikaURL, tempPath, entry.SourceID, targetIndex, job.Label, force); ingestErr != nil {
 			fmt.Printf("  skip %s: %v\n", entry.Path, ingestErr)
 		}
 		cleanup()
@@ -150,9 +194,12 @@ func processGiteaRepoJob(ctx context.Context, client *OpenSearchClient, tikaURL 
 	}
 
 	token := os.Getenv("GITEA_TOKEN")
-	entries, err := processing.ListGiteaRepoFiles(baseURL, owner, repo, job.Branch, job.Path, job.Extensions, token)
+	entries, truncated, err := processing.ListGiteaRepoFiles(baseURL, owner, repo, job.Branch, job.Path, job.Extensions, token)
 	if err != nil {
 		return fmt.Errorf("listing repository files: %w", err)
+	}
+	if truncated {
+		fmt.Println("Warning: repository tree is truncated; some files may be skipped")
 	}
 
 	fmt.Printf("Found %d files in %s/%s\n", len(entries), owner, repo)
@@ -164,7 +211,7 @@ func processGiteaRepoJob(ctx context.Context, client *OpenSearchClient, tikaURL 
 			fmt.Printf("  skip %s: %v\n", entry.Path, err)
 			continue
 		}
-		if ingestErr := ingestAndIndex(ctx, client, tikaURL, tempPath, entry.Path, targetIndex, job.Label, force); ingestErr != nil {
+		if ingestErr := ingestAndIndex(ctx, client, tikaURL, tempPath, entry.SourceID, targetIndex, job.Label, force); ingestErr != nil {
 			fmt.Printf("  skip %s: %v\n", entry.Path, ingestErr)
 		}
 		cleanup()

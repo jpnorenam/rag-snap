@@ -355,9 +355,9 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	// the model does not answer from parametric knowledge.
 	llmPrompt := prompt
 	if ragContext != "" {
-		llmPrompt = buildRAGPrompt(ragContext, prompt)
+		llmPrompt = buildRAGPrompt(ragContext, "", "", prompt)
 	} else if hasContext {
-		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", prompt)
+		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", "", "", prompt)
 	}
 
 	// Build a temporary copy of the message history so the augmented prompt

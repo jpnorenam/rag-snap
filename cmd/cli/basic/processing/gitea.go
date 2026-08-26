@@ -25,27 +25,39 @@ func ParseGiteaSource(source string) (baseURL, owner, repo string, err error) {
 	return fmt.Sprintf("%s://%s", u.Scheme, u.Host), parts[0], parts[1], nil
 }
 
+// GiteaRepoNamespace returns the source-id namespace for a Gitea repository:
+// "host/owner/repo". The host is included because, unlike GitHub, Gitea sources
+// can come from different instances that may share an owner/repo pair.
+func GiteaRepoNamespace(baseURL, owner, repo string) string {
+	host := baseURL
+	if u, err := url.Parse(baseURL); err == nil && u.Host != "" {
+		host = u.Host
+	}
+	return fmt.Sprintf("%s/%s/%s", host, owner, repo)
+}
+
 // ListGiteaRepoFiles returns all files in a Gitea repository matching the given
-// extensions and optional path prefix. It resolves the branch to a commit SHA
-// then fetches the full recursive tree in a single API call.
-func ListGiteaRepoFiles(baseURL, owner, repo, branch, pathFilter string, extensions []string, token string) ([]RepoEntry, error) {
+// extensions and optional path prefix, plus whether the upstream tree listing
+// was truncated. It resolves the branch to a commit SHA then fetches the full
+// recursive tree in a single API call.
+func ListGiteaRepoFiles(baseURL, owner, repo, branch, pathFilter string, extensions []string, token string) ([]RepoEntry, bool, error) {
 	if branch == "" {
 		var err error
 		branch, err = giteaDefaultBranch(baseURL, owner, repo, token)
 		if err != nil {
-			return nil, fmt.Errorf("fetching default branch: %w", err)
+			return nil, false, fmt.Errorf("fetching default branch: %w", err)
 		}
 	}
 
 	commitSHA, err := giteaBranchCommit(baseURL, owner, repo, branch, token)
 	if err != nil {
-		return nil, fmt.Errorf("resolving branch to commit: %w", err)
+		return nil, false, fmt.Errorf("resolving branch to commit: %w", err)
 	}
 
 	treeURL := fmt.Sprintf("%s/api/v1/repos/%s/%s/git/trees/%s?recursive=true", baseURL, owner, repo, commitSHA)
 	body, err := giteaGET(treeURL, token)
 	if err != nil {
-		return nil, fmt.Errorf("fetching repository tree: %w", err)
+		return nil, false, fmt.Errorf("fetching repository tree: %w", err)
 	}
 	defer body.Close()
 
@@ -57,10 +69,7 @@ func ListGiteaRepoFiles(baseURL, owner, repo, branch, pathFilter string, extensi
 		Truncated bool `json:"truncated"`
 	}
 	if err := json.NewDecoder(body).Decode(&treeResp); err != nil {
-		return nil, fmt.Errorf("parsing tree response: %w", err)
-	}
-	if treeResp.Truncated {
-		fmt.Println("Warning: repository tree is truncated; some files may be skipped")
+		return nil, false, fmt.Errorf("parsing tree response: %w", err)
 	}
 
 	extSet := make(map[string]struct{}, len(extensions))
@@ -82,11 +91,12 @@ func ListGiteaRepoFiles(baseURL, owner, repo, branch, pathFilter string, extensi
 		rawURL := fmt.Sprintf("%s/api/v1/repos/%s/%s/raw/%s?ref=%s",
 			baseURL, owner, repo, item.Path, url.QueryEscape(branch))
 		entries = append(entries, RepoEntry{
-			Path:   item.Path,
-			RawURL: rawURL,
+			Path:     item.Path,
+			RawURL:   rawURL,
+			SourceID: RepoSourceID(GiteaRepoNamespace(baseURL, owner, repo), item.Path),
 		})
 	}
-	return entries, nil
+	return entries, treeResp.Truncated, nil
 }
 
 // giteaDefaultBranch returns the default branch of a Gitea repository.

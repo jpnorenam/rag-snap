@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { parseManifest, serializeManifest, ManifestParseError } from "./manifest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { domainsStub, idPrefix, parseManifest, serializeManifest, ManifestParseError } from "./manifest";
 
 // A real `rag-cli answer batch --build` manifest: the generated header comment,
 // a block-list knowledge_bases, and a `source` field on every question
@@ -78,4 +80,393 @@ questions:
 `),
     ManifestParseError
   );
+});
+
+// --- Cases the hand-rolled reader could not represent. -----------------------
+// These are the reason parsing moved to a real YAML parser; the cases above are
+// the regression suite proving the swap kept existing manifests working.
+
+test("reads a block-scalar prompt with its full body", () => {
+  const m = parseManifest(`version: "1.0"
+prompt: |-
+  You are answering a compliance questionnaire.
+
+  Cite the source of every claim.
+  Say "not covered" when the context does not support an answer.
+questions:
+  - question: Q?
+`);
+  // The previous reader kept only the "|-" header, silently truncating the
+  // prompt to nothing and running the batch with the default system prompt.
+  assert.equal(
+    m.prompt,
+    'You are answering a compliance questionnaire.\n\nCite the source of every claim.\nSay "not covered" when the context does not support an answer.'
+  );
+});
+
+test("reads a block-scalar prompt that keeps its trailing newline", () => {
+  const m = parseManifest(`prompt: |
+  One line.
+questions:
+  - question: Q?
+`);
+  assert.equal(m.prompt, "One line.\n");
+});
+
+test("reads nested block sequences of mappings", () => {
+  const m = parseManifest(`version: "1.0"
+knowledge_bases:
+  - vendor-docs
+questions:
+  - id: C1
+    question: Does the platform support SR-IOV?
+    keywords:
+      - sriov
+      - passthrough
+  - id: C2
+    question: Is NUMA pinning supported?
+    keywords:
+      - numa
+`);
+  assert.equal(m.questions.length, 2);
+  assert.deepEqual(m.questions[0].keywords, ["sriov", "passthrough"]);
+  assert.deepEqual(m.questions[1].keywords, ["numa"]);
+});
+
+test("reads keywords in both inline and block sequence form", () => {
+  const m = parseManifest(`questions:
+  - question: Inline?
+    keywords: [sriov, numa]
+  - question: Block?
+    keywords:
+      - sriov
+      - numa
+`);
+  assert.deepEqual(m.questions[0].keywords, ["sriov", "numa"]);
+  assert.deepEqual(m.questions[1].keywords, m.questions[0].keywords);
+});
+
+test("tolerates an unknown top-level field", () => {
+  const m = parseManifest(`version: "1.0"
+future_top_level:
+  nested: value
+  list:
+    - a
+questions:
+  - question: Q?
+`);
+  assert.equal(m.version, "1.0");
+  assert.equal(m.questions.length, 1);
+});
+
+test("coerces an unquoted numeric id to a string", () => {
+  const m = parseManifest(`questions:
+  - id: 4
+    question: Q?
+`);
+  assert.equal(m.questions[0].id, "4");
+});
+
+test("reports a malformed document as a ManifestParseError", () => {
+  assert.throws(() => parseManifest("questions:\n  - question: [unclosed\n"), ManifestParseError);
+  // A mapping is required at the root; a bare list is not a manifest.
+  assert.throws(() => parseManifest("- a\n- b\n"), ManifestParseError);
+});
+
+test("rejects a non-mapping question item", () => {
+  assert.throws(() => parseManifest("questions:\n  - just a string\n"), ManifestParseError);
+});
+
+test("reports a non-numeric temperature with its line", () => {
+  assert.throws(
+    () =>
+      parseManifest(`version: "1.0"
+temperature: warm
+questions:
+  - question: Q?
+`),
+    (e: unknown) => e instanceof ManifestParseError && /temperature must be a number \(line 2\)/.test(e.message)
+  );
+});
+
+// --- Serialization: block scalars and quoting. -------------------------------
+
+test("round-trips a multi-line prompt through serialize and parse", () => {
+  const manifest = {
+    version: "1.0",
+    prompt: 'Answer only from the context.\n\nSay "not covered" otherwise.',
+    questions: [{ id: "1", question: "Q?" }],
+  };
+  const yaml = serializeManifest(manifest);
+  // Emitted as a literal block, not a quoted scalar with raw newlines in it.
+  assert.match(yaml, /^prompt: \|-$/m);
+  assert.deepEqual(parseManifest(yaml), manifest);
+});
+
+test("round-trips values a plain scalar would change", () => {
+  const manifest = {
+    version: "1.0",
+    questions: [
+      // Each of these read back as a non-string, or lost characters, when
+      // written unquoted or double-quoted without escaping.
+      { id: "1", question: "yes" },
+      { id: "2", question: "1.0" },
+      { id: "3", question: "null" },
+      { id: "4", question: "C:\\temp\\notes" },
+      { id: "5", question: 'He said "maybe"' },
+      { id: "6", question: "trailing space " },
+      { id: "7", question: "- leading dash" },
+    ],
+  };
+  assert.deepEqual(parseManifest(serializeManifest(manifest)), manifest);
+});
+
+test("round-trips a value that cannot be a block scalar", () => {
+  // A line with trailing whitespace rules out the block form; the quoted
+  // fallback escapes the newlines instead of emitting them raw.
+  const manifest = {
+    version: "1.0",
+    prompt: "first line \nsecond line",
+    questions: [{ id: "1", question: "Q?" }],
+  };
+  const yaml = serializeManifest(manifest);
+  assert.equal(/^prompt: \|/m.test(yaml), false);
+  assert.deepEqual(parseManifest(yaml), manifest);
+});
+
+test("reads a domains routing table", () => {
+  const manifest = parseManifest(`version: "1.0"
+domains:
+  - match: "C*"
+    context: Enhanced Platform Awareness
+    keywords: [sriov, numa]
+  - match: "GIS*"
+    context: |-
+      Geographic information system deliverables.
+      Answer within that scope only.
+  - match: "J1.*"
+    keywords:
+      - storage
+questions:
+  - id: C4
+    question: Do you support SR-IOV?
+`);
+  assert.deepEqual(manifest.domains, [
+    { match: "C*", context: "Enhanced Platform Awareness", keywords: ["sriov", "numa"] },
+    {
+      match: "GIS*",
+      context: "Geographic information system deliverables.\nAnswer within that scope only.",
+    },
+    { match: "J1.*", keywords: ["storage"] },
+  ]);
+});
+
+test("treats an absent or empty domains block as no routing", () => {
+  assert.equal(parseManifest(CLI_BUILD_MANIFEST).domains, undefined);
+  assert.equal(
+    parseManifest('version: "1.0"\ndomains: []\nquestions:\n  - question: Q?\n').domains,
+    undefined
+  );
+});
+
+test("rejects a domains entry with neither context nor keywords", () => {
+  // This is the uncommented-but-unfilled stub: rejected, not ignored, and
+  // reported against the entry's own line.
+  assert.throws(
+    () =>
+      parseManifest(`version: "1.0"
+domains:
+  - match: "C*"
+    context: ""
+    keywords: []
+questions:
+  - question: Q?
+`),
+    (e: unknown) =>
+      e instanceof ManifestParseError &&
+      /domains entry 1 \(match "C\*"\) has neither context nor keywords \(line 3\)/.test(e.message)
+  );
+});
+
+test("rejects duplicate domains match patterns", () => {
+  assert.throws(
+    () =>
+      parseManifest(`version: "1.0"
+domains:
+  - match: "C*"
+    context: EPA
+  - match: "c*"
+    context: Something else
+questions:
+  - question: Q?
+`),
+    (e: unknown) =>
+      e instanceof ManifestParseError &&
+      /domains entries 1 and 2 declare the same match pattern "c\*" \(line 5\)/.test(e.message)
+  );
+});
+
+test("rejects a domains block that is not a list of mappings", () => {
+  assert.throws(
+    () => parseManifest('version: "1.0"\ndomains: C*\nquestions:\n  - question: Q?\n'),
+    (e: unknown) => e instanceof ManifestParseError && /`domains` must be a list \(line 2\)/.test(e.message)
+  );
+  assert.throws(
+    () => parseManifest('version: "1.0"\ndomains:\n  - "C*"\nquestions:\n  - question: Q?\n'),
+    (e: unknown) =>
+      e instanceof ManifestParseError &&
+      /domains entry 1 must be a mapping with a `match` field \(line 3\)/.test(e.message)
+  );
+});
+
+test("round-trips domains and source through serialize and parse", () => {
+  // The routing has to survive upload → preview → download, so both the table
+  // and the per-question source it can fall back to are written back.
+  const manifest = {
+    version: "1.0",
+    domains: [
+      { match: "C*", context: "Enhanced Platform Awareness", keywords: ["sriov", "numa"] },
+      { match: "GIS Deliverables", context: "Mapping deliverables.\nStay within them." },
+      { match: "J1.*", keywords: ["storage"] },
+    ],
+    questions: [
+      { id: "C4", question: "Do you support SR-IOV?" },
+      { id: "17", question: "Describe the deliverables.", source: "GIS Deliverables" },
+    ],
+  };
+  const yaml = serializeManifest(manifest);
+  // A multi-line context takes the block form, like a multi-line prompt.
+  assert.match(yaml, /^ {4}context: \|-$/m);
+  assert.deepEqual(parseManifest(yaml), manifest);
+});
+
+test("a run body built from a parsed manifest still carries domains and source", () => {
+  // The screens post `{ ...manifest, temperature }` as JSON. This is the guard on
+  // that shaping: a field the parser reads but the request drops would route in
+  // the preview and not in the run, which is the failure `source` already had.
+  const manifest = parseManifest(`version: "1.0"
+domains:
+  - match: "GIS*"
+    context: Mapping deliverables
+questions:
+  - id: "17"
+    question: Describe the deliverables.
+    source: GIS Deliverables
+`);
+  const body = JSON.parse(JSON.stringify({ ...manifest, temperature: 0.1 }));
+  assert.deepEqual(body.domains, [{ match: "GIS*", context: "Mapping deliverables" }]);
+  assert.equal(body.questions[0].source, "GIS Deliverables");
+  assert.equal(body.temperature, 0.1);
+});
+
+// --- The commented-out `domains:` stub written above a built manifest ---------
+
+// EXTRACTOR_GO is the CLI's copy of the stub preamble, located relative to this
+// file so the suite runs the same from ui/ and from the repo root.
+const EXTRACTOR_GO = fileURLToPath(
+  new URL("../../cmd/cli/basic/rfp/extractor.go", import.meta.url)
+);
+
+// goPreamble lifts rfp.domainsStubPreamble out of the Go source: the raw string
+// literal between the backticks following the const declaration.
+function goPreamble(): string {
+  const source = readFileSync(EXTRACTOR_GO, "utf8");
+  const start = source.indexOf("const domainsStubPreamble = `");
+  assert.ok(start >= 0, "rfp.domainsStubPreamble not found in extractor.go");
+  const open = source.indexOf("`", start) + 1;
+  const close = source.indexOf("`", open);
+  assert.ok(close > open, "rfp.domainsStubPreamble is not terminated");
+  return source.slice(open, close);
+}
+
+test("the stub preamble matches the CLI's, word for word", () => {
+  // Two copies of the same guidance, one in Go and one here, is the same drift
+  // risk the shared resolution fixture guards for the resolver. A manifest built
+  // in the UI and one built by `answer batch --build` must explain routing the
+  // same way, so this reads the Go source rather than trusting a copy-paste.
+  const stub = domainsStub([{ id: "C4", question: "a" }]);
+  assert.ok(stub.startsWith(goPreamble()), "the UI stub preamble has drifted from rfp's");
+});
+
+test("the stub suggests id prefixes and sources, with counts", () => {
+  const stub = domainsStub([
+    { id: "C4", question: "a" },
+    { id: "C7", question: "b" },
+    { id: "J1.3", question: "c" },
+    { id: "17", question: "d", source: "GIS Deliverables" },
+    { id: "18", question: "e", source: "GIS Deliverables" },
+    // No prefix and no source: nothing to suggest, so it contributes nothing.
+    { id: "19", question: "f" },
+  ]);
+  assert.match(stub, /^# domains:$/m);
+  assert.match(stub, /^#   - match: "C\*"   # 2 question\(s\) by id prefix$/m);
+  assert.match(stub, /^#   - match: "J\*"   # 1 question\(s\) by id prefix$/m);
+  assert.match(stub, /^#   - match: "GIS Deliverables"   # 2 question\(s\) by source$/m);
+  // The placeholders are annotated once, on the first entry.
+  assert.equal(stub.match(/one sentence naming the requirement domain/g)?.length, 1);
+  assert.equal(stub.match(/^#     context: ""$/gm)?.length, 2);
+  // Every line is a comment, so nothing here can affect a run.
+  for (const line of stub.split("\n")) {
+    if (line !== "") assert.match(line, /^#/, `stub line is not a comment: ${line}`);
+  }
+});
+
+test("the stub falls back to an editable catch-all when there is nothing to suggest", () => {
+  const stub = domainsStub([{ id: "1", question: "a" }, { question: "b" }]);
+  assert.match(stub, /^#   - match: "\*"   # no id prefixes or sources observed; edit this pattern$/m);
+});
+
+test("a built manifest carrying the stub re-parses with no routing", () => {
+  // The stub is the build flow's only routing output, and it is inert: the
+  // manifest it sits above must parse exactly as it would without it, with no
+  // `domains` — an unedited stub cannot change a run.
+  const manifest = {
+    version: "1.0",
+    temperature: 0.1,
+    knowledge_bases: ["telco"],
+    questions: [
+      { id: "C4", question: "Do you support SR-IOV?" },
+      { id: "17", question: "Describe the deliverables.", source: "GIS Deliverables" },
+    ],
+  };
+  const yaml = serializeManifest(manifest, { domainsStub: true });
+  assert.match(yaml, /^# domains:$/m);
+  const parsed = parseManifest(yaml);
+  assert.equal(parsed.domains, undefined);
+  assert.deepEqual(parsed, manifest);
+  // Byte-identical to the plain serialization once the comment block is removed.
+  assert.equal(yaml.slice(domainsStub(manifest.questions).length), serializeManifest(manifest));
+});
+
+test("the stub is omitted when the manifest already carries routing", () => {
+  // A live `domains:` block and a commented one above it would read as
+  // alternatives; the filled-in block is the answer, so the suggestion is moot.
+  const yaml = serializeManifest(
+    {
+      version: "1.0",
+      domains: [{ match: "C*", context: "Enhanced Platform Awareness" }],
+      questions: [{ id: "C4", question: "a" }],
+    },
+    { domainsStub: true }
+  );
+  assert.ok(!yaml.includes("# domains:"));
+  assert.match(yaml, /^domains:$/m);
+});
+
+test("idPrefix takes the run of characters before the first digit", () => {
+  const cases: [string, string][] = [
+    ["C4", "C"],
+    ["J1.3", "J"],
+    ["  GIS7 ", "GIS"],
+    ["ADMIN-1", "ADMIN-"],
+    // A bare sequence number has no prefix to route on — the case the source
+    // fallback exists for.
+    ["17", ""],
+    ["", ""],
+    // No digit at all: the whole id is the prefix.
+    ["ADMIN", "ADMIN"],
+  ];
+  for (const [id, want] of cases) {
+    assert.equal(idPrefix(id), want, id);
+  }
 });
