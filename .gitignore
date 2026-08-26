@@ -54,3 +54,19 @@ internal/webui/dist/*
 
 # Local working kit — not part of the project.
 hackathon-ux-harness-kit*/
+
+# RFP working files. An in-flight RFP leaves its source document, the manifest
+# the extractor generates beside it, the answers, and prompt drafts in the repo
+# root. That is per-engagement working data, not project data, and the source
+# documents are large. These rules are root-anchored (leading /), so documents
+# and fixtures under docs/ and testdata/ are unaffected.
+#
+# The *.yaml rule is broad on purpose — a new RFP should be ignored without
+# anyone remembering to add a rule. The cost is that a genuinely new root-level
+# YAML file must be un-ignored here, the way rest-api.yaml is.
+/*.pdf
+/*.xlsx
+/*.docx
+/*.txt
+/*.yaml
+!/rest-api.yaml
