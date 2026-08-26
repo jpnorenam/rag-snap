@@ -14,8 +14,19 @@ const gitHubAPIBase = "https://api.github.com"
 
 // RepoEntry represents a single file from a remote git repository.
 type RepoEntry struct {
-	Path   string // file path within the repo (e.g. "docs/overview.md")
-	RawURL string // URL to fetch the raw file content
+	Path     string // file path within the repo (e.g. "docs/overview.md")
+	RawURL   string // URL to fetch the raw file content
+	SourceID string // repo-qualified id used for source metadata (see RepoSourceID)
+}
+
+// RepoSourceID returns the source id for a file within a repository: the
+// repository namespace ("owner/repo" for GitHub, "host/owner/repo" for Gitea)
+// joined with the in-repo path, e.g. "canonical/k8s-snap/README.md". Source
+// metadata is keyed globally by source id, so a bare repo-relative path would
+// collide with the same filename in every other repo and knowledge base —
+// one repo's "README.md" would suppress or overwrite all the others.
+func RepoSourceID(namespace, path string) string {
+	return namespace + "/" + path
 }
 
 // ParseGitHubSource parses a GitHub source string into owner and repo.
@@ -33,21 +44,22 @@ func ParseGitHubSource(source string) (owner, repo string, err error) {
 }
 
 // ListGitHubRepoFiles returns all files in a GitHub repository matching the
-// given extensions and optional path prefix. It uses the Trees API to fetch
-// the entire tree in a single API call.
-func ListGitHubRepoFiles(owner, repo, branch, pathFilter string, extensions []string, token string) ([]RepoEntry, error) {
+// given extensions and optional path prefix, plus whether the upstream tree
+// listing was truncated (>100k files). It uses the Trees API to fetch the
+// entire tree in a single API call.
+func ListGitHubRepoFiles(owner, repo, branch, pathFilter string, extensions []string, token string) ([]RepoEntry, bool, error) {
 	if branch == "" {
 		var err error
 		branch, err = fetchDefaultBranch(owner, repo, token)
 		if err != nil {
-			return nil, fmt.Errorf("fetching default branch: %w", err)
+			return nil, false, fmt.Errorf("fetching default branch: %w", err)
 		}
 	}
 
 	url := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1", gitHubAPIBase, owner, repo, branch)
 	body, err := githubGET(url, token)
 	if err != nil {
-		return nil, fmt.Errorf("fetching repository tree: %w", err)
+		return nil, false, fmt.Errorf("fetching repository tree: %w", err)
 	}
 	defer body.Close()
 
@@ -59,10 +71,7 @@ func ListGitHubRepoFiles(owner, repo, branch, pathFilter string, extensions []st
 		Truncated bool `json:"truncated"`
 	}
 	if err := json.NewDecoder(body).Decode(&treeResp); err != nil {
-		return nil, fmt.Errorf("parsing tree response: %w", err)
-	}
-	if treeResp.Truncated {
-		fmt.Println("Warning: repository tree is truncated (>100k files); some files may be skipped")
+		return nil, false, fmt.Errorf("parsing tree response: %w", err)
 	}
 
 	extSet := make(map[string]struct{}, len(extensions))
@@ -82,11 +91,12 @@ func ListGitHubRepoFiles(owner, repo, branch, pathFilter string, extensions []st
 			continue
 		}
 		entries = append(entries, RepoEntry{
-			Path:   item.Path,
-			RawURL: fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, branch, item.Path),
+			Path:     item.Path,
+			RawURL:   fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, branch, item.Path),
+			SourceID: RepoSourceID(owner+"/"+repo, item.Path),
 		})
 	}
-	return entries, nil
+	return entries, treeResp.Truncated, nil
 }
 
 // FetchRepoFile downloads a raw file from a remote repository and writes it to a temp file.

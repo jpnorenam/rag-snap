@@ -1,0 +1,212 @@
+# Shared domain-resolution fixture for `answer batch` routing.
+#
+# THIS IS TEST DATA, NOT CONFIGURATION. Nothing reads it at run time, and the
+# patterns and contexts below are invented — they are not a set of categories to
+# reuse. Each manifest declares its own `domains:` block for the document it
+# belongs to, and a manifest without one is answered exactly as it was before
+# routing existed.
+#
+# What the file is for: domain resolution exists twice, in Go for the run
+# (cmd/cli/basic/chat/domains.go) and in TypeScript for the web UI's pre-run
+# preview (ui/lib/domains.ts). These are the cases both assert against, so an
+# algorithm change applied to only one side fails the other side's tests:
+#
+#   Go   cmd/cli/basic/chat/domains_fixture_test.go
+#   TS   ui/lib/domains.test.ts
+#
+# Both readers locate this file relative to their own source file, not the working
+# directory. It is YAML rather than JSON because both languages already have a
+# YAML reader here (gopkg.in/yaml.v3, and the `yaml` package the UI's manifest
+# module uses), and because the root .gitignore excludes *.json broadly.
+#
+# Every id and source is quoted so both readers see a string: a bare 17 decodes as
+# an integer and Go refuses to put it in a string field.
+#
+# Scope: the patterns here use only `*` and `?`, which is all the manifest schema
+# commits to. Go's path.Match also accepts `[...]` classes and `\` escapes, and
+# the TypeScript translation reproduces them, but that is incidental behaviour
+# tested on each side rather than a promise made here.
+
+groups:
+  - name: overlapping prefixes
+    # Two overlapping prefixes, a lowercase pattern, and one interior wildcard.
+    # No catch-all — see the group below for that interaction.
+    domains:
+      - match: "C*"
+        context: "Enhanced Platform Awareness"
+      - match: "J*"
+        context: "Hardware"
+      - match: "J1.*"
+        context: "Storage vendor"
+      - match: "gis*"
+        context: "Security baseline"
+      - match: "T?.A"
+        context: "Interior wildcard"
+    cases:
+      - name: specific prefix beats broader one
+        id: "J1.3"
+        source: ""
+        want: "J1.*"
+      - name: broader prefix still applies
+        id: "J2.7"
+        source: ""
+        want: "J*"
+      - name: lowercase pattern matches uppercase id
+        id: "GIS3"
+        source: ""
+        want: "gis*"
+      - name: uppercase pattern matches lowercase id
+        id: "c4"
+        source: ""
+        want: "C*"
+      - name: single-character wildcard
+        id: "T4.A"
+        source: ""
+        want: "T?.A"
+      - name: single-character wildcard does not match two characters
+        id: "T44.A"
+        source: ""
+        want: ""
+      - name: bare numeric id falls back to source
+        id: "17"
+        source: "C"
+        want: "C*"
+      - name: bare numeric id falls back on a sheet name
+        id: "42"
+        source: "GIS Deliverables"
+        want: "gis*"
+      - name: id match is not re-matched against source
+        id: "C4"
+        source: "J1.9"
+        want: "C*"
+      - name: non-numeric id does not fall back to source
+        id: "ADMIN-1"
+        source: "C"
+        want: ""
+      - name: numeric id with unmatched source
+        id: "17"
+        source: "Admin"
+        want: ""
+      - name: empty source with numeric id
+        id: "17"
+        source: ""
+        want: ""
+      - name: an id that is not a bare sequence keeps its own result
+        id: "1.2"
+        source: "C"
+        want: ""
+      - name: unmatched id with no source
+        id: "ZZ9"
+        source: ""
+        want: ""
+
+  - name: catch-all
+    domains:
+      - match: "*"
+        context: "General requirement"
+      - match: "C*"
+        context: "Enhanced Platform Awareness"
+      - match: "gis*"
+        context: "Security baseline"
+    cases:
+      - name: catch-all applies when nothing else matches
+        id: "ZZ9"
+        source: ""
+        want: "*"
+      - name: catch-all never outranks a specific pattern
+        id: "C4"
+        source: ""
+        want: "C*"
+      - name: catch-all matches an empty id
+        id: ""
+        source: ""
+        want: "*"
+      # A catch-all matches a bare numeric id, so the id "matched something" and
+      # source is never consulted. A routing table that wants sheet-name fallback
+      # must therefore leave the catch-all out.
+      - name: catch-all preempts the source fallback
+        id: "17"
+        source: "GIS Deliverables"
+        want: "*"
+
+  - name: tie breaks to document order
+    # "C*" and "?4" both match "C4" with one literal character each, so the
+    # winner is decided by position.
+    domains:
+      - match: "C*"
+        context: "first"
+      - match: "?4"
+        context: "second"
+    cases:
+      - name: the earlier of two tied patterns wins
+        id: "C4"
+        source: ""
+        want: "C*"
+
+  - name: tie breaks to document order, reversed
+    # The same two patterns in the other order pick the other winner, which is
+    # what makes the tie positional rather than a property of the patterns.
+    domains:
+      - match: "?4"
+        context: "second"
+      - match: "C*"
+        context: "first"
+    cases:
+      - name: the earlier of two tied patterns wins
+        id: "C4"
+        source: ""
+        want: "?4"
+
+  - name: no entry matches
+    # Without a catch-all, an unmatched question resolves to no domain and is
+    # answered exactly as it would be with no routing at all.
+    domains:
+      - match: "C*"
+        context: "EPA"
+      - match: "J1.*"
+        context: "Storage vendor"
+    cases:
+      - name: unrelated prefix
+        id: "A7"
+        source: ""
+        want: ""
+      - name: empty id
+        id: ""
+        source: ""
+        want: ""
+      - name: numeric id with unmatched source
+        id: "17"
+        source: "Admin"
+        want: ""
+      - name: prefix that only the narrower pattern would cover
+        id: "J2.1"
+        source: ""
+        want: ""
+
+  - name: keywords-only entries
+    # An entry may carry keywords instead of a context; resolution does not care
+    # which of the two it has, only that it has one.
+    domains:
+      - match: "C*"
+        keywords: ["sriov", "numa"]
+      - match: "GIS*"
+        keywords: ["hardening"]
+    cases:
+      - name: keywords-only entry resolves
+        id: "C4"
+        source: ""
+        want: "C*"
+      - name: longer literal prefix still wins
+        id: "GIS7"
+        source: ""
+        want: "GIS*"
+
+  - name: empty table
+    # The no-domains path, which every manifest written before routing existed
+    # takes: nothing resolves, so no prompt or query changes.
+    domains: []
+    cases:
+      - name: nothing resolves without entries
+        id: "C4"
+        source: "C"
+        want: ""

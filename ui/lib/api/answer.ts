@@ -4,13 +4,26 @@ import type { OperationView } from "./operations";
 // BatchQuestion is a single question in a prepared manifest. `id`, `question`,
 // and `keywords` match the daemon's batchQuestionRequest (POST /1.0/answer/batch).
 // `source` is written by the CLI's `answer batch --build` (rfp.Question, e.g. an
-// XLSX sheet name); the daemon and the CLI reader both ignore it, but we retain
-// it so a manifest round-trips unchanged.
+// XLSX sheet name) and is read by the run: it is the fallback `domains` match key
+// for a question whose `id` is a bare sequence number, so it must be sent, not
+// merely retained for a round trip.
 export interface BatchQuestion {
   id?: string;
   question: string;
   keywords?: string[];
   source?: string;
+}
+
+// BatchDomain is one entry of a manifest's `domains` routing table, matching the
+// daemon's batchDomainRequest. `match` is a glob over `*` and `?` compared
+// case-insensitively against a question's `id` (or its `source`, for a bare
+// numeric id); `context` is the requirement domain injected into that question's
+// turn, and `keywords` are retrieval terms it inherits. An entry needs at least
+// one of `context` and `keywords`.
+export interface BatchDomain {
+  match: string;
+  context?: string;
+  keywords?: string[];
 }
 
 // BatchManifest is the prepared manifest body accepted by POST /1.0/answer/batch,
@@ -22,6 +35,7 @@ export interface BatchManifest {
   knowledge_bases?: string[];
   prompt?: string;
   temperature?: number;
+  domains?: BatchDomain[];
   questions: BatchQuestion[];
 }
 

@@ -27,7 +27,12 @@ const RECEIVE_PATH = "/import";
 export interface HandoffResultsFile {
   generated_at: string;
   model: string;
-  results: { id: string; question: string; answer: string }[];
+  // `domain` is the routing entry that produced the answer, present only when
+  // the run recorded one. It is listed here because the results travel verbatim
+  // (buildPayload passes parsed.items straight through, as Export JSON does), so
+  // typing the item without it would invite a future reshape to drop it. The
+  // receiver may ignore it — the contract's required fields are unchanged.
+  results: { id: string; question: string; answer: string; domain?: string }[];
 }
 
 // HandoffPayload is the `payload` field of a HANDOFF_PAYLOAD message.

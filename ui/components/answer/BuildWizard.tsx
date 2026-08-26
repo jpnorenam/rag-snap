@@ -236,12 +236,23 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
       version: "1.0",
       knowledge_bases: activeBases.length > 0 ? activeBases : undefined,
       temperature,
-      questions: chosen.map((q, i) => ({ id: q.id || String(i + 1), question: q.question.trim() })),
+      questions: chosen.map((q, i) => ({
+        id: q.id || String(i + 1),
+        question: q.question.trim(),
+        // The sheet/section name the extraction recorded is the fallback domain
+        // match key for a question whose id is a bare sequence number, so it has
+        // to reach the run and the downloaded manifest rather than stop here.
+        source: q.source?.trim() || undefined,
+      })),
     };
   }, [questions, activeBases, temperature]);
 
   const downloadManifest = useCallback(() => {
-    const yaml = serializeManifest(buildManifest());
+    // domainsStub: a manifest built from a document gets the same commented-out
+    // `domains:` block `answer batch --build` writes, so the operator can add
+    // routing by uncommenting it. It is comments only — the manifest still runs
+    // with no routing until they fill it in.
+    const yaml = serializeManifest(buildManifest(), { domainsStub: true });
     const blob = new Blob([yaml], { type: "application/x-yaml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");

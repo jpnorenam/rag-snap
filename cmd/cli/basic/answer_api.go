@@ -20,6 +20,7 @@ type batchManifestJSON struct {
 	KnowledgeBases []string            `json:"knowledge_bases,omitempty"`
 	Prompt         string              `json:"prompt,omitempty"`
 	PromptRef      string              `json:"prompt_ref,omitempty"`
+	Domains        []batchDomainJSON   `json:"domains,omitempty"`
 	Temperature    *float64            `json:"temperature,omitempty"`
 	Questions      []batchQuestionJSON `json:"questions"`
 }
@@ -27,7 +28,50 @@ type batchManifestJSON struct {
 type batchQuestionJSON struct {
 	ID       string   `json:"id,omitempty"`
 	Question string   `json:"question"`
+	Source   string   `json:"source,omitempty"`
 	Keywords []string `json:"keywords,omitempty"`
+}
+
+type batchDomainJSON struct {
+	Match    string   `json:"match"`
+	Context  string   `json:"context,omitempty"`
+	Keywords []string `json:"keywords,omitempty"`
+}
+
+// batchManifestBody re-shapes a loaded manifest into the daemon's JSON request
+// body. Every manifest field the run honours has to be carried here, or the
+// daemon-backed path silently runs a different manifest than the direct path.
+func batchManifestBody(manifest *chat.BatchManifest, temperature float64) batchManifestJSON {
+	questions := make([]batchQuestionJSON, len(manifest.Questions))
+	for i, q := range manifest.Questions {
+		questions[i] = batchQuestionJSON{
+			ID:       q.ID,
+			Question: q.Question,
+			Source:   q.Source,
+			Keywords: []string(q.Keywords),
+		}
+	}
+	var domains []batchDomainJSON
+	if len(manifest.Domains) > 0 {
+		domains = make([]batchDomainJSON, len(manifest.Domains))
+		for i, d := range manifest.Domains {
+			domains[i] = batchDomainJSON{
+				Match:    d.Match,
+				Context:  d.Context,
+				Keywords: []string(d.Keywords),
+			}
+		}
+	}
+	return batchManifestJSON{
+		Version:        manifest.Version,
+		Model:          manifest.Model,
+		KnowledgeBases: manifest.KnowledgeBases,
+		Prompt:         manifest.Prompt,
+		PromptRef:      manifest.PromptRef,
+		Domains:        domains,
+		Temperature:    &temperature,
+		Questions:      questions,
+	}
 }
 
 // batchResultsFrom decodes the per-question results the daemon publishes in the
@@ -54,20 +98,7 @@ func batchResultsFrom(op *apiclient.Operation) []chat.BatchResult {
 func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.BatchManifest, temperature float64) error {
 	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)
 
-	questions := make([]batchQuestionJSON, len(manifest.Questions))
-	for i, q := range manifest.Questions {
-		questions[i] = batchQuestionJSON{ID: q.ID, Question: q.Question, Keywords: []string(q.Keywords)}
-	}
-	temp := temperature
-	body := batchManifestJSON{
-		Version:        manifest.Version,
-		Model:          manifest.Model,
-		KnowledgeBases: manifest.KnowledgeBases,
-		Prompt:         manifest.Prompt,
-		PromptRef:      manifest.PromptRef,
-		Temperature:    &temp,
-		Questions:      questions,
-	}
+	body := batchManifestBody(manifest, temperature)
 
 	opURL, err := dc.AnswerBatch(context.Background(), body)
 	if err != nil {

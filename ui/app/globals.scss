@@ -1151,15 +1151,51 @@ $sidebar-accent: #e95420; // Ubuntu orange
   margin: 0 0 0.5rem;
 }
 
-// Ingest source tabs: the two radio choices sit in a row, vertically aligned,
-// with the default per-radio bottom margin removed so they line up.
+// Ingest source tabs: the radio choices sit in a row, vertically aligned, with
+// the default per-radio bottom margin removed so they line up. With four modes
+// the row wraps rather than forcing horizontal scroll at narrow widths.
 .kb-ingest__tabs {
   display: flex;
   align-items: center;
-  gap: 1.5rem;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
 
   .p-radio {
     margin-bottom: 0;
+  }
+}
+
+// Normalized extension chips under the extensions input: a quiet confirmation
+// of exactly what will be sent.
+.kb-ingest__ext-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0.5rem 0 0;
+
+  .p-chip {
+    margin: 0;
+  }
+}
+
+// Repo preview result: count line plus a bounded, scrollable path sample so
+// large repositories never stretch the modal.
+.kb-ingest__preview {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  background-color: var(--vf-color-background-alt);
+  border-radius: 0.125rem;
+}
+
+.kb-ingest__preview-list {
+  max-height: 12rem;
+  overflow-y: auto;
+  overflow-x: auto;
+  margin: 0.5rem 0 0;
+
+  .p-list__item {
+    padding: 0.1rem 0;
+    white-space: nowrap;
   }
 }
 
@@ -1183,6 +1219,39 @@ $sidebar-accent: #e95420; // Ubuntu orange
 // Unsupported batch entries are muted to read as excluded.
 .kb-batch__row--skip {
   opacity: 0.6;
+}
+
+// Builder job card: each manifest job is a bordered fieldset so multi-job
+// batches read as discrete, removable units.
+.kb-batch__job {
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.125rem;
+  padding: 0.75rem 1rem;
+  margin: 0 0 1rem;
+}
+
+// Job legend: the job number and its Remove action on one row.
+.kb-batch__job-legend {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vf-color-text-muted);
+  padding: 0 0.25rem;
+}
+
+.kb-batch__job-remove {
+  font-size: 0.8125rem;
+  padding: 0 0.5rem;
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+// Inline per-job preview result next to its trigger button.
+.kb-batch__job-preview {
+  margin-left: 0.75rem;
 }
 
 // Dropzone: a dashed drop area wrapping a native file input. The native input is
@@ -1696,6 +1765,58 @@ $sidebar-accent: #e95420; // Ubuntu orange
   padding-left: 1.25rem;
 }
 
+// Advisory routing summary: one row per `domains` entry with the pattern, how
+// many questions it would apply to, and its context. Separated from the
+// knowledge bases above by a rule rather than a heading level, keeping the
+// preview one block.
+.answer-preview__routing {
+  margin: 0.5rem 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--vf-color-border-low-contrast);
+}
+
+.answer-preview__routing-head {
+  font-weight: 550;
+}
+
+.answer-preview__domains {
+  margin: 0.5rem 0;
+  padding: 0;
+  list-style: none;
+}
+
+.answer-preview__domain {
+  margin-bottom: 0.5rem;
+}
+
+// The context sits on its own line: it is a sentence, and a long one would
+// otherwise push the match count out of view at 620px.
+.answer-preview__domain-context {
+  display: block;
+  color: var(--vf-color-text-muted);
+  font-size: 0.875rem;
+  white-space: pre-wrap;
+  // A context is operator-written prose of any length; an unbroken run in one
+  // wraps rather than pushing the page sideways at 620px.
+  word-break: break-word;
+}
+
+// Per-question routing marker. Muted in both states — an unrouted question is
+// answered exactly as it would be with no routing at all, so it is information,
+// not a fault.
+.answer-preview__q-domain {
+  color: var(--vf-color-text-muted);
+  font-size: 0.875rem;
+
+  &::before {
+    content: " · ";
+  }
+
+  &.is-unrouted {
+    font-style: italic;
+  }
+}
+
 .answer-running {
   display: flex;
   flex-direction: column;
@@ -1883,6 +2004,14 @@ $sidebar-accent: #e95420; // Ubuntu orange
 
 .qa-card__num {
   font-variant-numeric: tabular-nums;
+}
+
+// The routing entry that produced this answer. Muted and small so it reads as
+// metadata about the answer rather than part of it.
+.qa-card__domain {
+  color: var(--vf-color-text-muted);
+  font-size: 0.875rem;
+  margin-bottom: 0.5rem;
 }
 
 .qa-card__answer {

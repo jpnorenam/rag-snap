@@ -24,6 +24,22 @@ definitions:
                 x-go-name: Type
         type: object
         x-go-package: github.com/jpnorenam/rag-snap/internal/api
+    batchDomainRequest:
+        properties:
+            context:
+                type: string
+                x-go-name: Context
+            keywords:
+                items:
+                    type: string
+                type: array
+                x-go-name: Keywords
+            match:
+                type: string
+                x-go-name: Match
+        title: batchDomainRequest is a single domain-routing entry in a posted manifest.
+        type: object
+        x-go-package: github.com/jpnorenam/rag-snap/internal/api
     batchManifestRequest:
         description: |-
             batchManifestRequest is the prepared batch manifest accepted by
@@ -33,6 +49,14 @@ definitions:
             operation exposed by POST /1.0/answer/build (see handleAnswerBuild and the
             rest-api-answer spec).
         properties:
+            domains:
+                description: |-
+                    Domains routes questions to requirement domains by id, applied identically
+                    to the CLI's direct path.
+                items:
+                    $ref: '#/definitions/batchDomainRequest'
+                type: array
+                x-go-name: Domains
             knowledge_bases:
                 items:
                     type: string
@@ -77,6 +101,12 @@ definitions:
             question:
                 type: string
                 x-go-name: Question
+            source:
+                description: |-
+                    Source is where the question came from in the extracted document; it is the
+                    fallback domain match key for questions whose id is a bare sequence number.
+                type: string
+                x-go-name: Source
         title: batchQuestionRequest is a single question in a posted manifest.
         type: object
         x-go-package: github.com/jpnorenam/rag-snap/internal/api
@@ -333,9 +363,17 @@ paths:
                 Runs a prepared batch manifest of questions through the RAG+LLM pipeline as
                 an async operation. Progress is reported in the operation metadata across the
                 questions, and the structured results are stored on the operation for
-                retrieval on completion. To derive a manifest from a document, use the
-                separate POST /1.0/answer/build endpoint (Tika extraction + optional LLM
-                refinement); this run endpoint accepts only a prepared manifest.
+                retrieval on completion. Each result under the operation metadata's "results"
+                key carries the question's "id", "question", "answer", and — when the
+                manifest's "domains" block routed it — the "domain" pattern that matched, so
+                the routing is auditable per answer. To derive a manifest from a document,
+                use the separate POST /1.0/answer/build endpoint (Tika extraction + optional
+                LLM refinement); this run endpoint accepts only a prepared manifest.
+
+                A 400 is returned for a manifest with no questions, a question with an empty
+                question field, both "prompt" and "prompt_ref" set, or an invalid "domains"
+                entry (empty "match", an entry with neither "context" nor "keywords", a
+                malformed glob pattern, or a duplicate "match").
             operationId: answerBatch
             parameters:
                 - in: body
@@ -988,6 +1026,26 @@ paths:
                 "500":
                     $ref: '#/responses/errorResponse'
             summary: Import a knowledge base.
+            tags:
+                - knowledge
+    /1.0/knowledge/repo-preview:
+        post:
+            description: |-
+                Lists the files of a GitHub or Gitea repository that match the given branch,
+                path prefix, and extensions, without ingesting anything. Uses the same source
+                parsing, filtering, and daemon environment tokens (GITHUB_TOKEN/GITEA_TOKEN)
+                as ingestion. Returns a bounded sample of paths plus the full match count.
+            operationId: repoPreview
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Preview the files a repository ingest would match.
             tags:
                 - knowledge
     /1.0/operations:

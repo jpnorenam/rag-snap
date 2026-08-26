@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 )
 
 // TestAnswerBatchRunsAndStoresResults posts a prepared manifest, waits for the
@@ -103,6 +105,166 @@ func TestAnswerBatchRunsAndStoresResults(t *testing.T) {
 		if !strings.Contains(r.Answer, "does not contain enough information") {
 			t.Errorf("result[%d] answer = %q, want the fixed no-context response", i, r.Answer)
 		}
+	}
+}
+
+// TestBatchManifestRequestRoundTrip is the guard against a transport mirror
+// silently dropping a manifest field, the way questions[].source was dropped
+// before domain routing existed. It decodes a wire body carrying `domains` and
+// `questions[].source`, converts it with toManifest, and asserts both arrive in
+// the chat manifest the run actually consumes.
+func TestBatchManifestRequestRoundTrip(t *testing.T) {
+	// The wire shape the CLI's batchManifestBody and the web UI both post.
+	const body = `{
+		"version": "1.0",
+		"domains": [
+			{"match": "C*", "context": "Enhanced Platform Awareness", "keywords": ["sriov", "numa"]},
+			{"match": "GIS*", "keywords": ["hardening"]}
+		],
+		"questions": [
+			{"id": "C4", "question": "SR-IOV", "source": "EPA Sheet", "keywords": ["passthrough"]},
+			{"id": "17", "question": "Create VM", "source": "GIS Deliverables"}
+		]
+	}`
+
+	var req batchManifestRequest
+	if err := json.NewDecoder(strings.NewReader(body)).Decode(&req); err != nil {
+		t.Fatalf("decoding request body: %v", err)
+	}
+	manifest := req.toManifest()
+
+	if len(manifest.Domains) != 2 {
+		t.Fatalf("manifest carries %d domains, want 2", len(manifest.Domains))
+	}
+	if got := manifest.Domains[0]; got.Match != "C*" || got.Context != "Enhanced Platform Awareness" {
+		t.Errorf("domain[0] = %+v, want match C* with its context", got)
+	}
+	if got := manifest.Domains[0].Keywords; len(got) != 2 || got[0] != "sriov" || got[1] != "numa" {
+		t.Errorf("domain[0] keywords = %v, want [sriov numa]", got)
+	}
+	if got := manifest.Domains[1]; got.Match != "GIS*" || got.Context != "" || len(got.Keywords) != 1 {
+		t.Errorf("domain[1] = %+v, want the keywords-only GIS* entry", got)
+	}
+	if got := manifest.Questions[0].Source; got != "EPA Sheet" {
+		t.Errorf("question[0] source = %q, want %q", got, "EPA Sheet")
+	}
+	if got := manifest.Questions[1].Source; got != "GIS Deliverables" {
+		t.Errorf("question[1] source = %q, want %q", got, "GIS Deliverables")
+	}
+
+	// And the compiled table resolves through the converted manifest, including
+	// the numeric-id fallback to source.
+	set, err := chat.CompileDomains(manifest.Domains)
+	if err != nil {
+		t.Fatalf("CompileDomains: %v", err)
+	}
+	if got := set.Resolve(manifest.Questions[0].ID, manifest.Questions[0].Source); got == nil || got.Match != "C*" {
+		t.Errorf("question[0] resolved to %v, want C*", got)
+	}
+	if got := set.Resolve(manifest.Questions[1].ID, manifest.Questions[1].Source); got == nil || got.Match != "GIS*" {
+		t.Errorf("question[1] (numeric id) resolved to %v, want GIS* via source", got)
+	}
+}
+
+// TestAnswerBatchAppliesDomains verifies the daemon path applies posted routing
+// and records it per result. The OpenSearch backend is unreachable so every
+// answer is the fixed no-context response, which also covers the requirement
+// that domain provenance is stamped on that short-circuit path.
+func TestAnswerBatchAppliesDomains(t *testing.T) {
+	inference := stubInference(t)
+	sock, _ := startTestServer(t, map[string]string{
+		backendOpenSearch: "http://127.0.0.1:1",
+		backendOpenAI:     inference,
+		backendTika:       "http://127.0.0.1:1",
+	})
+	client := dialSocket(sock)
+
+	body := `{
+		"version": "1.0",
+		"domains": [
+			{"match": "J*", "context": "Hardware"},
+			{"match": "J1.*", "context": "Storage vendor"},
+			{"match": "gis*", "keywords": ["hardening"]}
+		],
+		"questions": [
+			{"id": "J1.3", "question": "Cinder driver support"},
+			{"id": "J2.7", "question": "Server manufacturer"},
+			{"id": "42", "question": "Security baseline", "source": "GIS Deliverables"},
+			{"id": "A9", "question": "Unrouted requirement"}
+		]
+	}`
+	resp, err := client.Post("http://unix/1.0/answer/batch", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /1.0/answer/batch: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 202; body=%s", resp.StatusCode, b)
+	}
+	var env struct {
+		Operation string `json:"operation"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decoding async envelope: %v", err)
+	}
+
+	var meta struct {
+		Results []struct {
+			ID     string `json:"id"`
+			Domain string `json:"domain"`
+		} `json:"results"`
+	}
+	waitOpMeta(t, client, env.Operation, &meta)
+
+	want := map[string]string{
+		"J1.3": "J1.*", // more literal characters than J*
+		"J2.7": "J*",   // the broader entry still applies
+		"42":   "gis*", // bare numeric id falls back to source
+		"A9":   "",     // no entry matches
+	}
+	if len(meta.Results) != len(want) {
+		t.Fatalf("got %d results, want %d", len(meta.Results), len(want))
+	}
+	for _, r := range meta.Results {
+		if got := r.Domain; got != want[r.ID] {
+			t.Errorf("question %s recorded domain %q, want %q", r.ID, got, want[r.ID])
+		}
+	}
+}
+
+// TestAnswerBatchRejectsInvalidDomains verifies a malformed routing block fails
+// the request with 400 before an operation is created, rather than failing the
+// run.
+func TestAnswerBatchRejectsInvalidDomains(t *testing.T) {
+	inference := stubInference(t)
+	sock, _ := startTestServer(t, map[string]string{
+		backendOpenSearch: "http://127.0.0.1:1",
+		backendOpenAI:     inference,
+		backendTika:       "http://127.0.0.1:1",
+	})
+	client := dialSocket(sock)
+
+	post := func(body string) int {
+		resp, err := client.Post("http://unix/1.0/answer/batch", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatalf("POST /1.0/answer/batch: %v", err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	// Neither context nor keywords → 400.
+	if code := post(`{"domains":[{"match":"C*"}],"questions":[{"question":"q"}]}`); code != http.StatusBadRequest {
+		t.Errorf("entry with neither context nor keywords: status = %d, want 400", code)
+	}
+	// Duplicate match patterns → 400.
+	if code := post(`{"domains":[{"match":"C*","context":"a"},{"match":"C*","context":"b"}],"questions":[{"question":"q"}]}`); code != http.StatusBadRequest {
+		t.Errorf("duplicate match patterns: status = %d, want 400", code)
+	}
+	// A valid block is accepted.
+	if code := post(`{"domains":[{"match":"C*","context":"a"}],"questions":[{"question":"q"}]}`); code != http.StatusAccepted {
+		t.Errorf("valid domains block: status = %d, want 202", code)
 	}
 }
 

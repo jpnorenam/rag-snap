@@ -315,6 +315,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("POST /1.0/knowledge/gdrive/import", s.requireAuth(s.handleGdriveImport))
 
 	// Sources.
+	mux.HandleFunc("POST /1.0/knowledge/repo-preview", s.requireAuth(s.handleRepoPreview))
 	mux.HandleFunc("GET /1.0/knowledge/{name}/sources", s.requireAuth(s.handleSourcesList))
 	mux.HandleFunc("POST /1.0/knowledge/{name}/sources", s.requireAuth(s.handleSourcesIngest))
 	mux.HandleFunc("GET /1.0/knowledge/{name}/sources/{id}", s.requireAuth(s.handleSourceGet))

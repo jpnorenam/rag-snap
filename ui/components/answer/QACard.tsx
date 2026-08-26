@@ -27,9 +27,11 @@ const NO_CONTEXT_ANSWER =
 
 // QACard renders one question/answer pair. A failed or empty answer (or the
 // fixed no-context response) is shown with a caution treatment rather than
-// blank. Sources render only when the item carries provenance.
+// blank. The applied routing domain and the sources render only when the item
+// carries them.
 export default function QACard({ item, index }: Props) {
   const withSources = item as QAItemWithSources;
+  const domain = item.domain?.trim() ?? "";
   const answer = item.answer?.trim() ?? "";
   const isEmpty = answer === "";
   const isNoContext = answer === NO_CONTEXT_ANSWER;
@@ -42,6 +44,16 @@ export default function QACard({ item, index }: Props) {
       <h3 className="qa-card__question">
         <span className="qa-card__num u-text--muted">{index + 1}.</span> {item.question}
       </h3>
+      {/* Which routing entry produced this answer, when the run recorded one.
+          Metadata rather than answer text: it sits above the answer, muted, and
+          outside the collapsible provenance section. Results carrying no domain
+          — every file written before routing existed, and any question that
+          matched no entry — render with nothing in its place. */}
+      {domain !== "" && (
+        <p className="qa-card__domain u-no-margin--bottom">
+          Domain <code>{domain}</code>
+        </p>
+      )}
       {isEmpty ? (
         <p className="qa-card__answer u-text--muted">No answer was generated for this question.</p>
       ) : (

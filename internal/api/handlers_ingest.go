@@ -299,7 +299,7 @@ func ingestGitHubRepo(ctx context.Context, client *knowledge.OpenSearchClient, t
 	if token == "" {
 		return fmt.Errorf("GitHub ingestion requires the GITHUB_TOKEN environment variable")
 	}
-	entries, err := processing.ListGitHubRepoFiles(owner, repo, item.Branch, item.Path, item.Extensions, token)
+	entries, _, err := processing.ListGitHubRepoFiles(owner, repo, item.Branch, item.Path, item.Extensions, token)
 	if err != nil {
 		return fmt.Errorf("listing repository files: %w", err)
 	}
@@ -316,7 +316,7 @@ func ingestGiteaRepo(ctx context.Context, client *knowledge.OpenSearchClient, ti
 	if token == "" {
 		return fmt.Errorf("Gitea ingestion requires the GITEA_TOKEN environment variable")
 	}
-	entries, err := processing.ListGiteaRepoFiles(baseURL, owner, repo, item.Branch, item.Path, item.Extensions, token)
+	entries, _, err := processing.ListGiteaRepoFiles(baseURL, owner, repo, item.Branch, item.Path, item.Extensions, token)
 	if err != nil {
 		return fmt.Errorf("listing repository files: %w", err)
 	}
@@ -333,7 +333,7 @@ func ingestRepoEntries(ctx context.Context, client *knowledge.OpenSearchClient, 
 		if err != nil {
 			return fmt.Errorf("fetching %q: %w", entry.Path, err)
 		}
-		err = ingestResolvedFile(ctx, client, tikaURL, index, tempPath, entry.Path, entry.Path, label, force)
+		err = ingestResolvedFile(ctx, client, tikaURL, index, tempPath, entry.SourceID, entry.Path, label, force)
 		cleanup()
 		if err != nil {
 			return fmt.Errorf("ingesting %q: %w", entry.Path, err)

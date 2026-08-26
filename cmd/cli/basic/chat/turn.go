@@ -167,12 +167,12 @@ func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc)
 
 	llmPrompt := text
 	if ragContext != "" {
-		llmPrompt = buildRAGPrompt(ragContext, text)
+		llmPrompt = buildRAGPrompt(ragContext, "", "", text)
 	} else if hasRAG {
 		// A base is active but retrieval returned nothing: inject an explicit
 		// empty-context note so the grounding rules apply and the model does
 		// not answer from parametric knowledge (matching the REPL).
-		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", text)
+		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", "", "", text)
 	}
 
 	// Send the augmented prompt to the API but keep only the original prompt in

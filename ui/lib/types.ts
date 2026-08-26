@@ -7,6 +7,14 @@ export interface QAItem {
   id: string;
   question: string;
   answer: string;
+  /**
+   * The `domains` entry that produced this answer, identified by its matched
+   * pattern (chat.BatchResult.Domain, `domain` in the results JSON). Optional
+   * because it is absent from every results file written before domain routing
+   * existed, and from any run whose question matched no entry — the review
+   * surface shows it only when it is there.
+   */
+  domain?: string;
 }
 
 export interface QAFile {
