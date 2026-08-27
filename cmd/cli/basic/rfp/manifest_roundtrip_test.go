@@ -66,6 +66,74 @@ func TestBuiltManifestStubIsInert(t *testing.T) {
 	}
 }
 
+// TestBuiltManifestStubSuggestionsAllRoute is the guard on the stub's usefulness:
+// every pattern it suggests must be one the resolver actually consults for the
+// question that produced it, so an operator who uncomments the block and fills in
+// a context sees routing take effect for every question.
+//
+// The regression this pins is the dotted id. "1.1" has no non-digit prefix, yet
+// it is not a bare sequence number either, so the resolver matches it by id and
+// never by source — suggesting its source would have been a silent no-op.
+func TestBuiltManifestStubSuggestionsAllRoute(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "manifest.yaml")
+	built := &rfp.Manifest{
+		Version: "1.0",
+		Questions: []rfp.Question{
+			{ID: "C1", Question: "prefixed id", Source: "EPA Sheet"},
+			{ID: "1.1", Question: "dotted id", Source: "Technical"},
+			{ID: "1.2", Question: "same section", Source: "Technical"},
+			{ID: "2.1", Question: "next section", Source: "Technical"},
+			{ID: "7", Question: "bare sequence, routed by source", Source: "GIS Deliverables"},
+		},
+	}
+	if err := rfp.WriteManifest(path, built); err != nil {
+		t.Fatalf("WriteManifest: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading built manifest: %v", err)
+	}
+
+	// Uncomment the block and fill in the context, as the preamble instructs.
+	lines := strings.Split(string(data), "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "# domains:") || strings.HasPrefix(line, "#   ") {
+			lines[i] = strings.Replace(strings.TrimPrefix(line, "# "), `context: ""`, `context: "a domain"`, 1)
+		}
+	}
+	edited := filepath.Join(dir, "edited.yaml")
+	if err := os.WriteFile(edited, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
+		t.Fatalf("writing edited manifest: %v", err)
+	}
+
+	m, err := chat.LoadBatchManifest(edited)
+	if err != nil {
+		t.Fatalf("LoadBatchManifest on the filled-in stub: %v", err)
+	}
+	domains, err := chat.CompileDomains(m.Domains)
+	if err != nil {
+		t.Fatalf("CompileDomains on the filled-in stub: %v", err)
+	}
+	if domains.Len() == 0 {
+		t.Fatal("the filled-in stub compiled to no domains; the stub format changed")
+	}
+	for _, q := range m.Questions {
+		if d := domains.Resolve(q.ID, q.Source); d == nil {
+			t.Errorf("question %q (source %q) resolved to no domain; the stub suggested a pattern the resolver never consults", q.ID, q.Source)
+		}
+	}
+
+	// The two ids in section 1 share a pattern, and section 2 gets its own — the
+	// separator is what keeps them apart.
+	if d := domains.Resolve("1.1", "Technical"); d != nil && d.Match != "1.*" {
+		t.Errorf(`"1.1" resolved to %q, want "1.*"`, d.Match)
+	}
+	if d := domains.Resolve("2.1", "Technical"); d != nil && d.Match != "2.*" {
+		t.Errorf(`"2.1" resolved to %q, want "2.*"`, d.Match)
+	}
+}
+
 // TestBuiltManifestStubUncommentedIsRejected pins the preamble's promise that an
 // uncommented but unfilled entry fails loudly instead of being silently ignored.
 func TestBuiltManifestStubUncommentedIsRejected(t *testing.T) {

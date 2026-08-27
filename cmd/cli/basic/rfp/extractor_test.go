@@ -29,6 +29,39 @@ func TestIDPrefix(t *testing.T) {
 	}
 }
 
+// TestIDCandidate pins the property the stub depends on: idCandidate returns ""
+// exactly when the resolver would consult the question's source, so a suggested
+// pattern is always one the resolver will actually look at.
+func TestIDCandidate(t *testing.T) {
+	tests := []struct {
+		id   string
+		want string
+	}{
+		{"C4", "C*"},
+		{"J1.3", "J*"},
+		{"  T2  ", "T*"},
+		{"ADMIN", "ADMIN*"},
+		// Structured numbers carry no non-digit prefix, but the resolver still
+		// matches them by id, so they must be suggested by id. The separator is
+		// kept so "1.*" cannot swallow "10.1".
+		{"1.1", "1.*"},
+		{"2.3.4", "2.*"},
+		{"3-1", "3-*"},
+		{"17a", "17*"},
+		// Bare sequence numbers and empty ids are the only source-fallback cases.
+		{"1", ""},
+		{"42", ""},
+		{"", ""},
+		{"   ", ""},
+	}
+
+	for _, tt := range tests {
+		if got := idCandidate(tt.id); got != tt.want {
+			t.Errorf("idCandidate(%q) = %q, want %q", tt.id, got, tt.want)
+		}
+	}
+}
+
 func TestDomainsStub(t *testing.T) {
 	stub := domainsStub([]Question{
 		{ID: "C1", Question: "a", Source: "EPA Sheet"},
@@ -61,7 +94,7 @@ func TestDomainsStub(t *testing.T) {
 
 	// Candidates keep first-appearance order, so the stub reads in document order.
 	c, j, gis := strings.Index(stub, `"C*"`), strings.Index(stub, `"J*"`), strings.Index(stub, `"GIS Deliverables"`)
-	if !(c < j && j < gis) {
+	if c >= j || j >= gis {
 		t.Errorf("candidates out of document order: C at %d, J at %d, source at %d", c, j, gis)
 	}
 

@@ -2,7 +2,15 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { domainsStub, idPrefix, parseManifest, serializeManifest, ManifestParseError } from "./manifest";
+import {
+  domainsStub,
+  idCandidate,
+  idPrefix,
+  parseManifest,
+  serializeManifest,
+  ManifestParseError,
+} from "./manifest";
+import { compileDomains, resolveDomain } from "./domains";
 
 // A real `rag-cli answer batch --build` manifest: the generated header comment,
 // a block-list knowledge_bases, and a `source` field on every question
@@ -409,6 +417,60 @@ test("the stub suggests id prefixes and sources, with counts", () => {
   for (const line of stub.split("\n")) {
     if (line !== "") assert.match(line, /^#/, `stub line is not a comment: ${line}`);
   }
+});
+
+test("idCandidate returns a pattern exactly when the resolver matches by id", () => {
+  const cases: [string, string][] = [
+    ["C4", "C*"],
+    ["J1.3", "J*"],
+    ["  T2  ", "T*"],
+    ["ADMIN", "ADMIN*"],
+    // Structured numbers carry no non-digit prefix, but the resolver still
+    // matches them by id, so they must be suggested by id. The separator is kept
+    // so "1.*" cannot swallow "10.1".
+    ["1.1", "1.*"],
+    ["2.3.4", "2.*"],
+    ["3-1", "3-*"],
+    ["17a", "17*"],
+    // Bare sequence numbers and empty ids are the only source-fallback cases.
+    ["17", ""],
+    ["0", ""],
+    ["", ""],
+    ["   ", ""],
+  ];
+  for (const [id, want] of cases) {
+    assert.equal(idCandidate(id), want, id);
+  }
+});
+
+test("every pattern the stub suggests is one the resolver consults", () => {
+  // The stub's whole value is that uncommenting it takes effect. A suggestion
+  // the resolver never looks at is a silent no-op — the failure mode a dotted id
+  // like "1.1" used to hit, having no non-digit prefix yet never falling back to
+  // source.
+  const questions = [
+    { id: "C1", question: "a", source: "EPA Sheet" },
+    { id: "1.1", question: "b", source: "Technical" },
+    { id: "1.2", question: "c", source: "Technical" },
+    { id: "2.1", question: "d", source: "Technical" },
+    { id: "7", question: "e", source: "GIS Deliverables" },
+  ];
+  const stub = domainsStub(questions);
+
+  // Uncomment the block the way an operator would, filling in the context.
+  const patterns = [...stub.matchAll(/^#   - match: "(.*?)"/gm)].map((m) => m[1]);
+  assert.ok(patterns.length > 0, "the stub suggested no patterns");
+  const compiled = compileDomains(patterns.map((match) => ({ match, context: "a domain" })));
+
+  for (const q of questions) {
+    assert.ok(
+      resolveDomain(compiled, q.id, q.source) !== null,
+      `question ${q.id} (source ${q.source}) resolved to no domain — the stub suggested a pattern the resolver never consults`
+    );
+  }
+  // Section 1 and section 2 stay apart; the kept separator is what does it.
+  assert.equal(resolveDomain(compiled, "1.1", "Technical")?.match, "1.*");
+  assert.equal(resolveDomain(compiled, "2.1", "Technical")?.match, "2.*");
 });
 
 test("the stub falls back to an editable catch-all when there is nothing to suggest", () => {

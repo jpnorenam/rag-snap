@@ -521,11 +521,14 @@ const domainsStubPreamble = `#
 // built manifest still round-trips through the encoder and an unedited stub
 // cannot affect a run.
 //
-// Candidate patterns come from what the extraction observed. A question with a
+// Candidate patterns come from what the extraction observed, and every one of
+// them is a key the resolver will actually consult for that question — a
+// suggestion the operator can uncomment and have take effect. A question with a
 // non-digit id prefix ("C" for "C4", "J" for "J1.3") suggests that prefix as a
-// glob; a question whose id is a bare sequence number has no prefix to route on,
-// so its source — the only key the resolver can match such an id against — is
-// suggested instead. Prefixes are deliberately coarse: refining "J*" into
+// glob; a structured number ("1.1") suggests its leading section ("1.*"). Only a
+// question whose id is a bare sequence number, or which has no id at all, falls
+// back to suggesting its source, because that is the only case where the
+// resolver consults source. Patterns are deliberately coarse: refining "J*" into
 // "J1.*" is the operator's call, which is why the preamble disclaims the
 // grouping.
 func domainsStub(questions []Question) string {
@@ -546,8 +549,8 @@ func domainsStub(questions []Question) string {
 		candidates = append(candidates, candidate{pattern: pattern, by: by, count: 1})
 	}
 	for _, q := range questions {
-		if prefix := idPrefix(q.ID); prefix != "" {
-			add(prefix+"*", "id prefix")
+		if pattern := idCandidate(q.ID); pattern != "" {
+			add(pattern, "id prefix")
 			continue
 		}
 		if source := strings.TrimSpace(q.Source); source != "" {
@@ -579,6 +582,61 @@ func domainsStub(questions []Question) string {
 	}
 	b.WriteString("#\n")
 	return b.String()
+}
+
+// idCandidate returns the glob to suggest for a question id, or "" when the id
+// carries nothing to route on and the question's source should be suggested
+// instead.
+//
+// It mirrors the resolver's fallback condition exactly: "" is returned precisely
+// when 'answer batch' would consult the question's source. Without that, an id
+// like "1.1" — which has no non-digit prefix, but is not a bare sequence number
+// either — would be suggested by source, and the resolver would never look at a
+// source for it, so uncommenting the entry would silently route nothing.
+func idCandidate(id string) string {
+	trimmed := strings.TrimSpace(id)
+	if trimmed == "" || isBareSequence(trimmed) {
+		return ""
+	}
+	if prefix := idPrefix(trimmed); prefix != "" {
+		return prefix + "*"
+	}
+	// A structured number such as "1.1" or "2-3". The separator is kept in the
+	// pattern so "1.*" stays distinct from "10.*", which a bare "1*" would
+	// swallow.
+	if i := strings.IndexAny(trimmed, ".-_/ "); i > 0 {
+		return trimmed[:i+1] + "*"
+	}
+	// A digit run with some other suffix ("17a"): the digits are the only
+	// grouping on offer.
+	return idDigits(trimmed) + "*"
+}
+
+// isBareSequence reports whether s is a non-empty run of ASCII digits — the
+// shape this extractor assigns as an id when a row carries no identifier of its
+// own, and the only id shape 'answer batch' matches against a source. It mirrors
+// chat.isBareSequence, which cannot be imported here (the chat package reads
+// manifests this one writes).
+func isBareSequence(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// idDigits returns the leading run of ASCII digits in s.
+func idDigits(s string) string {
+	for i, r := range s {
+		if r < '0' || r > '9' {
+			return s[:i]
+		}
+	}
+	return s
 }
 
 // idPrefix returns the leading run of non-digit characters in a question id, or
