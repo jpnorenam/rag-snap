@@ -32,6 +32,7 @@ interface JobErrors {
   source?: string;
   extensions?: string;
   label?: string;
+  targetKB?: string;
 }
 
 // JobPreviewState tracks one job's repo-preview call.
@@ -41,9 +42,37 @@ interface JobPreviewState {
   error?: string;
 }
 
+// Row is one editable job plus the state that belongs to the row rather than to
+// the manifest.
+//
+// `id` is a stable identity, not a position: rows are keyed by it so React keeps
+// each row's DOM with its own job when one is removed from the middle, and
+// jobPreviews is keyed by it so a preview cannot end up attached to a different
+// job. Keying by array index instead left the surviving rows showing the removed
+// row's state.
+//
+// `extText` is the extensions field exactly as typed. `job.extensions` holds the
+// normalized list; keeping the raw text beside it lets the input stay controlled
+// without normalization eating a comma mid-keystroke.
+interface Row {
+  id: number;
+  job: BuilderJob;
+  extText: string;
+}
+
+// nextRowId hands out row identities. A module-level counter is enough: ids need
+// only be unique within a mounted modal, and never leave it.
+let nextRowId = 0;
+
 // emptyJob returns a fresh builder job of the given type.
 function emptyJob(type: BuilderJob["type"] = "url"): BuilderJob {
-  return { name: "", type, source: "", branch: "", path: "", extensions: [], label: "" };
+  return { name: "", type, source: "", targetKB: "", branch: "", path: "", extensions: [], label: "" };
+}
+
+// newRow wraps a job as a row, seeding the extensions text from the job so a job
+// imported from a manifest shows its extensions.
+function newRow(job: BuilderJob = emptyJob()): Row {
+  return { id: nextRowId++, job, extText: job.extensions.join(", ") };
 }
 
 // isRepoJob reports whether a job type expands into repository files.
@@ -53,8 +82,19 @@ function isRepoJob(type: BuilderJob["type"]): boolean {
 
 // validateJob returns field-level errors for a runnable job; `file` jobs are
 // excluded from runs and never block, so they validate clean.
-function validateJob(job: BuilderJob): JobErrors {
+//
+// base is the knowledge base this modal ingests into. A job carrying a target_kb
+// for a different base is an error rather than something to quietly redirect: a
+// batch ingest here loads one base, so honouring the manifest as written is not
+// possible and running it anyway would fill the wrong base.
+function validateJob(job: BuilderJob, base: string): JobErrors {
   const errs: JobErrors = {};
+  const targetKB = job.targetKB.trim();
+  // Index names are lower-cased, so a target differing only in case is the same
+  // base (knowledge.FullIndexName).
+  if (targetKB !== "" && targetKB.toLowerCase() !== base.trim().toLowerCase()) {
+    errs.targetKB = `This job targets “${targetKB}”, but this batch ingests into “${base}”. Clear it to ingest here, or run the manifest with \`rag-cli.rag k ingest --batch\`.`;
+  }
   if (job.type === "file") return errs;
   const source = job.source.trim();
   if (job.type === "url" && !/^https?:\/\//.test(source)) {
@@ -86,8 +126,10 @@ export default function BatchIngestModal({ name, onStarted, onClose }: Props) {
   const [preview, setPreview] = useState<PreviewEntry[] | null>(null);
   const [items, setItems] = useState<BatchItem[]>([]);
   const [uploadedJobs, setUploadedJobs] = useState<BuilderJob[]>([]);
-  const [jobs, setJobs] = useState<BuilderJob[]>([emptyJob()]);
+  const [rows, setRows] = useState<Row[]>([newRow()]);
   const [jobsTouched, setJobsTouched] = useState(false);
+  // Keyed by row id, not row position, so removing a row cannot reattach a
+  // preview to a different job.
   const [jobPreviews, setJobPreviews] = useState<Record<number, JobPreviewState>>({});
   const [force, setForce] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -101,7 +143,9 @@ export default function BatchIngestModal({ name, onStarted, onClose }: Props) {
     if (!f) return;
     try {
       const text = await f.text();
-      const parsed = parseBatchManifest(text);
+      // The destination is passed so a job routed elsewhere by target_kb is held
+      // back with the reason, instead of being redirected into this base.
+      const parsed = parseBatchManifest(text, name);
       if (parsed.error) {
         setError(parsed.error);
         return;
@@ -115,50 +159,61 @@ export default function BatchIngestModal({ name, onStarted, onClose }: Props) {
   };
 
   const editInBuilder = () => {
-    setJobs(uploadedJobs.length > 0 ? uploadedJobs : [emptyJob()]);
+    setRows(uploadedJobs.length > 0 ? uploadedJobs.map((job) => newRow(job)) : [newRow()]);
     setJobsTouched(true);
     setJobPreviews({});
     setError(null);
     setMode("build");
   };
 
-  const updateJob = (index: number, patch: Partial<BuilderJob>) => {
+  // updateRow patches one row by id, optionally also patching its job. Editing a
+  // job invalidates the preview shown for that row.
+  const updateRow = (id: number, patch: Partial<BuilderJob>, extText?: string) => {
     setJobsTouched(true);
-    setJobs((prev) => prev.map((job, i) => (i === index ? { ...job, ...patch } : job)));
-    // Editing a job invalidates its shown preview.
+    setRows((prev) =>
+      prev.map((row) =>
+        row.id === id
+          ? { ...row, job: { ...row.job, ...patch }, extText: extText ?? row.extText }
+          : row
+      )
+    );
     setJobPreviews((prev) => {
-      if (!prev[index]) return prev;
+      if (!prev[id]) return prev;
       const next = { ...prev };
-      delete next[index];
+      delete next[id];
       return next;
     });
+  };
+
+  // setExtensions keeps the raw text and the normalized list in step, so what the
+  // field shows and what validation and the manifest see never disagree.
+  const setExtensions = (id: number, text: string) => {
+    updateRow(id, { extensions: normalizeExtensions(text) }, text);
   };
 
   const addJob = () => {
-    setJobs((prev) => [...prev, emptyJob()]);
+    setRows((prev) => [...prev, newRow()]);
   };
 
-  const removeJob = (index: number) => {
-    setJobs((prev) => prev.filter((_, i) => i !== index));
+  const removeJob = (id: number) => {
+    setRows((prev) => prev.filter((row) => row.id !== id));
+    // Ids are stable, so the surviving rows' previews need no re-keying.
     setJobPreviews((prev) => {
-      const next: Record<number, JobPreviewState> = {};
-      for (const [k, v] of Object.entries(prev)) {
-        const i = Number(k);
-        if (i < index) next[i] = v;
-        else if (i > index) next[i - 1] = v;
-      }
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
       return next;
     });
   };
 
-  const previewJob = async (index: number) => {
-    const job = jobs[index];
-    const errs = validateJob(job);
+  const previewJob = async (row: Row) => {
+    const { id, job } = row;
+    const errs = validateJob(job, name);
     if (errs.source || errs.extensions) {
-      setJobPreviews((prev) => ({ ...prev, [index]: { error: errs.source ?? errs.extensions } }));
+      setJobPreviews((prev) => ({ ...prev, [id]: { error: errs.source ?? errs.extensions } }));
       return;
     }
-    setJobPreviews((prev) => ({ ...prev, [index]: { busy: true } }));
+    setJobPreviews((prev) => ({ ...prev, [id]: { busy: true } }));
     try {
       const result = await previewRepo({
         type: job.type === "github-repo" ? "github" : "gitea",
@@ -167,13 +222,14 @@ export default function BatchIngestModal({ name, onStarted, onClose }: Props) {
         path: job.path.trim() || undefined,
         extensions: job.extensions,
       });
-      setJobPreviews((prev) => ({ ...prev, [index]: { result } }));
+      setJobPreviews((prev) => ({ ...prev, [id]: { result } }));
     } catch (e) {
-      setJobPreviews((prev) => ({ ...prev, [index]: { error: errorMessage(e) } }));
+      setJobPreviews((prev) => ({ ...prev, [id]: { error: errorMessage(e) } }));
     }
   };
 
-  const jobErrors = jobs.map(validateJob);
+  const jobs = rows.map((row) => row.job);
+  const jobErrors = jobs.map((job) => validateJob(job, name));
   const runnableJobs = jobs.filter(
     (job, i) => builderJobToBatchItem(job) !== null && Object.keys(jobErrors[i]).length === 0
   );
@@ -193,10 +249,12 @@ export default function BatchIngestModal({ name, onStarted, onClose }: Props) {
   };
 
   const submit = async () => {
+    // Only the jobs that validated clean are sent — the same set the button
+    // counts, so a held-back job cannot slip into the run.
     const batch =
       mode === "upload"
         ? items
-        : (jobs.map(builderJobToBatchItem).filter(Boolean) as BatchItem[]);
+        : (runnableJobs.map(builderJobToBatchItem).filter(Boolean) as BatchItem[]);
     if (batch.length === 0 || (mode === "build" && !builderValid)) {
       setError("No supported entries to ingest.");
       return;
@@ -306,6 +364,9 @@ export default function BatchIngestModal({ name, onStarted, onClose }: Props) {
                               {entry.unsupported && (
                                 <span className="u-text--muted p-text--small"> — {entry.unsupported}</span>
                               )}
+                              {entry.warning && (
+                                <span className="u-text--muted p-text--small"> — {entry.warning}</span>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -324,30 +385,57 @@ export default function BatchIngestModal({ name, onStarted, onClose }: Props) {
 
           {mode === "build" && (
             <>
-              {jobs.map((job, i) => {
+              {rows.map((row, i) => {
+                const { id, job } = row;
                 const errs = jobsTouched ? jobErrors[i] : {};
-                const jp = jobPreviews[i];
+                const jp = jobPreviews[id];
                 return (
-                  <fieldset key={i} className="kb-batch__job">
+                  <fieldset key={id} className="kb-batch__job">
                     <legend className="kb-batch__job-legend">
                       Job {i + 1}
                       <button
                         type="button"
                         className="p-button--base u-no-margin--bottom kb-batch__job-remove"
                         aria-label={`Remove job ${i + 1}`}
-                        disabled={jobs.length === 1}
-                        onClick={() => removeJob(i)}
+                        disabled={rows.length === 1}
+                        onClick={() => removeJob(id)}
                       >
                         Remove
                       </button>
                     </legend>
 
+                    {job.targetKB && (
+                      <div
+                        className={`p-form__group ${errs.targetKB ? "p-form-validation is-error" : ""}`}
+                      >
+                        <p className="p-form-help-text">
+                          Manifest <code>target_kb</code>: <strong>{job.targetKB}</strong>
+                        </p>
+                        {errs.targetKB ? (
+                          <>
+                            <p className="p-form-validation__message">{errs.targetKB}</p>
+                            <button
+                              type="button"
+                              className="p-button u-no-margin--bottom"
+                              onClick={() => updateRow(id, { targetKB: "" })}
+                            >
+                              Ingest into {name} instead
+                            </button>
+                          </>
+                        ) : (
+                          <p className="p-form-help-text u-text--muted">
+                            This is the base being ingested, so it changes nothing.
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     <div className="p-form__group">
-                      <label htmlFor={`${titleId}-type-${i}`}>Type</label>
+                      <label htmlFor={`${titleId}-type-${id}`}>Type</label>
                       <select
-                        id={`${titleId}-type-${i}`}
+                        id={`${titleId}-type-${id}`}
                         value={job.type}
-                        onChange={(e) => updateJob(i, { type: e.target.value as BuilderJob["type"] })}
+                        onChange={(e) => updateRow(id, { type: e.target.value as BuilderJob["type"] })}
                       >
                         <option value="url">url</option>
                         <option value="github-repo">github-repo</option>
@@ -363,9 +451,9 @@ export default function BatchIngestModal({ name, onStarted, onClose }: Props) {
                     </div>
 
                     <div className={`p-form__group ${errs.source ? "p-form-validation is-error" : ""}`}>
-                      <label htmlFor={`${titleId}-source-${i}`}>Source</label>
+                      <label htmlFor={`${titleId}-source-${id}`}>Source</label>
                       <input
-                        id={`${titleId}-source-${i}`}
+                        id={`${titleId}-source-${id}`}
                         type="text"
                         value={job.source}
                         autoComplete="off"
@@ -376,54 +464,58 @@ export default function BatchIngestModal({ name, onStarted, onClose }: Props) {
                               ? "https://gitea.example.com/owner/repo"
                               : "https://example.com/page"
                         }
-                        onChange={(e) => updateJob(i, { source: e.target.value })}
+                        onChange={(e) => updateRow(id, { source: e.target.value })}
                       />
                       {errs.source && <p className="p-form-validation__message">{errs.source}</p>}
                     </div>
 
                     <div className="p-form__group">
-                      <label htmlFor={`${titleId}-name-${i}`}>Source ID (optional)</label>
+                      <label htmlFor={`${titleId}-name-${id}`}>Source ID (optional)</label>
                       <input
-                        id={`${titleId}-name-${i}`}
+                        id={`${titleId}-name-${id}`}
                         type="text"
                         value={job.name}
                         autoComplete="off"
-                        onChange={(e) => updateJob(i, { name: e.target.value })}
+                        onChange={(e) => updateRow(id, { name: e.target.value })}
                       />
                     </div>
 
                     {isRepoJob(job.type) && (
                       <>
                         <div className="p-form__group">
-                          <label htmlFor={`${titleId}-branch-${i}`}>Branch (optional)</label>
+                          <label htmlFor={`${titleId}-branch-${id}`}>Branch (optional)</label>
                           <input
-                            id={`${titleId}-branch-${i}`}
+                            id={`${titleId}-branch-${id}`}
                             type="text"
                             value={job.branch}
                             autoComplete="off"
-                            onChange={(e) => updateJob(i, { branch: e.target.value })}
+                            onChange={(e) => updateRow(id, { branch: e.target.value })}
                           />
                         </div>
                         <div className="p-form__group">
-                          <label htmlFor={`${titleId}-path-${i}`}>Path prefix (optional)</label>
+                          <label htmlFor={`${titleId}-path-${id}`}>Path prefix (optional)</label>
                           <input
-                            id={`${titleId}-path-${i}`}
+                            id={`${titleId}-path-${id}`}
                             type="text"
                             value={job.path}
                             autoComplete="off"
                             placeholder="docs/"
-                            onChange={(e) => updateJob(i, { path: e.target.value })}
+                            onChange={(e) => updateRow(id, { path: e.target.value })}
                           />
                         </div>
                         <div className={`p-form__group ${errs.extensions ? "p-form-validation is-error" : ""}`}>
-                          <label htmlFor={`${titleId}-ext-${i}`}>File extensions</label>
+                          <label htmlFor={`${titleId}-ext-${id}`}>File extensions</label>
                           <input
-                            id={`${titleId}-ext-${i}`}
+                            id={`${titleId}-ext-${id}`}
                             type="text"
-                            defaultValue={job.extensions.join(", ")}
+                            value={row.extText}
                             autoComplete="off"
                             placeholder=".md, .rst, .txt"
-                            onBlur={(e) => updateJob(i, { extensions: normalizeExtensions(e.target.value) })}
+                            onChange={(e) => setExtensions(id, e.target.value)}
+                            // Blur tidies what is shown into the normalized form
+                            // that was already parsed on every keystroke, so the
+                            // field, the validation, and the manifest agree.
+                            onBlur={() => updateRow(id, {}, job.extensions.join(", "))}
                           />
                           {errs.extensions && (
                             <p className="p-form-validation__message">{errs.extensions}</p>
@@ -434,7 +526,7 @@ export default function BatchIngestModal({ name, onStarted, onClose }: Props) {
                             type="button"
                             className="p-button u-no-margin--bottom"
                             disabled={jp?.busy}
-                            onClick={() => void previewJob(i)}
+                            onClick={() => void previewJob(row)}
                           >
                             {jp?.busy ? (
                               <>
@@ -464,13 +556,13 @@ export default function BatchIngestModal({ name, onStarted, onClose }: Props) {
                     )}
 
                     <div className={`p-form__group ${errs.label ? "p-form-validation is-error" : ""}`}>
-                      <label htmlFor={`${titleId}-label-${i}`}>Label (optional)</label>
+                      <label htmlFor={`${titleId}-label-${id}`}>Label (optional)</label>
                       <input
-                        id={`${titleId}-label-${i}`}
+                        id={`${titleId}-label-${id}`}
                         type="text"
                         value={job.label}
                         autoComplete="off"
-                        onChange={(e) => updateJob(i, { label: e.target.value })}
+                        onChange={(e) => updateRow(id, { label: e.target.value })}
                       />
                       {errs.label && <p className="p-form-validation__message">{errs.label}</p>}
                     </div>

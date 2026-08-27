@@ -380,6 +380,16 @@ rag-cli.rag knowledge ingest --batch <config.yaml> [--force]
 > does not collapse onto one ID. When setting `name` explicitly, choose an ID unique across the whole
 > cluster.
 
+> **Upgrading: repository source IDs changed.** Earlier versions keyed each repository file by its
+> bare in-repo path (`README.md`), which collided across repositories. They are now keyed
+> `owner/repo/<path>` as described above. Nothing already in a knowledge base is rewritten, so a
+> repository ingested before the upgrade keeps its old IDs, and re-ingesting it adds a second copy of
+> every file under the new ID rather than replacing the first — `--force` does not help, because it
+> matches on the ID that changed. To move a repository onto the new scheme, remove the old entries
+> first (`rag-cli.rag k forget <base> <old-path-id>` per file, or `rag-cli.rag k delete <base>` and
+> re-create it if the base holds nothing else), then ingest again. A base you never re-ingest is
+> unaffected and keeps working.
+
 #### YAML schema
 
 ```yaml

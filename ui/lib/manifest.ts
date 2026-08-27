@@ -1,6 +1,6 @@
 import { LineCounter, parseDocument, type Document } from "yaml";
 import type { BatchDomain, BatchManifest, BatchQuestion } from "./api/answer";
-import { compileDomains, DomainError } from "./domains";
+import { compileDomains, DomainError, isBareSequence } from "./domains";
 
 // ManifestParseError is thrown when a YAML manifest cannot be parsed or fails
 // validation. Screens render its message as a field-level validation error and
@@ -265,10 +265,12 @@ const DOMAINS_STUB_PREAMBLE = `#
 // to the manifest, so a built manifest still parses with no routing and an
 // unedited stub cannot affect a run.
 //
-// Candidates come from what the questions carry. A question with a non-digit id
-// prefix ("C" for "C4") suggests that prefix as a glob; a question whose id is a
-// bare sequence number has no prefix to route on, so its source — the only key
-// the resolver can match such an id against — is suggested instead.
+// Candidates come from what the questions carry, and every one is a key the
+// resolver will actually consult for that question. A question with a non-digit
+// id prefix ("C" for "C4") suggests that prefix as a glob; a structured number
+// ("1.1") suggests its leading section ("1.*"). Only a question whose id is a
+// bare sequence number, or which has no id at all, falls back to suggesting its
+// source — the one case where the resolver consults source.
 export function domainsStub(questions: BatchQuestion[]): string {
   interface Candidate {
     pattern: string;
@@ -290,9 +292,9 @@ export function domainsStub(questions: BatchQuestion[]): string {
     candidates.push({ pattern, by, count: 1 });
   };
   for (const q of questions) {
-    const prefix = idPrefix(q.id ?? "");
-    if (prefix !== "") {
-      add(`${prefix}*`, "id prefix");
+    const pattern = idCandidate(q.id ?? "");
+    if (pattern !== "") {
+      add(pattern, "id prefix");
       continue;
     }
     const source = (q.source ?? "").trim();
@@ -321,6 +323,30 @@ export function domainsStub(questions: BatchQuestion[]): string {
   });
   out.push("#\n");
   return out.join("");
+}
+
+// idCandidate returns the glob to suggest for a question id, or "" when the id
+// carries nothing to route on and the question's source should be suggested
+// instead. Mirrors rfp.idCandidate.
+//
+// It mirrors the resolver's fallback condition exactly: "" is returned precisely
+// when resolveDomain would consult the question's source. Without that, an id
+// like "1.1" — which has no non-digit prefix, but is not a bare sequence number
+// either — would be suggested by source, and the resolver would never look at a
+// source for it, so uncommenting the entry would silently route nothing.
+export function idCandidate(id: string): string {
+  const trimmed = id.trim();
+  if (trimmed === "" || isBareSequence(trimmed)) return "";
+  const prefix = idPrefix(trimmed);
+  if (prefix !== "") return `${prefix}*`;
+  // A structured number such as "1.1" or "2-3". The separator is kept in the
+  // pattern so "1.*" stays distinct from "10.*", which a bare "1*" would
+  // swallow.
+  const sep = trimmed.search(/[.\-_/ ]/);
+  if (sep > 0) return `${trimmed.slice(0, sep + 1)}*`;
+  // A digit run with some other suffix ("17a"): the digits are the only grouping
+  // on offer.
+  return `${/^[0-9]*/.exec(trimmed)?.[0] ?? ""}*`;
 }
 
 // idPrefix returns the leading run of non-digit characters in a question id, or
