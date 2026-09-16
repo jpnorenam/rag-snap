@@ -61,4 +61,4 @@ Entry point `cmd/cli/main.go` builds a Cobra command tree. A single `common.Cont
 
 - CI (`.github/workflows/snap-publish.yml`): push to `main` publishes the snap to the `edge` channel; a published GitHub release publishes to `stable`. There is no test/lint gate in CI — run `make all` locally before pushing.
 - Commands are added to the root in a fixed order with `cobra.EnableCommandSorting = false`; preserve grouping/order when adding commands.
-- `CLAUDE.md`, `*.claude`, `PLAN.md`, and `*.snap` are gitignored.
+- `CLAUDE.md` and `.claude/` (skills, commands) are tracked and shared across the team; `PLAN.md` and `*.snap` build artifacts are gitignored and stay local-only.

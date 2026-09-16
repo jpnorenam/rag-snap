@@ -1,6 +1,12 @@
 *.snap
 /bin
 *__debug*
+# Editor artifacts
+*.swp
+*.swo
+*~
+# Local-only docs (see CLAUDE.md's own conventions section)
+/PLAN.md
 # Test Files
 *.json
 dev.config 
