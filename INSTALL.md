@@ -16,11 +16,15 @@ browser UI.
 
 ### -op1) local lxd
 
-adjust specs based on your host resources (check cpu `nproc` and memroy `free -h` to adjust accordingly)
-
+prepare an lxd envirionment
 ```
 sudo snap install lxd --channel 6/stable
 sudo lxd init
+```
+
+adjust specs based on your host resources (check cpu `nproc` and memroy `free -h` to adjust accordingly)
+
+```
 sudo lxc launch ubuntu:24.04 rag-snap --vm -c limits.cpu=6 -c limits.memory=40GiB -d root,size=32GiB
 lxc shell rag-snap
 ```
@@ -32,7 +36,10 @@ ones — nothing below requires them to be on `127.0.0.1`).
 
 ### 1. OpenSearch (the `knowledge` store)
 
-The [Official OpenSearch product](https://opensearch.org/) which we will install via [OpenSearch snap](https://github.com/canonical/opensearch-snap) for an easier set up . 
+The [Official OpenSearch product](https://opensearch.org/) which we will install via [OpenSearch snap](https://github.com/canonical/opensearch-snap) for an easier set up
+```
+sudo snap install opensearch
+```
 
 During [certificate creation](https://github.com/canonical/opensearch-snap?tab=readme-ov-file#creating-certificates),
 make sure the `ingest` and `ml` roles are set on the node:
@@ -78,8 +85,13 @@ a third-party OpenAI-compatible API.
 > ingest or ask about confidential information in this configuration.
 
 #### -op2) (Alternative) Canonical Inference Snap
+
 An [Inference snap](https://github.com/canonical/inference-snaps)** running locally. 
 
+```
+sudo snap install gemma3
+
+```
 Pick the engine appropriate for your hardware 
 
 ``` bash
