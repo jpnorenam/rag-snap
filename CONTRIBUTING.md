@@ -15,22 +15,21 @@ project's [GPL-3.0](LICENSE) license.
 
 Feel free to setup the environment as you see it fit.
 Here a proposal.
-
-Launch an LXC container with the requirements and local lxd vm following [installation guidelines](INSTALL.md#-op1-local-lxd)
-
-On host, clone the repo and mount it as an lxc device into the testing environment
-
+Launch an LXC instance `src-rag` with the requirements and local lxd vm following [installation guidelines](INSTALL.md#-op1-local-lxd)
+On host, clone this repo and mount it as an lxc device into the testing environment
 ```
-lxc config device add rag-snap rag-snap-src disk \
+lxc config device add src-rag rag-snap-src disk \
   source="$HOME/src/rag-snap" \
   path=/root/rag-snap-src
 ```
+
 ---
 
 ## Development setup
 
 ### Prerequisites
 
+- Make
 - [Go](https://snapcraft.io/go) 1.24+
 - `snapcraft` and `snapd` (for building/installing the snap)
 - `golangci-lint` (for linting; config is in `.golangci.yml`)
@@ -38,10 +37,12 @@ lxc config device add rag-snap rag-snap-src disk \
   Inference snap or a third-party OpenAI-compatible API), and the bundled Tika
   service. See the [README](README.md) for full service setup.
 ```
-snap install go --classic
-snap install golangci-lint --classic 
-snap install snapcraft --classic
-snap refresh snapd
+sudo apt intall make
+sudo snap install go --classic
+sudo snap install golangci-lint --classic 
+sudo snap install snapcraft --classic
+sudo snap install tika-server
+sudo snap refresh snapd
 ```
 
 
