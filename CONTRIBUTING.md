@@ -37,6 +37,13 @@ lxc config device add rag-snap rag-snap-src disk \
 - For running end to end: an OpenSearch snap, an inference server (a local
   Inference snap or a third-party OpenAI-compatible API), and the bundled Tika
   service. See the [README](README.md) for full service setup.
+```
+snap install go --classic
+snap install golangci-lint --classic 
+snap install snapcraft --classic
+snap refresh snapd
+```
+
 
 ### Common commands
 
@@ -139,6 +146,7 @@ or `user` scoped.
 - Preserve the fixed command order in `cmd/cli/main.go`
   (`cobra.EnableCommandSorting = false`) when adding commands.
 
+---
 
 ## Questions
 
