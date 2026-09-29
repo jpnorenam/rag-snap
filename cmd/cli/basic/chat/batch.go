@@ -263,7 +263,11 @@ func RunBatch(
 		return nil, err
 	}
 
-	client := openai.NewClient(clientOptions(baseURL)...)
+	opts, err := clientOptions(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	client := openai.NewClient(opts...)
 
 	modelName := manifest.Model
 	if modelName == "" {

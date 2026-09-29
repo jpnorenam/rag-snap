@@ -31,3 +31,4 @@ installing the snap, configuring backends, secrets, and enabling the browser UI.
 - [docs/local-ui.md](docs/local-ui.md) — browser UI reference
 - [docs/rest-api.md](docs/rest-api.md) — REST API (`ragd`) reference
 - [docs/bedrock_guide.md](docs/bedrock_guide.md) — AWS Bedrock API key walkthrough
+- [docs/opensearch-on-aws.md](docs/opensearch-on-aws.md) — create a dedicated OpenSearch backend on AWS

@@ -10,11 +10,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"syscall"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
+	"github.com/jpnorenam/rag-snap/pkg/credentials"
 	opensearch "github.com/opensearch-project/opensearch-go/v4"
 	opensearchapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 )
@@ -126,13 +126,13 @@ func NewClientNoWait(ctx context.Context, baseURL string) (*OpenSearchClient, er
 // the server. Reachability is the caller's decision: see NewClient (wait) and
 // NewClientNoWait (fail fast).
 func newClient(baseURL string) (*OpenSearchClient, error) {
-	username, found := os.LookupEnv(envOpenSearchUsername)
-	if !found {
-		return nil, fmt.Errorf("%q env var is not set", envOpenSearchUsername)
+	username, err := lookupCredential(envOpenSearchUsername)
+	if err != nil {
+		return nil, err
 	}
-	password, found := os.LookupEnv(envOpenSearchPassword)
-	if !found {
-		return nil, fmt.Errorf("%q env var is not set", envOpenSearchPassword)
+	password, err := lookupCredential(envOpenSearchPassword)
+	if err != nil {
+		return nil, err
 	}
 
 	osClient, err := newOpenSearchClient(baseURL, username, password)
@@ -241,6 +241,22 @@ func (c *OpenSearchClient) Init(ctx context.Context, hooks InitHooks) error {
 	}
 
 	return nil
+}
+
+// lookupCredential resolves an OpenSearch secret from the environment or, in the
+// CLI, the credentials file (see pkg/credentials).
+func lookupCredential(name string) (string, error) {
+	v, found, err := credentials.Lookup(name)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		if p := credentials.Path(); p != "" {
+			return "", fmt.Errorf("%q env var is not set (or add it to %s)", name, p)
+		}
+		return "", fmt.Errorf("%q env var is not set", name)
+	}
+	return v, nil
 }
 
 func newOpenSearchClient(baseUrl, username, password string) (*opensearchapi.Client, error) {
