@@ -63,7 +63,11 @@ func RefineQuestions(baseURL, model string, questions []rfp.Question) ([]rfp.Que
 		return nil, nil, fmt.Errorf("marshaling input: %w", err)
 	}
 
-	client := openai.NewClient(clientOptions(baseURL)...)
+	opts, err := clientOptions(baseURL)
+	if err != nil {
+		return nil, nil, err
+	}
+	client := openai.NewClient(opts...)
 
 	resp, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
 		Messages: []openai.ChatCompletionMessageParamUnion{

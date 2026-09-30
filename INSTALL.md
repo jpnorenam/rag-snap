@@ -22,6 +22,9 @@ ones — nothing below requires them to be on `127.0.0.1`).
 
 ### OpenSearch (the `knowledge` store)
 
+> To have `rag-cli` create a dedicated OpenSearch node on AWS and configure everything below for
+> you, see **[docs/opensearch-on-aws.md](docs/opensearch-on-aws.md)** (`rag-cli.rag prepare-script aws`).
+
 Install and set up the [OpenSearch snap](https://github.com/canonical/opensearch-snap). During
 [certificate creation](https://github.com/canonical/opensearch-snap?tab=readme-ov-file#creating-certificates),
 make sure the `ingest` and `ml` roles are set on the node:
@@ -160,6 +163,27 @@ export CHAT_API_KEY="bedrock-api-key-****"
 
 The CLI inherits these directly from your shell, so this is enough for every `rag-cli.rag ...`
 command.
+
+#### Credentials file
+
+Instead of exporting them in every shell, the CLI can read `OPENSEARCH_USERNAME`,
+`OPENSEARCH_PASSWORD` and `CHAT_API_KEY` from `~/snap/rag-cli/common/credentials.json`
+(`$SNAP_USER_COMMON/credentials.json`). The [AWS setup](docs/opensearch-on-aws.md) writes this file for
+you; you can also create it yourself:
+
+```bash
+umask 077
+printf '%s\n' '{"OPENSEARCH_USERNAME": "admin", "OPENSEARCH_PASSWORD": "...", "CHAT_API_KEY": "..."}' \
+  > ~/snap/rag-cli/common/credentials.json
+```
+
+- An exported variable always wins, even when it is set to an empty string
+  (`export CHAT_API_KEY=` means "no API key").
+- The file is read only when a credential the command needs is not exported. It must be a
+  regular file owned by you with mode 0600, and must contain only those three keys, with string
+  values. Otherwise the command stops and says what to fix, without printing any value.
+- Only the CLI reads this file. `ragd` still takes its secrets from its service environment, as
+  described below.
 
 **For the browser UI / REST API**, the daemon (`ragd`) runs as a separate systemd service with
 its own environment — your shell's `export` is invisible to it. Give it all three secrets with a

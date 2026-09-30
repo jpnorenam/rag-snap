@@ -26,9 +26,13 @@ const (
 type StreamFunc func(kind TokenKind, content string) error
 
 // NewInferenceClient builds an OpenAI-compatible client for baseURL, applying
-// CHAT_API_KEY from the environment when set.
-func NewInferenceClient(baseURL string) openai.Client {
-	return openai.NewClient(clientOptions(baseURL)...)
+// CHAT_API_KEY when set.
+func NewInferenceClient(baseURL string) (openai.Client, error) {
+	opts, err := clientOptions(baseURL)
+	if err != nil {
+		return openai.Client{}, err
+	}
+	return openai.NewClient(opts...), nil
 }
 
 // LiveSession is a server-owned, multi-turn chat session bundling the inference
@@ -73,8 +77,13 @@ func NewLiveSession(baseURL, model string, knowledgeClient *knowledge.OpenSearch
 		indexes = append(indexes, knowledge.FullIndexName(b))
 	}
 
+	opts, err := clientOptions(baseURL)
+	if err != nil {
+		return nil, err
+	}
+
 	ls := &LiveSession{
-		client: openai.NewClient(clientOptions(baseURL)...),
+		client: openai.NewClient(opts...),
 		params: openai.ChatCompletionNewParams{
 			Messages: []openai.ChatCompletionMessageParamUnion{
 				openai.SystemMessage(systemPrompt),

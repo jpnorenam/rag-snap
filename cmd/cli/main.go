@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/canonical/go-snapctl"
 	"github.com/canonical/go-snapctl/env"
@@ -12,6 +13,7 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
 	"github.com/jpnorenam/rag-snap/cmd/cli/others"
 	"github.com/jpnorenam/rag-snap/cmd/cli/others/debug"
+	"github.com/jpnorenam/rag-snap/pkg/credentials"
 	"github.com/jpnorenam/rag-snap/pkg/storage"
 	"github.com/spf13/cobra"
 )
@@ -19,6 +21,12 @@ import (
 func main() {
 	ctx := &common.Context{
 		Config: storage.NewConfig(),
+	}
+
+	// Secrets not exported in the environment may come from the per-user
+	// credentials file. Only the CLI enables this; ragd stays environment-only.
+	if dir := os.Getenv("SNAP_USER_COMMON"); dir != "" {
+		credentials.Enable(filepath.Join(dir, credentials.FileName))
 	}
 
 	// Get snap name for dynamic commands
@@ -70,6 +78,7 @@ func main() {
 	rootCmd.AddCommand(
 		config.GetCommand(ctx),
 		config.SetCommand(ctx),
+		config.PrepareScriptCommand(ctx),
 	)
 
 	// other commands (help is added by default)
