@@ -585,7 +585,10 @@ func awsTerraformStubs(t *testing.T, terraformBody string) string {
   "configure list-profiles") echo dev;;
   *sts*) echo arn:aws:iam::123456789012:user/tester;;
 esac`,
-		"terraform": terraformBody,
+		// state list reports a tracked resource unless STUB_EMPTY_STATE is set,
+		// as it would after a completed destroy.
+		"terraform": `case "$*" in *"state list"*) [ -n "${STUB_EMPTY_STATE:-}" ] || echo aws_instance.opensearch; exit 0;; esac
+` + terraformBody,
 	})
 	return path
 }
@@ -711,6 +714,33 @@ func TestDestroyNotConfirmedKeepsEverything(t *testing.T) {
 				t.Error("the import marker was cleared")
 			}
 		})
+	}
+}
+
+func TestDestroyAfterDestroyStopsBeforePlan(t *testing.T) {
+	dir, prelude := destroyFixture(t)
+	// A completed destroy removed the SSH key and left an empty state behind.
+	if err := os.RemoveAll(filepath.Join(dir, "ssh")); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(dir, "tf-calls")
+	out, err := bashIn(t, "opensearch-on-aws.sh", "rag-deadbeef\n", prelude+"destroy",
+		awsTerraformStubs(t, `echo "$*" >>"$D/tf-calls"`), "D="+dir, "STUB_EMPTY_STATE=1")
+	if err == nil || !strings.Contains(out, "nothing to destroy") {
+		t.Fatalf("destroy of an empty state did not stop cleanly: %v\n%s", err, out)
+	}
+	if strings.Contains(readFile(t, calls), "plan") {
+		t.Errorf("terraform plan ran against an empty state:\n%s", readFile(t, calls))
+	}
+}
+
+func TestGeneratedSecretsRejectJSONUnsafeValues(t *testing.T) {
+	for _, v := range []string{`pa"ss`, `pa\ss`} {
+		out, err := bash(t, "opensearch-on-aws.sh", `LOG_DIR=$(mktemp -d) SECRETS=secrets.env CFG[OPENSEARCH_ADMIN_PASSWORD]=$V
+			ensure_generated_secrets`, "V="+v)
+		if err == nil || !strings.Contains(out, "OPENSEARCH_ADMIN_PASSWORD in secrets.env must not contain") {
+			t.Errorf("password %q was accepted: %v\n%s", v, err, out)
+		}
 	}
 }
 

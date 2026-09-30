@@ -148,6 +148,8 @@ valid() { # valid <key> <value>
 	DRIVE_IMPORT) [[ $v == yes || $v == no ]] ;;
 	DRIVE_FOLDER_URL) [[ $v == https://drive.google.com/* ]] ;;
 	CHAT_API_KEY) true ;;
+	# Written verbatim into credentials.json and curl config lines.
+	OPENSEARCH_ADMIN_PASSWORD | TLS_*_PASS) [ -n "$v" ] && [[ $v != *[\"\\]* ]] ;;
 	*) [ -n "$v" ] ;;
 	esac
 }
@@ -348,6 +350,7 @@ ensure_generated_secrets() {
 	local k
 	for k in "${GENERATED_SECRETS[@]}"; do
 		[ -n "${CFG[$k]:-}" ] || CFG[$k]=$(gen_secret)
+		valid "$k" "${CFG[$k]}" || die "$k in $SECRETS must not contain double quotes or backslashes; edit or remove it and rerun"
 	done
 }
 
@@ -608,6 +611,9 @@ destroy() {
 	phase "Terraform destroy" destroy
 	tf_vars
 	run tf init -input=false -no-color
+	# A completed destroy leaves an empty state behind (and removes the SSH key the plan reads).
+	[ -n "$(tf state list 2>/dev/null)" ] || die "Terraform state in $TF_DIR holds no resources; nothing to destroy"
+	[ -f "$SSH_KEY.pub" ] || die "$SSH_KEY.pub is missing but Terraform still tracks resources; restore it (any ed25519 public key will do for a destroy) and rerun"
 	run tf plan -destroy -input=false -no-color -out=destroy.tfplan "${TF_VARS[@]}"
 	protect_state
 	local a

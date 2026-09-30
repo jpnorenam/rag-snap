@@ -3,8 +3,11 @@
 # variables, state, or user-data.
 
 # Fails the plan unless the saved AMI is a Canonical image in this region.
+# Deprecated images are included so plan and destroy keep working after the
+# saved AMI passes its deprecation date.
 data "aws_ami" "ubuntu" {
-  owners = ["099720109477"]
+  owners             = ["099720109477"]
+  include_deprecated = true
 
   filter {
     name   = "image-id"
