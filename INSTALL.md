@@ -159,6 +159,7 @@ shell before running commands:
 export OPENSEARCH_USERNAME="admin"
 export OPENSEARCH_PASSWORD="admin"      # or your cluster's real password
 export CHAT_API_KEY="bedrock-api-key-****"
+export KAPA_API_KEY="kapa-api-key-****"  # optional: only if you use kapa.ai (see below)
 ```
 
 The CLI inherits these directly from your shell, so this is enough for every `rag-cli.rag ...`
@@ -167,7 +168,7 @@ command.
 #### Credentials file
 
 Instead of exporting them in every shell, the CLI can read `OPENSEARCH_USERNAME`,
-`OPENSEARCH_PASSWORD` and `CHAT_API_KEY` from `~/snap/rag-cli/common/credentials.json`
+`OPENSEARCH_PASSWORD`, `CHAT_API_KEY` and `KAPA_API_KEY` from `~/snap/rag-cli/common/credentials.json`
 (`$SNAP_USER_COMMON/credentials.json`). The [AWS setup](docs/opensearch-on-aws.md) writes this file for
 you; you can also create it yourself:
 
@@ -180,20 +181,20 @@ printf '%s\n' '{"OPENSEARCH_USERNAME": "admin", "OPENSEARCH_PASSWORD": "...", "C
 - An exported variable always wins, even when it is set to an empty string
   (`export CHAT_API_KEY=` means "no API key").
 - The file is read only when a credential the command needs is not exported. It must be a
-  regular file owned by you with mode 0600, and must contain only those three keys, with string
+  regular file owned by you with mode 0600, and must contain only those four keys, with string
   values. Otherwise the command stops and says what to fix, without printing any value.
 - Only the CLI reads this file. `ragd` still takes its secrets from its service environment, as
   described below.
 
 **For the browser UI / REST API**, the daemon (`ragd`) runs as a separate systemd service with
-its own environment — your shell's `export` is invisible to it. Give it all three secrets with a
+its own environment — your shell's `export` is invisible to it. Give it the secrets with a
 root-only systemd drop-in (the auto-generated unit is regenerated on every restart, so don't edit
 it directly):
 
 ```bash
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\n' \
-  "$CHAT_API_KEY" "$OPENSEARCH_USERNAME" "$OPENSEARCH_PASSWORD" | \
+printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\nEnvironment=KAPA_API_KEY=%s\n' \
+  "$CHAT_API_KEY" "$OPENSEARCH_USERNAME" "$OPENSEARCH_PASSWORD" "$KAPA_API_KEY" | \
   sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf >/dev/null
 sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
 sudo systemctl daemon-reload
@@ -203,14 +204,32 @@ sudo snap restart rag-cli.ragd
 Confirm the running daemon actually has the keys:
 
 ```bash
-sudo sh -c "tr '\0' '\n' < /proc/\$(pgrep -x ragd)/environ" | grep -cE '^(CHAT_API_KEY|OPENSEARCH_USERNAME|OPENSEARCH_PASSWORD)='
-# should print 3
+sudo sh -c "tr '\0' '\n' < /proc/\$(pgrep -x ragd)/environ" | grep -cE '^(CHAT_API_KEY|OPENSEARCH_USERNAME|OPENSEARCH_PASSWORD|KAPA_API_KEY)='
+# should print 4 (3 if you don't use kapa.ai and left KAPA_API_KEY empty)
 ```
 
 > `ragd`'s app definition in `snap/snapcraft.yaml` declares no hardcoded `environment:` values
 > for these — a hardcoded value there would be reapplied by `snap run` *after* systemd and
 > silently override anything set via a drop-in. Because none are hardcoded, all three secrets
 > above take effect the same way, including a non-default OpenSearch username/password.
+
+`ragd` reads its secrets and config once at startup: after changing the drop-in or any config key
+(for example `kapa.project.id`), run `sudo snap restart rag-cli.ragd`.
+
+#### kapa.ai (optional)
+
+kapa.ai adds remote documentation search alongside your knowledge bases (`/use-kapa` in chat,
+`kapa_source_groups` in batch manifests). It needs the project id in config and the API key as the
+`KAPA_API_KEY` secret above:
+
+```bash
+sudo rag-cli.rag set kapa.project.id=<project-id>
+```
+
+> **Upgrading:** the API key used to be a config key, `kapa.api.key`. It is no longer read, and
+> refreshing the snap removes any stored value. Move the key to `KAPA_API_KEY`: export it (or add it
+> to `credentials.json`) for the CLI, and add it to the `ragd` drop-in for the browser UI and REST
+> API. Downgrading to a release that read `kapa.api.key` means setting it again.
 
 ---
 

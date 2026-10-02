@@ -191,6 +191,26 @@ existing active-knowledge-bases control message, and is independent of it.
 groups — and coupling them would make "add kapa" silently clear the user's active bases. Sessions
 start with nothing selected so a session never opens by querying an entire kapa project.
 
+### D11. Batch results record what grounded each answer
+
+Each `BatchResult` gains `retrieved: {"local": n, "kapa": m}`, set from the counts `retrieveContext`
+already computes, and omitted when no retrieval was attempted. Both paths share `RunBatch`, so the
+direct path's results file and the daemon's operation metadata carry identical counts.
+
+*Why:* the daemon has no verbose output, so without this a daemon-routed run cannot show that kapa
+took part at all, and the end-to-end check (task 9.5) could only be done in direct mode. Counts in the
+result are the auditable alternative to logs, in the same spirit as the per-result `domain`.
+
+### D12. A kapa failure during a daemon chat turn is a non-fatal `warning` frame
+
+`LiveSession` wires `Session.Warn` to the turn's stream, emitting a `warning` frame (`{"type":
+"warning", "content": …}`) before the answer tokens. It is not an `error` frame: clients treat those
+as a failed turn, whereas the turn still completes on local context. The CLI's remote mode prints it
+to stderr.
+
+*Why:* `kapa-retrieval` requires request-time failures to be reported, and the daemon chat path was
+the one place a failure stayed silent.
+
 ### Snap packaging impact
 
 No new plugs, interfaces, or bundled binaries. Both the `rag` app and the `ragd` daemon already hold

@@ -532,3 +532,29 @@ test("idPrefix takes the run of characters before the first digit", () => {
     assert.equal(idPrefix(id), want, id);
   }
 });
+
+test("round-trips kapa_source_groups through serialize and parse", () => {
+  const manifest = parseManifest(`version: "1.0"
+knowledge_bases:
+  - maas
+kapa_source_groups:
+  - 74e10295-c4c2-497e-ab2e-dfe039c441df
+  - 2ac5de52-606e-4c72-a258-c9c172d8b52f
+questions:
+  - id: Q1
+    question: How does MAAS commission servers?
+`);
+  assert.deepEqual(manifest.kapa_source_groups, [
+    "74e10295-c4c2-497e-ab2e-dfe039c441df",
+    "2ac5de52-606e-4c72-a258-c9c172d8b52f",
+  ]);
+  const again = parseManifest(serializeManifest(manifest));
+  assert.deepEqual(again.kapa_source_groups, manifest.kapa_source_groups);
+  assert.deepEqual(again.knowledge_bases, ["maas"]);
+});
+
+test("omits kapa_source_groups when none are selected", () => {
+  const yaml = serializeManifest({ version: "1.0", kapa_source_groups: [], questions: [{ question: "q" }] });
+  assert.ok(!yaml.includes("kapa_source_groups"), yaml);
+  assert.equal(parseManifest(yaml).kapa_source_groups, undefined);
+});

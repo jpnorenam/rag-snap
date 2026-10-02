@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"syscall"
 	"time"
@@ -164,6 +165,9 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 		KapaClient:       kapaClient,
 		EmbeddingModelID: embeddingModelID,
 		ActiveIndexes:    []string{knowledge.DefaultIndexName()},
+		Warn: func(msg string) {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+		},
 	}
 
 	// Saved-chat history is stored client-locally in daemonless mode. chatID pins
@@ -364,7 +368,7 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	if hasContext {
 		lexicalQuery = rewriteSearchQuery(client, params.Model, params.Messages, prompt, verbose)
 		// Retrieve RAG context from knowledge base (no-op when unavailable).
-		ragContext = retrieveContext(session, prompt, lexicalQuery, verbose)
+		ragContext, _ = retrieveContext(session, prompt, lexicalQuery, verbose)
 	}
 
 	// Build the message sent to the LLM: augmented when context is found.

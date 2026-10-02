@@ -33,7 +33,9 @@ operations started afterwards and SHALL NOT alter an operation already running. 
 NOT alter the resolved system prompt, which SHALL remain identical for every question in the run.
 
 The operation's metadata SHALL convey progress across the questions, and the operation SHALL be
-cancellable.
+cancellable. Each result SHALL record the number of local and kapa hits retrieved for it, as defined
+by `kapa-retrieval`, and problems that degrade the run without failing it SHALL be listed as warnings
+on the operation.
 
 #### Scenario: Running a batch manifest
 
@@ -65,6 +67,11 @@ cancellable.
 
 - **WHEN** a client posts a manifest carrying `kapa_source_groups`
 - **THEN** the value reaches the run and kapa retrieval is performed against exactly those groups
+
+#### Scenario: Results record what grounded them
+
+- **WHEN** a batch runs with local knowledge bases and kapa source groups active
+- **THEN** each result records how many local hits and how many kapa hits were retrieved for it
 
 #### Scenario: Kapa selection with an unconfigured integration
 

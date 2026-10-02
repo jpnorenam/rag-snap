@@ -57,6 +57,14 @@ definitions:
                     $ref: '#/definitions/batchDomainRequest'
                 type: array
                 x-go-name: Domains
+            kapa_source_groups:
+                description: |-
+                    KapaSourceGroups selects the kapa.ai source groups to retrieve from, by id.
+                    Absent or empty means no kapa.ai retrieval.
+                items:
+                    type: string
+                type: array
+                x-go-name: KapaSourceGroups
             knowledge_bases:
                 items:
                     type: string
@@ -122,6 +130,15 @@ definitions:
                     type: string
                 type: array
                 x-go-name: Bases
+            kapa_source_groups:
+                description: |-
+                    KapaSourceGroups is the initial kapa.ai source-group selection (ids), the
+                    start-time equivalent of set-active-kapa-groups. A session starts with none
+                    unless a client names some here (or resumes a chat that had some).
+                items:
+                    type: string
+                type: array
+                x-go-name: KapaSourceGroups
             model:
                 type: string
                 x-go-name: Model
@@ -290,6 +307,14 @@ definitions:
                 format: int64
                 type: integer
                 x-go-name: Count
+            kapa_groups:
+                description: |-
+                    KapaGroups also searches kapa.ai, scoped to these source-group ids. Absent
+                    or empty means kapa.ai is not queried.
+                items:
+                    type: string
+                type: array
+                x-go-name: KapaGroups
             query:
                 type: string
                 x-go-name: Query
@@ -310,6 +335,15 @@ definitions:
             type:
                 type: string
                 x-go-name: Type
+            warnings:
+                description: |-
+                    Warnings lists problems that degraded the response without failing it
+                    (for example a search whose kapa.ai scope could not be applied). Omitted
+                    when empty, so existing responses are unchanged.
+                items:
+                    type: string
+                type: array
+                x-go-name: Warnings
         title: syncResponse is the body of a successful, immediately-completed request.
         type: object
         x-go-package: github.com/jpnorenam/rag-snap/internal/api
@@ -366,7 +400,13 @@ paths:
                 retrieval on completion. Each result under the operation metadata's "results"
                 key carries the question's "id", "question", "answer", and — when the
                 manifest's "domains" block routed it — the "domain" pattern that matched, so
-                the routing is auditable per answer. To derive a manifest from a document,
+                the routing is auditable per answer, and "retrieved" ({"local": n, "kapa": m})
+                when retrieval ran, recording how many local and kapa.ai hits grounded it.
+                Problems that degrade the run without
+                failing it are listed under the metadata's "warnings" key — for example a
+                manifest selecting "kapa_source_groups" while kapa.ai is not configured, or a
+                kapa.ai request failing for one question; the run continues on local
+                knowledge in both cases. To derive a manifest from a document,
                 use the separate POST /1.0/answer/build endpoint (Tika extraction + optional
                 LLM refinement); this run endpoint accepts only a prepared manifest.
 
@@ -449,6 +489,13 @@ paths:
                 Starts a chat session as a websocket-class operation. The operation metadata
                 carries the websocket connect URL and one-time secret; the client dials it to
                 hold the interactive, multi-turn session.
+
+                The body may name initial kapa.ai source groups by id in
+                "kapa_source_groups" (a session otherwise starts with none). The metadata's
+                "kapa_groups" is the effective selection; "kapa_unavailable" is true when
+                groups were requested (or restored from a resumed chat) but kapa.ai is not
+                configured on the daemon. Change the selection mid-session with a
+                "set-active-kapa-groups" message, acknowledged by "active-kapa-groups".
             operationId: chatStart
             parameters:
                 - in: body
@@ -593,6 +640,28 @@ paths:
             summary: Stream events over a websocket.
             tags:
                 - operations
+    /1.0/kapa/source-groups:
+        get:
+            description: |-
+                Lists the configured kapa.ai project's source groups, each with its id (the
+                value to send in a manifest's "kapa_source_groups") and display name. The
+                listing follows the upstream pagination to completion and reports each group
+                once. "configured" is false, with an empty "groups" list, when kapa.ai is
+                disabled or its project id (kapa.project.id / KAPA_PROJECT_ID) or API key
+                (KAPA_API_KEY in the daemon's environment) is missing. A failing upstream
+                request (rejected credentials, unreachable host, unexpected status) returns
+                a 502 rather than an empty list.
+            operationId: kapaSourceGroups
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "502":
+                    $ref: '#/responses/errorResponse'
+            summary: List kapa.ai source groups.
+            tags:
+                - kapa
     /1.0/knowledge:
         get:
             operationId: knowledgeList
@@ -1378,7 +1447,15 @@ paths:
         post:
             description: |-
                 Runs hybrid (neural + lexical) retrieval over the named bases. Requires a
-                configured embedding model.
+                configured embedding model when bases are given.
+
+                "kapa_groups" (source-group ids) additionally searches kapa.ai, concurrently.
+                Local hits are listed first, ordered by score, followed by kapa.ai hits in
+                kapa.ai's order (their scores are rank-derived and not comparable); a kapa.ai
+                hit has base "kapa.ai" and label "kapa-canonical". Absent or empty
+                "kapa_groups" means kapa.ai is not queried. When kapa.ai is not configured or
+                its request fails, the local hits are still returned and the response's
+                top-level "warnings" says kapa.ai could not be applied.
             operationId: search
             parameters:
                 - in: body

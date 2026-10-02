@@ -313,7 +313,8 @@ websocket URL to dial for streamed tokens and `<think>` blocks.
 | `DELETE /1.0/knowledge-engine/models/{id}` | sync | Undeploy and delete a model (`?force=true` if in use) |
 | `POST /1.0/search` | sync | Hybrid search |
 | `POST /1.0/chat` | async (ws) | Start an interactive chat session |
-| `POST /1.0/answer/batch` | async | Run a prepared batch manifest |
+| `POST /1.0/answer/batch` | async | Run a prepared batch manifest (optionally with `kapa_source_groups`) |
+| `GET /1.0/kapa/source-groups` | sync | List the kapa.ai project's source groups |
 | `POST /1.0/answer/build` | async | Extract questions from a document (spreadsheets return a column choice) |
 | `POST /1.0/answer/build/extract` | async | Extract questions from a chosen spreadsheet column |
 | `GET /1.0/prompts`, `GET /1.0/prompts/{name}` | sync | Read the prompt templates |
@@ -328,6 +329,50 @@ The full, authoritative contract is the generated [`rest-api.yaml`](../rest-api.
 OpenAPI specification at the repository root.
 
 ---
+
+## kapa.ai source groups
+
+kapa.ai is a remote retrieval source used alongside the local knowledge bases. `ragd` builds its
+kapa.ai client once at startup from `kapa.enabled` and `kapa.project.id` (config) and
+`KAPA_API_KEY` (environment; `KAPA_PROJECT_ID` overrides the project). The key is never read from
+config: give it to the daemon in the same root-only systemd drop-in as `CHAT_API_KEY`, then
+`sudo snap restart rag-cli.ragd`.
+
+```bash
+curl --unix-socket "$SOCK" http://ragd/1.0/kapa/source-groups
+# {"type":"sync", …, "metadata": {"configured": true,
+#   "groups": [{"id": "74e10295-…", "name": "MAAS"}, {"id": "2ac5de52-…", "name": "Landscape"}]}}
+```
+
+- `configured: false` with an empty `groups` list means kapa.ai is disabled or its project id or
+  API key is missing. `configured: true` with an empty list is a project with no groups.
+- A failing kapa.ai request (rejected key, unreachable host) returns **502** instead of an empty list.
+
+A batch manifest selects groups by id with `kapa_source_groups`; absent or empty means no kapa.ai
+retrieval:
+
+```json
+{"version": "1.0", "knowledge_bases": ["maas"],
+ "kapa_source_groups": ["74e10295-…"],
+ "questions": [{"id": "Q1", "question": "How does MAAS commission servers?"}]}
+```
+
+Chat sessions and search take a selection the same way. `POST /1.0/chat` accepts
+`"kapa_source_groups": [...]` (a session otherwise starts with none), and its operation metadata
+reports the effective `kapa_groups` and `kapa_unavailable` (also inside `chat` when resuming a saved
+chat, which restores its selection). On the websocket, `{"type": "set-active-kapa-groups",
+"kapa_groups": [...]}` changes the selection and is acknowledged by an `active-kapa-groups` frame
+carrying the effective selection, or an `error` when kapa.ai is not configured. A non-fatal
+`warning` frame reports a kapa.ai request that failed during a turn; the turn still completes.
+`POST /1.0/search` accepts `"kapa_groups": [...]`, with or without `bases`. kapa.ai hits follow the
+local ones, with base `kapa.ai` and label `kapa-canonical`. When kapa.ai cannot be applied, the
+local hits are returned and the response's top-level `warnings` says why.
+
+Each result records what grounded it under `retrieved`, for example
+`"retrieved": {"local": 30, "kapa": 14}`, so you can confirm kapa.ai took part in a daemon run
+(the CLI's results file carries the same counts). Problems that degrade a run without failing it are
+listed under the operation metadata's `warnings` key: groups selected while kapa.ai is not configured, or a kapa.ai request failing for
+one question. The run continues on local knowledge in both cases.
 
 ## Prompt templates
 
@@ -426,7 +471,7 @@ sudo curl -s --unix-socket /var/snap/rag-cli/common/ragd/unix.socket -X DELETE \
 ```
 
 **Secrets never come back out.** The service credentials (`OPENSEARCH_USERNAME`,
-`OPENSEARCH_PASSWORD`, `CHAT_API_KEY`) are environment variables and are not config keys at all.
+`OPENSEARCH_PASSWORD`, `CHAT_API_KEY`, `KAPA_API_KEY`) are environment variables and are not config keys at all.
 The config keys that *are* secrets — any key whose last segment is `secret`, `password`, or
 `token`, today `gdrive.client.secret` — are redacted on read: the key is listed and stays
 writable, but its value is replaced with `<redacted>`. They are write-only through the API.

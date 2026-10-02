@@ -7,4 +7,16 @@ exec 1> >(tee >(logger --tag=$tag))
 # Redirect stderr to stderr+syslog
 exec 2> >(logger --stderr --priority error --tag=$tag)
 
+# Register package-layer config keys added since this installation's revision, so
+# a refreshed installation can configure them (a user-layer set rejects keys the
+# package layer lacks). Values that are already set are left alone.
+. "$SNAP/bin/package-config.sh"
+
+# kapa.api.key is no longer a config key: the API key comes from KAPA_API_KEY in
+# the environment only. Remove any stored value from both layers so a credential
+# does not linger in snapd state. Unsetting a key that is not there is not an
+# error worth failing the refresh over.
+snapctl unset config.package.kapa.api.key || true
+snapctl unset config.user.kapa.api.key || true
+
 # snap start $SNAP_INSTANCE_NAME.tika-server

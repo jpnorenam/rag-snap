@@ -3,6 +3,7 @@ package basic
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -601,15 +602,19 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 
 func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 	var (
-		bases []string
-		k     int
+		bases      []string
+		k          int
+		kapaGroups []string
 	)
 
 	cobraCmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search the knowledge base",
-		Long:  "Search for documents across knowledge bases.\nIf no bases are specified with --index, the default index is searched.\nResults from all bases are merged and sorted by relevance score.",
-		Args:  cobra.ExactArgs(1),
+		Long: "Search for documents across knowledge bases.\nIf no bases are specified with --bases, the default base is searched.\n" +
+			"Results from all bases are merged and sorted by relevance score.\n" +
+			"With --kapa-groups, the given kapa.ai source groups are searched too; their results follow the local ones.\n" +
+			"List the group ids with /use-kapa in `chat`.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			query := args[0]
 
@@ -619,9 +624,12 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 					defaultBase, _ := knowledge.KnowledgeBaseNameFromIndex(knowledge.DefaultIndexName())
 					searchBases = []string{defaultBase}
 				}
-				hits, err := dc.Search(context.Background(), query, searchBases, k)
+				hits, warnings, err := dc.Search(context.Background(), query, searchBases, k, kapaGroups)
 				if err != nil {
 					return err
+				}
+				for _, w := range warnings {
+					fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 				}
 				if len(hits) == 0 {
 					fmt.Println("No results found.")
@@ -662,9 +670,19 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 				fullIndexNames = []string{knowledge.DefaultIndexName()}
 			}
 
-			results, err := client.Search(context.Background(), fullIndexNames, query, query, modelID, k)
+			var kapaClient *knowledge.KapaClient
+			if len(kapaGroups) > 0 {
+				if kapaClient = buildKapaClient(cmd.Context); kapaClient == nil {
+					fmt.Fprintln(os.Stderr, "Warning: kapa.ai is not configured (set kapa.project.id and export KAPA_API_KEY); showing local results only")
+				}
+			}
+			results, kapaErr, err := knowledge.SearchWithKapa(context.Background(), client, fullIndexNames,
+				query, query, modelID, k, kapaClient, kapaGroups)
 			if err != nil {
 				return fmt.Errorf("searching: %w", err)
+			}
+			if kapaErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: kapa.ai search failed, showing local results only: %v\n", kapaErr)
 			}
 
 			if len(results) == 0 {
@@ -689,7 +707,8 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 	}
 
 	cobraCmd.Flags().StringSliceVarP(&bases, "bases", "b", nil, "Knowledge base name(s) to search (comma-separated string list, defaults to 'default')")
-	cobraCmd.Flags().IntVarP(&k, "top", "k", 10, "Number of results per index")
+	cobraCmd.Flags().IntVarP(&k, "top", "k", 10, "Number of results per index (and from kapa.ai)")
+	cobraCmd.Flags().StringSliceVar(&kapaGroups, "kapa-groups", nil, "kapa.ai source group id(s) to search as well (comma-separated)")
 
 	return cobraCmd
 }

@@ -8,7 +8,8 @@ defaulting to enabled when unset, so an unconfigured installation is not treated
 disabled. The project identifier SHALL come from the `kapa.project.id` config key, overridable by
 the `KAPA_PROJECT_ID` environment variable. The API key SHALL come exclusively from the
 `KAPA_API_KEY` environment variable, never from config, matching how `CHAT_API_KEY` and the
-OpenSearch credentials are supplied.
+OpenSearch credentials are supplied — including, for the CLI only, the per-user credentials file
+that the CLI already reads for those secrets when the variable is not exported.
 
 When the integration is disabled, or either the project identifier or the API key is absent, no
 client SHALL be constructed and retrieval SHALL proceed over local knowledge bases alone.
@@ -22,6 +23,11 @@ client SHALL be constructed and retrieval SHALL proceed over local knowledge bas
 
 - **WHEN** `kapa.project.id` is set but `KAPA_API_KEY` is not present in the environment
 - **THEN** no kapa client is constructed and retrieval uses local knowledge bases only
+
+#### Scenario: CLI reads the key from its credentials file
+
+- **WHEN** `KAPA_API_KEY` is not exported and the CLI's credentials file holds it
+- **THEN** the CLI constructs a kapa client with that key, and an exported variable still takes precedence
 
 #### Scenario: Environment overrides the configured project
 
@@ -111,6 +117,23 @@ surrounding turn or batch question: the answer proceeds on whatever local contex
 
 - **WHEN** a kapa retrieval request fails for one question in a batch
 - **THEN** the remaining questions continue to be answered
+
+### Requirement: Batch answers record what grounded them
+
+Each batch answer SHALL record how many local knowledge-base hits and how many kapa.ai hits were
+retrieved for it, on both the direct-CLI and the daemon path, so an operator can confirm kapa.ai
+grounding took part in a run without verbose logging — which the daemon path does not have. A
+question answered with no retrieval attempted SHALL record no counts.
+
+#### Scenario: Counts are recorded on the daemon path
+
+- **WHEN** a batch selecting kapa source groups runs through the daemon with kapa configured
+- **THEN** each result records the number of local hits and the number of kapa hits retrieved for it
+
+#### Scenario: Counts match the direct path
+
+- **WHEN** the same manifest runs in direct mode
+- **THEN** the results file records the same per-answer counts
 
 ### Requirement: Direct-CLI and daemon paths behave identically
 

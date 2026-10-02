@@ -172,6 +172,25 @@ Secret values are never shown. The service credentials are environment variables
 configuration, and the one config key that *is* a secret (`gdrive.client.secret`) is redacted by
 the daemon — it renders as `••••` and can be written but never read back.
 
+### kapa.ai sources
+
+When kapa.ai is configured on the daemon (`kapa.project.id` plus `KAPA_API_KEY`, see
+[below](#configuring-the-chat-backend-and-api-key)), the **Chat** screen, the **Search** page and
+**Run a manifest** each show a **Kapa.ai sources** row of chips under the knowledge-base chips.
+
+- **Chat:** chips can be toggled mid-conversation and apply from the next question, like
+  `/use-kapa`. A new chat starts with none selected. Saved chats remember the selection, and resuming
+  restores it.
+- **Search:** selected groups are searched as well. kapa.ai results follow the local ones with a
+  `kapa.ai` chip, and the selection is kept in the page URL (`g=`) so a shared link reproduces the
+  search.
+- **Run a manifest:** the manifest's `kapa_source_groups` are preselected and can be changed before
+  the run.
+
+Without kapa.ai configured, the row explains what to set instead. If kapa.ai is selected but cannot
+be used, or a request fails, a caution notice says so and the answer or results use local knowledge
+only.
+
 ### Answer RFPs
 
 The **Answer RFPs** section is browser parity with the CLI's `answer batch` (and `answer batch
@@ -259,7 +278,8 @@ The UI is then reachable at `http://127.0.0.1:43210/ui/` on that resolved port. 
 
 The UI talks to the daemon, and the **daemon** — not your shell — makes the call to the
 inference backend. Backend secrets are passed to `ragd` through environment variables
-(`OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `CHAT_API_KEY`), never through config.
+(`OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `CHAT_API_KEY`, and `KAPA_API_KEY` if you use
+kapa.ai), never through config.
 
 This matters for the chat API key. When you run `rag-cli.rag chat` interactively, the CLI
 inherits `CHAT_API_KEY` from your shell, so a plain `export CHAT_API_KEY=…` is enough. But
@@ -275,8 +295,8 @@ The same recipe is in [the REST API guide](rest-api.md):
 
 ```bash
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\n' \
-  "$YOUR_CHAT_KEY" "$YOUR_OPENSEARCH_USER" "$YOUR_OPENSEARCH_PASSWORD" | \
+printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\nEnvironment=KAPA_API_KEY=%s\n' \
+  "$YOUR_CHAT_KEY" "$YOUR_OPENSEARCH_USER" "$YOUR_OPENSEARCH_PASSWORD" "$YOUR_KAPA_KEY" | \
   sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf >/dev/null
 sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
 sudo systemctl daemon-reload
@@ -289,8 +309,13 @@ through the `snapctl` config store or the `GET /1.0` config summary.
 Confirm the running daemon actually has them (checks the live process, not just the unit):
 
 ```bash
-sudo tr '\0' '\n' < /proc/$(pgrep -x ragd)/environ | grep -E 'CHAT_API_KEY|OPENSEARCH_USERNAME|OPENSEARCH_PASSWORD'
+sudo tr '\0' '\n' < /proc/$(pgrep -x ragd)/environ | grep -E 'CHAT_API_KEY|OPENSEARCH_USERNAME|OPENSEARCH_PASSWORD|KAPA_API_KEY'
 ```
+
+`ragd` reads these once at startup, so restart it (`sudo snap restart rag-cli.ragd`) after changing
+the drop-in or a config key such as `kapa.project.id`. With kapa.ai configured, the *Run a
+manifest* screen lists your kapa.ai source groups by name; without it, the screen shows what to set.
+The kapa.ai API key is no longer a config key: `kapa.api.key` is ignored and removed on refresh.
 
 The drop-in directory survives `snap restart` and `snap install --dangerous` of the same
 build. A full `snap remove` clears it, so re-apply the drop-in after a clean reinstall.

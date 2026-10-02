@@ -78,6 +78,8 @@ function validateManifest(root: unknown, locate: locate): BatchManifest {
 
   const bases = asStringList(raw.knowledge_bases);
   if (bases !== undefined) manifest.knowledge_bases = bases;
+  const kapaGroups = asStringList(raw.kapa_source_groups);
+  if (kapaGroups !== undefined) manifest.kapa_source_groups = kapaGroups;
 
   const domains = validateDomains(raw.domains, locate);
   if (domains !== undefined) manifest.domains = domains;
@@ -198,7 +200,7 @@ export interface SerializeOptions {
 
 // serializeManifest renders a BatchManifest as YAML the CLI's `answer batch`
 // accepts (rfp.Manifest / chat.BatchManifest shape). Questions carry id +
-// question; knowledge_bases and domains are emitted as block lists. Everything
+// question; knowledge_bases, kapa_source_groups and domains are emitted as block lists. Everything
 // parseManifest reads is written back, so an upload → preview → download round
 // trip returns a manifest that routes the same way.
 export function serializeManifest(manifest: BatchManifest, opts: SerializeOptions = {}): string {
@@ -209,6 +211,10 @@ export function serializeManifest(manifest: BatchManifest, opts: SerializeOption
   if (manifest.knowledge_bases && manifest.knowledge_bases.length > 0) {
     out.push("knowledge_bases:");
     for (const kb of manifest.knowledge_bases) out.push(`  - ${yamlScalar(kb)}`);
+  }
+  if (manifest.kapa_source_groups && manifest.kapa_source_groups.length > 0) {
+    out.push("kapa_source_groups:");
+    for (const g of manifest.kapa_source_groups) out.push(`  - ${yamlScalar(g)}`);
   }
   if (manifest.prompt) emitScalarField(out, "", "prompt", manifest.prompt);
   // Domains are emitted in document order, which is what breaks a specificity

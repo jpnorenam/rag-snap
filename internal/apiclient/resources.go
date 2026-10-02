@@ -3,6 +3,7 @@ package apiclient
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -91,6 +92,29 @@ func (c *Client) ListKnowledge(ctx context.Context) ([]KnowledgeBase, error) {
 	return bases, nil
 }
 
+// KapaSourceGroup is a kapa.ai source group: the id to select it by and its
+// display name.
+type KapaSourceGroup struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// KapaSourceGroups is the daemon's kapa.ai listing. Configured is false when
+// kapa.ai is disabled or not configured on the daemon.
+type KapaSourceGroups struct {
+	Configured bool              `json:"configured"`
+	Groups     []KapaSourceGroup `json:"groups"`
+}
+
+// ListKapaSourceGroups returns the kapa.ai project's source groups.
+func (c *Client) ListKapaSourceGroups(ctx context.Context) (*KapaSourceGroups, error) {
+	var out KapaSourceGroups
+	if err := c.Sync(ctx, "GET", "/1.0/kapa/source-groups", nil, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // CreateKnowledge creates a knowledge base by name. defaultLabel optionally
 // sets the base's default knowledge label; empty leaves the convention-derived
 // default in place.
@@ -155,14 +179,28 @@ func (c *Client) DeleteSource(ctx context.Context, name, id string) error {
 	return c.Sync(ctx, "DELETE", "/1.0/knowledge/"+name+"/sources/"+id, nil, nil)
 }
 
-// Search runs hybrid search over the named bases.
-func (c *Client) Search(ctx context.Context, query string, bases []string, count int) ([]SearchHit, error) {
-	var hits []SearchHit
+// Search runs hybrid search over the named bases and, when kapaGroups is
+// non-empty, kapa.ai scoped to those source-group ids. warnings lists problems
+// the daemon reported without failing the search, such as kapa.ai being
+// unavailable.
+func (c *Client) Search(ctx context.Context, query string, bases []string, count int, kapaGroups []string) (hits []SearchHit, warnings []string, err error) {
 	body := map[string]any{"query": query, "bases": bases, "count": count}
-	if err := c.Sync(ctx, "POST", "/1.0/search", body, &hits); err != nil {
-		return nil, err
+	if len(kapaGroups) > 0 {
+		body["kapa_groups"] = kapaGroups
 	}
-	return hits, nil
+	env, err := c.doJSON(ctx, "POST", "/1.0/search", body)
+	if err != nil {
+		return nil, nil, err
+	}
+	if env.Type == responseTypeError {
+		return nil, nil, apiError(env)
+	}
+	if len(env.Metadata) > 0 {
+		if err := json.Unmarshal(env.Metadata, &hits); err != nil {
+			return nil, nil, err
+		}
+	}
+	return hits, env.Warnings, nil
 }
 
 // IngestURL starts an ingest operation for a single URL source and returns the

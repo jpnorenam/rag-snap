@@ -2,9 +2,12 @@ package basic
 
 import (
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
+	"github.com/jpnorenam/rag-snap/internal/apiclient"
 )
 
 // TestBatchManifestBodyCarriesDomainsAndSource guards the CLI's daemon-backed
@@ -127,5 +130,87 @@ func TestBatchResultsFromDecodesDomain(t *testing.T) {
 	}
 	if _, present := file.Results[1]["domain"]; present {
 		t.Error("unrouted result wrote a domain key; want it omitted")
+	}
+}
+
+// TestBatchManifestBodyCarriesEveryField is the structural guard against the next
+// dropped field (target_kb, questions[].source, and kapa_source_groups were each
+// dropped in this seam). It fills every field of chat.BatchManifest — including
+// ones added after this test was written — and asserts the posted JSON carries
+// each under the same name the YAML manifest uses. A new manifest field that is
+// not threaded through batchManifestBody fails here instead of shipping.
+func TestBatchManifestBodyCarriesEveryField(t *testing.T) {
+	var manifest chat.BatchManifest
+	fillFields(reflect.ValueOf(&manifest).Elem())
+
+	data, err := json.Marshal(batchManifestBody(&manifest, 0.1))
+	if err != nil {
+		t.Fatalf("marshaling body: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(data, &wire); err != nil {
+		t.Fatalf("decoding posted body: %v", err)
+	}
+	assertCarried(t, "manifest", reflect.TypeOf(manifest), wire)
+}
+
+// fillFields sets every string to "x" and every slice to one filled
+// element, recursively, so each field of v is non-zero.
+func fillFields(v reflect.Value) {
+	switch v.Kind() {
+	case reflect.String:
+		v.SetString("x")
+	case reflect.Slice:
+		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+		fillFields(v.Index(0))
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if v.Type().Field(i).IsExported() {
+				fillFields(v.Field(i))
+			}
+		}
+	}
+}
+
+// assertCarried checks that wire holds a non-empty value for every yaml-tagged
+// field of typ, recursing into slices of structs.
+func assertCarried(t *testing.T, path string, typ reflect.Type, wire map[string]any) {
+	t.Helper()
+	for i := 0; i < typ.NumField(); i++ {
+		f := typ.Field(i)
+		name := strings.Split(f.Tag.Get("yaml"), ",")[0]
+		if name == "" || name == "-" {
+			continue
+		}
+		val, ok := wire[name]
+		if !ok || val == nil || val == "" {
+			t.Errorf("%s.%s (field %s) is not carried in the posted body", path, name, f.Name)
+			continue
+		}
+		if f.Type.Kind() == reflect.Slice && f.Type.Elem().Kind() == reflect.Struct {
+			items, _ := val.([]any)
+			if len(items) == 0 {
+				t.Errorf("%s.%s is empty in the posted body", path, name)
+				continue
+			}
+			item, _ := items[0].(map[string]any)
+			assertCarried(t, path+"."+name+"[0]", f.Type.Elem(), item)
+		}
+	}
+}
+
+// TestBatchWarningsFromDecodes confirms the CLI reads the warnings the daemon
+// publishes on a batch operation, so a daemon-routed run reports them too.
+func TestBatchWarningsFromDecodes(t *testing.T) {
+	var meta map[string]any
+	if err := json.Unmarshal([]byte(`{"warnings":["kapa.ai unavailable","question Q2: failed"]}`), &meta); err != nil {
+		t.Fatalf("decoding metadata: %v", err)
+	}
+	got := batchWarningsFrom(&apiclient.Operation{Metadata: meta})
+	if len(got) != 2 || got[1] != "question Q2: failed" {
+		t.Errorf("warnings = %q, want both in order", got)
+	}
+	if got := batchWarningsFrom(&apiclient.Operation{}); len(got) != 0 {
+		t.Errorf("warnings without metadata = %q, want none", got)
 	}
 }

@@ -7,11 +7,17 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
+	"github.com/jpnorenam/rag-snap/pkg/storage"
 )
 
 // TestAnswerBatchRunsAndStoresResults posts a prepared manifest, waits for the
@@ -629,5 +635,199 @@ func TestAnswerBatchPromptRefValidation(t *testing.T) {
 	// Unknown prompt_ref → 404.
 	if code := post(`{"prompt_ref":"nope","questions":[{"question":"q"}]}`); code != http.StatusNotFound {
 		t.Errorf("unknown prompt_ref: status = %d, want 404", code)
+	}
+}
+
+// TestBatchManifestRequestCarriesEveryField is the daemon half of the structural
+// guard in cmd/cli/basic (TestBatchManifestBodyCarriesEveryField). It fills every
+// field of chat.BatchManifest, posts it under the YAML field names the wire uses,
+// and asserts toManifest hands the run the same manifest. A manifest field added
+// without threading it through batchManifestRequest fails here.
+func TestBatchManifestRequestCarriesEveryField(t *testing.T) {
+	var want chat.BatchManifest
+	fillManifestFields(reflect.ValueOf(&want).Elem())
+
+	body, err := json.Marshal(yamlNamed(reflect.ValueOf(want)))
+	if err != nil {
+		t.Fatalf("marshaling body: %v", err)
+	}
+	var req batchManifestRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		t.Fatalf("decoding request body: %v", err)
+	}
+	got := req.toManifest()
+
+	// prompt_ref is consumed by the handler (resolved against the prompt store)
+	// and must not reach the run manifest; see toManifest.
+	if req.PromptRef != want.PromptRef {
+		t.Errorf("prompt_ref decoded as %q, want %q", req.PromptRef, want.PromptRef)
+	}
+	want.PromptRef = ""
+
+	if !reflect.DeepEqual(*got, want) {
+		t.Errorf("run manifest differs from the posted one:\n got %+v\nwant %+v", *got, want)
+	}
+}
+
+// TestAnswerBatchAcceptsKapaSourceGroups posts a manifest selecting kapa.ai
+// source groups to a daemon without kapa credentials and checks the run is
+// accepted, completes from local knowledge instead of failing, and reports on
+// the operation that kapa.ai grounding could not be applied.
+func TestAnswerBatchAcceptsKapaSourceGroups(t *testing.T) {
+	inference := stubInference(t)
+	sock, _ := startTestServer(t, map[string]string{
+		backendOpenSearch: "http://127.0.0.1:1",
+		backendOpenAI:     inference,
+		backendTika:       "http://127.0.0.1:1",
+	})
+	client := dialSocket(sock)
+
+	body := `{
+		"version": "1.0",
+		"kapa_source_groups": ["group-a"],
+		"questions": [{"id": "q1", "question": "What is MAAS?"}]
+	}`
+	resp, err := client.Post("http://unix/1.0/answer/batch", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /1.0/answer/batch: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 202; body=%s", resp.StatusCode, b)
+	}
+	var env struct {
+		Operation string `json:"operation"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decoding async envelope: %v", err)
+	}
+	var meta struct {
+		Results []struct {
+			ID string `json:"id"`
+		} `json:"results"`
+		Warnings []string `json:"warnings"`
+	}
+	waitOpMeta(t, client, env.Operation, &meta)
+	if len(meta.Results) != 1 || meta.Results[0].ID != "q1" {
+		t.Errorf("results = %+v, want one answer for q1", meta.Results)
+	}
+	if len(meta.Warnings) != 1 || !strings.Contains(meta.Warnings[0], "kapa.ai grounding was requested") {
+		t.Errorf("warnings = %q, want the kapa-unavailable warning", meta.Warnings)
+	}
+}
+
+// fillManifestFields sets every string to "x" and every slice to one filled
+// element, recursively, so each field of v is non-zero.
+func fillManifestFields(v reflect.Value) {
+	switch v.Kind() {
+	case reflect.String:
+		v.SetString("x")
+	case reflect.Slice:
+		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+		fillManifestFields(v.Index(0))
+	case reflect.Struct:
+		for i := 0; i < v.NumField(); i++ {
+			if v.Type().Field(i).IsExported() {
+				fillManifestFields(v.Field(i))
+			}
+		}
+	}
+}
+
+// yamlNamed converts v to plain maps and slices keyed by its yaml field names,
+// the names the JSON wire body shares with the YAML manifest.
+func yamlNamed(v reflect.Value) any {
+	switch v.Kind() {
+	case reflect.Struct:
+		out := map[string]any{}
+		for i := 0; i < v.NumField(); i++ {
+			name := strings.Split(v.Type().Field(i).Tag.Get("yaml"), ",")[0]
+			if name != "" && name != "-" {
+				out[name] = yamlNamed(v.Field(i))
+			}
+		}
+		return out
+	case reflect.Slice:
+		out := make([]any, v.Len())
+		for i := range out {
+			out[i] = yamlNamed(v.Index(i))
+		}
+		return out
+	default:
+		return v.Interface()
+	}
+}
+
+// stubCompletion is a non-streaming OpenAI-compatible server for batch runs,
+// which use plain (not streamed) chat completions.
+func stubCompletion(t *testing.T) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","created":0,"model":"stub-model",
+			"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"grounded answer"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+// TestAnswerBatchRecordsKapaRetrieval runs a batch through the daemon with a
+// kapa client and checks each result records the kapa hits that grounded it —
+// the daemon path's only evidence that kapa.ai took part.
+func TestAnswerBatchRecordsKapaRetrieval(t *testing.T) {
+	rec := &kapaRecorder{}
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config")
+	if err := os.WriteFile(cfgPath, nil, 0o600); err != nil {
+		t.Fatalf("writing test config: %v", err)
+	}
+	cfg, err := storage.NewFileConfig(cfgPath)
+	if err != nil {
+		t.Fatalf("loading test config: %v", err)
+	}
+	urls := map[string]string{
+		backendOpenSearch: "http://127.0.0.1:1",
+		backendOpenAI:     stubCompletion(t),
+		backendTika:       "http://127.0.0.1:1",
+	}
+	kapa := knowledge.NewKapaClientAt(rec.serve(t), "proj", "key")
+	sock, _ := startTestServerWithStore(t, dir, urls, cfg, func(o *Options) { o.Kapa = kapa })
+	client := dialSocket(sock)
+
+	body := `{"version": "1.0", "model": "stub-model", "kapa_source_groups": ["g-maas"],
+		"questions": [{"id": "q1", "question": "How does MAAS commission servers?"}]}`
+	resp, err := client.Post("http://unix/1.0/answer/batch", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /1.0/answer/batch: %v", err)
+	}
+	defer resp.Body.Close()
+	var env struct {
+		Operation string `json:"operation"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
+		t.Fatalf("decoding async envelope: %v", err)
+	}
+	var meta struct {
+		Results  []chat.BatchResult `json:"results"`
+		Warnings []string           `json:"warnings"`
+	}
+	waitOpMeta(t, client, env.Operation, &meta)
+
+	if len(meta.Warnings) != 0 {
+		t.Errorf("warnings = %q, want none with kapa configured", meta.Warnings)
+	}
+	if len(meta.Results) != 1 {
+		t.Fatalf("got %d results, want 1", len(meta.Results))
+	}
+	r := meta.Results[0]
+	if r.Answer != "grounded answer" {
+		t.Errorf("answer = %q, want the kapa.ai-grounded answer", r.Answer)
+	}
+	if r.Retrieved == nil || r.Retrieved.Kapa != 1 {
+		t.Errorf("retrieved = %+v, want one kapa hit recorded", r.Retrieved)
+	}
+	if got := rec.calls(); len(got) != 1 || strings.Join(got[0], ",") != "g-maas" {
+		t.Errorf("kapa.ai requests = %v, want one for [g-maas]", got)
 	}
 }

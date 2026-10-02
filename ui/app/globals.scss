@@ -2028,3 +2028,35 @@ $sidebar-accent: #e95420; // Ubuntu orange
   margin: 0.5rem 0 0;
   padding-left: 1rem;
 }
+
+// --- kapa ---
+// kapa.ai source-group picker in the answer-batch preview: a label and a wrap
+// of toggle chips, matching the knowledge-base row above it; a notice or empty
+// state replaces the chips when the listing is unavailable.
+.kapa-picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  margin: 0.5rem 0;
+}
+
+.kapa-picker__chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.kapa-picker__notice {
+  flex-basis: 100%;
+  margin-bottom: 0;
+}
+
+.kapa-picker__empty {
+  flex-basis: 100%;
+}
+
+.search__kapa {
+  margin-bottom: 0.5rem;
+}

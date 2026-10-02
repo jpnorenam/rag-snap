@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/charmbracelet/huh"
@@ -43,6 +44,9 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 	// Track the active bases locally so the /use-knowledge menu can pre-select
 	// the current set; kept in sync with the daemon's acknowledged set.
 	activeBases := append([]string{}, bases...)
+	// activeKapaGroups mirrors the daemon session's kapa.ai selection; a session
+	// starts with none selected.
+	var activeKapaGroups []string
 
 	// Build autocomplete for slash commands, matching the direct REPL.
 	var completions []readline.PrefixCompleterInterface
@@ -102,11 +106,27 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 			log.SetOutput(rl.Stderr())
 			continue
 		}
+		// /use-kapa maps to a set-active-kapa-groups control frame, with the same
+		// picker as the direct REPL; readline is torn down around it likewise.
+		if verb, _, _ := strings.Cut(strings.TrimSpace(prompt), " "); verb == cmdUseKapa {
+			rl.Close()
+			if acked, ok, uerr := remoteSetKapaGroups(ctx, dc, session, activeKapaGroups); uerr != nil {
+				fmt.Printf("Error: %v\n", uerr)
+			} else if ok {
+				activeKapaGroups = acked
+			}
+			rl, err = readline.NewEx(rlConfig)
+			if err != nil {
+				return fmt.Errorf("error reinitializing readline: %w", err)
+			}
+			log.SetOutput(rl.Stderr())
+			continue
+		}
 		// /search runs retrieval-only over the daemon: the daemon owns the
 		// embedding model and OpenSearch client, so the REPL just forwards the
 		// query plus the locally-tracked active bases and renders the hits.
 		if verb, args, _ := strings.Cut(strings.TrimSpace(prompt), " "); verb == cmdSearch {
-			remoteSearch(ctx, dc, args, activeBases)
+			remoteSearch(ctx, dc, args, activeBases, activeKapaGroups)
 			continue
 		}
 		// /save persists the daemon-owned session to the shared chat store.
@@ -124,6 +144,11 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 				session.Close()
 				session = newSession
 				activeBases = newBases
+				// The resumed chat's kapa.ai selection comes back with it.
+				activeKapaGroups = nil
+				if newSession.Restored != nil {
+					activeKapaGroups = newSession.Restored.KapaGroups
+				}
 			}
 			rl, err = readline.NewEx(rlConfig)
 			if err != nil {
@@ -189,6 +214,66 @@ func remoteSetActiveBases(ctx context.Context, dc *apiclient.Client, session *ap
 		fmt.Printf("Active knowledge bases: %s\n", strings.Join(msg.Bases, ", "))
 	}
 	return msg.Bases, nil
+}
+
+// remoteSetKapaGroups lists the daemon's kapa.ai source groups, presents the
+// same multi-select as the direct REPL's /use-kapa (pre-selecting current), and
+// sends the choice as a set-active-kapa-groups frame. It returns the effective
+// selection the daemon acknowledged; ok is false when nothing changed (kapa.ai
+// not configured, no groups, or the menu was cancelled).
+func remoteSetKapaGroups(ctx context.Context, dc *apiclient.Client, session *apiclient.ChatSession, current []string) ([]string, bool, error) {
+	stop := common.StartProgressSpinner("Fetching Kapa source groups")
+	listing, err := dc.ListKapaSourceGroups(ctx)
+	stop()
+	if err != nil {
+		return nil, false, fmt.Errorf("listing Kapa source groups: %w", err)
+	}
+	if !listing.Configured {
+		fmt.Println("Kapa is not configured on the daemon. Set kapa.project.id and KAPA_API_KEY, then restart ragd.")
+		return nil, false, nil
+	}
+	if len(listing.Groups) == 0 {
+		fmt.Println("No Kapa source groups found.")
+		return nil, false, nil
+	}
+
+	options := make([]huh.Option[string], len(listing.Groups))
+	for i, g := range listing.Groups {
+		options[i] = huh.NewOption(g.Name, g.ID)
+	}
+	selected := append([]string{}, current...)
+	form := huh.NewForm(
+		huh.NewGroup(
+			huh.NewMultiSelect[string]().
+				Title("Select active Kapa source groups").
+				Options(options...).
+				Value(&selected),
+		),
+	)
+	if err := form.Run(); err != nil {
+		if errors.Is(err, huh.ErrUserAborted) {
+			// User cancelled (Ctrl+C / Esc) — keep the existing selection.
+			return nil, false, nil
+		}
+		return nil, false, err
+	}
+
+	if err := session.SetActiveKapaGroups(ctx, selected); err != nil {
+		return nil, false, err
+	}
+	msg, err := session.Read(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	if msg.Error != "" {
+		return nil, false, fmt.Errorf("%s", msg.Error)
+	}
+	if len(msg.KapaGroups) == 0 {
+		fmt.Println("Kapa knowledge disabled.")
+	} else {
+		fmt.Printf("Kapa knowledge active — %d source group(s) selected.\n", len(msg.KapaGroups))
+	}
+	return msg.KapaGroups, true, nil
 }
 
 // remoteSelectBasesMenu lists knowledge bases from the daemon and presents the
@@ -284,6 +369,11 @@ func remoteHistory(ctx context.Context, dc *apiclient.Client) (*apiclient.ChatSe
 		if len(session.Restored.DroppedBases) > 0 {
 			fmt.Printf("Note: skipping knowledge base(s) that no longer exist: %s\n", strings.Join(session.Restored.DroppedBases, ", "))
 		}
+		if session.Restored.KapaUnavailable {
+			fmt.Println("Note: this chat used kapa.ai source groups, but kapa.ai is not configured on the daemon; answering from local knowledge only.")
+		} else if n := len(session.Restored.KapaGroups); n > 0 {
+			fmt.Printf("Kapa knowledge active — %d source group(s) restored.\n", n)
+		}
 		fmt.Printf("Resumed %q. Continue the conversation below.\n", session.Restored.Title)
 	}
 	return session, bases, true
@@ -291,26 +381,29 @@ func remoteHistory(ctx context.Context, dc *apiclient.Client) (*apiclient.ChatSe
 
 // remoteSearch implements /search over the daemon: it parses the optional
 // "-k N" flag and query terms with the same parser as the direct REPL, then
-// POSTs to /1.0/search with the currently active bases. The daemon holds the
+// POSTs to /1.0/search with the currently active bases and kapa.ai groups. The daemon holds the
 // embedding model and runs the hybrid pipeline server-side; the REPL only
 // renders the returned hits.
-func remoteSearch(ctx context.Context, dc *apiclient.Client, args string, activeBases []string) {
+func remoteSearch(ctx context.Context, dc *apiclient.Client, args string, activeBases, activeKapaGroups []string) {
 	k, terms, ok := parseSearchArgs(args)
 	if !ok {
 		fmt.Println(searchUsage)
 		return
 	}
-	if len(activeBases) == 0 {
-		fmt.Printf("No active knowledge bases. Select one with %s first.\n", cmdUseKnowledge)
+	if len(activeBases) == 0 && len(activeKapaGroups) == 0 {
+		fmt.Printf("No active knowledge sources. Select some with %s or %s first.\n", cmdUseKnowledge, cmdUseKapa)
 		return
 	}
 
 	stop := common.StartProgressSpinner("Searching")
-	hits, err := dc.Search(ctx, terms, activeBases, k)
+	hits, warnings, err := dc.Search(ctx, terms, activeBases, k, activeKapaGroups)
 	stop()
 	if err != nil {
 		fmt.Printf("Search failed: %v\n", err)
 		return
+	}
+	for _, w := range warnings {
+		fmt.Printf("Warning: %s\n", w)
 	}
 	if len(hits) == 0 {
 		fmt.Println("No results found.")
@@ -372,6 +465,10 @@ func remotePromptTurn(ctx context.Context, session *apiclient.ChatSession, promp
 		case string(TokenThink):
 			haltSpinner()
 			fmt.Print(color.BlueString(msg.Content))
+		case string(TokenWarning):
+			// Non-fatal (for example kapa.ai failed): report it, keep the turn going.
+			haltSpinner()
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", msg.Content)
 		case "done":
 			haltSpinner()
 			fmt.Println()

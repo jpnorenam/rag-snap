@@ -33,6 +33,9 @@ export interface BatchManifest {
   version?: string;
   model?: string;
   knowledge_bases?: string[];
+  // kapa_source_groups selects kapa.ai source groups by id; absent or empty
+  // means no kapa.ai retrieval.
+  kapa_source_groups?: string[];
   prompt?: string;
   temperature?: number;
   domains?: BatchDomain[];

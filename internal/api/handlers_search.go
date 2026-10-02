@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 )
@@ -17,7 +18,14 @@ type searchRequest struct {
 	Query string   `json:"query"`
 	Bases []string `json:"bases"`
 	Count int      `json:"count"`
+	// KapaGroups also searches kapa.ai, scoped to these source-group ids. Absent
+	// or empty means kapa.ai is not queried.
+	KapaGroups []string `json:"kapa_groups,omitempty"`
 }
+
+// kapaBaseLabel is the base reported for kapa.ai hits, which have no local
+// knowledge base.
+const kapaBaseLabel = "kapa.ai"
 
 // searchResult is the API view of a single hit. Label is the hit's resolved
 // knowledge label (stored chunk label, with index-name fallback for chunks
@@ -36,7 +44,15 @@ type searchResult struct {
 // Hybrid search over knowledge bases.
 //
 // Runs hybrid (neural + lexical) retrieval over the named bases. Requires a
-// configured embedding model.
+// configured embedding model when bases are given.
+//
+// "kapa_groups" (source-group ids) additionally searches kapa.ai, concurrently.
+// Local hits are listed first, ordered by score, followed by kapa.ai hits in
+// kapa.ai's order (their scores are rank-derived and not comparable); a kapa.ai
+// hit has base "kapa.ai" and label "kapa-canonical". Absent or empty
+// "kapa_groups" means kapa.ai is not queried. When kapa.ai is not configured or
+// its request fails, the local hits are still returned and the response's
+// top-level "warnings" says kapa.ai could not be applied.
 //
 //	Responses:
 //	  200: syncResponse
@@ -54,8 +70,8 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, "query is required")
 		return
 	}
-	if len(req.Bases) == 0 {
-		respondError(w, http.StatusBadRequest, "at least one knowledge base is required")
+	if len(req.Bases) == 0 && len(req.KapaGroups) == 0 {
+		respondError(w, http.StatusBadRequest, "at least one knowledge base or kapa.ai source group is required")
 		return
 	}
 	k := req.Count
@@ -63,33 +79,71 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		k = defaultSearchK
 	}
 
-	embeddingModelID, err := s.clients.embeddingModelID()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	client, err := s.clients.openSearchClient()
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	indexes := make([]string, len(req.Bases))
-	for i, b := range req.Bases {
-		indexes[i] = knowledge.FullIndexName(b)
-	}
-
-	// The CLI /search uses the verbatim query for both the neural and lexical
-	// arms; do the same here (no LLM query rewrite for raw search).
-	hits, err := client.Search(r.Context(), indexes, req.Query, req.Query, embeddingModelID, k)
-	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
-		return
+	// Local search needs the embedding model and OpenSearch; resolve both before
+	// starting so a misconfiguration fails the request as it always has.
+	var (
+		client           *knowledge.OpenSearchClient
+		embeddingModelID string
+	)
+	if len(req.Bases) > 0 {
+		var err error
+		if embeddingModelID, err = s.clients.embeddingModelID(); err != nil {
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if client, err = s.clients.openSearchClient(); err != nil {
+			respondError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 
-	results := make([]searchResult, 0, len(hits))
-	for _, h := range hits {
-		base, _ := knowledge.KnowledgeBaseNameFromIndex(h.Index)
+	var (
+		localHits, kapaHits []knowledge.SearchHit
+		localErr, kapaErr   error
+		warnings            []string
+		wg                  sync.WaitGroup
+	)
+	if client != nil {
+		indexes := make([]string, len(req.Bases))
+		for i, b := range req.Bases {
+			indexes[i] = knowledge.FullIndexName(b)
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// The CLI /search uses the verbatim query for both the neural and
+			// lexical arms; do the same here (no LLM query rewrite for raw search).
+			localHits, localErr = client.Search(r.Context(), indexes, req.Query, req.Query, embeddingModelID, k)
+		}()
+	}
+	if len(req.KapaGroups) > 0 {
+		if s.kapa == nil {
+			warnings = append(warnings, "kapa.ai was requested but is not configured on the daemon "+
+				"(set kapa.project.id and KAPA_API_KEY, then restart ragd); showing local results only")
+		} else {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				kapaHits, kapaErr = s.kapa.Search(r.Context(), req.Query, k, req.KapaGroups)
+			}()
+		}
+	}
+	wg.Wait()
+
+	if localErr != nil {
+		respondError(w, http.StatusInternalServerError, localErr.Error())
+		return
+	}
+	if kapaErr != nil {
+		warnings = append(warnings, "kapa.ai search failed, showing local results only: "+kapaErr.Error())
+	}
+
+	results := make([]searchResult, 0, len(localHits)+len(kapaHits))
+	for _, h := range append(localHits, kapaHits...) {
+		base := kapaBaseLabel
+		if h.Index != knowledge.KapaIndexName {
+			base, _ = knowledge.KnowledgeBaseNameFromIndex(h.Index)
+		}
 		results = append(results, searchResult{
 			Score:     h.Score,
 			Base:      base,
@@ -99,5 +153,5 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Content:   h.Content,
 		})
 	}
-	respondSync(w, results)
+	respondSyncWarnings(w, results, warnings)
 }

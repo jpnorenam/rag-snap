@@ -3,22 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import EmptyState from "@/components/common/EmptyState";
+import KapaSourcePicker from "@/components/common/KapaSourcePicker";
 import Spinner from "@/components/common/Spinner";
 import { errorMessage } from "@/lib/api/envelope";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
 import { search, type SearchResult } from "@/lib/api/search";
-
-// TOP_K_OPTIONS are the selectable result budgets. 10 matches `k search --top`;
-// 15 (the chat REPL's retrieval default) stays available as an option.
-const TOP_K_OPTIONS = [5, 10, 15, 25];
-const DEFAULT_K = 10;
-
-// parseK resolves a `k` URL param to a sanctioned option, falling back to the
-// default on anything unknown or invalid.
-function parseK(raw: string | null): number {
-  const k = Number(raw);
-  return TOP_K_OPTIONS.includes(k) ? k : DEFAULT_K;
-}
+import { DEFAULT_K, parseSearchQuery, searchQuery, TOP_K_OPTIONS } from "@/lib/searchUrl";
 
 // defaultSelection picks the initial base scope (design Decision 3): exactly
 // one base → it; a base named `default` exists → only it (mirrors
@@ -38,6 +28,11 @@ export default function SearchScreen() {
   const [bases, setBases] = useState<KnowledgeBase[] | null>(null);
   const [basesError, setBasesError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
+  // kapaGroups is the kapa.ai source-group selection (ids); none means kapa.ai
+  // is not searched.
+  const [kapaGroups, setKapaGroups] = useState<string[]>([]);
+  // Problems the last search reported without failing, e.g. kapa.ai unavailable.
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [topK, setTopK] = useState(DEFAULT_K);
   const [searching, setSearching] = useState(false);
   // null = no search has completed (initial); [] = a search returned no hits.
@@ -54,15 +49,18 @@ export default function SearchScreen() {
   // Guards against double-submit while a request is in flight.
   const inFlight = useRef(false);
 
-  const runSearch = useCallback(async (q: string, scope: string[], k: number) => {
+  const runSearch = useCallback(async (q: string, scope: string[], k: number, groups: string[]) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setSearching(true);
     setSearchError(null);
+    setWarnings([]);
     setResults(null);
-    setSearchedBases(scope);
+    setSearchedBases(groups.length > 0 ? [...scope, "kapa.ai"] : scope);
     try {
-      setResults(await search(q, scope, k));
+      const res = await search(q, scope, k, groups);
+      setResults(res.results);
+      setWarnings(res.warnings);
     } catch (e) {
       setSearchError(errorMessage(e));
     } finally {
@@ -75,7 +73,7 @@ export default function SearchScreen() {
   // restoring from a URL, bases that no longer exist are dropped; if none
   // survive, the default scope applies instead.
   const loadBases = useCallback(
-    async (restore?: { q: string; b: string[]; k: number }) => {
+    async (restore?: { q: string; b: string[]; k: number; g: string[] }) => {
       setBasesError(null);
       try {
         const list = await listKnowledge();
@@ -85,8 +83,8 @@ export default function SearchScreen() {
           : [];
         const scope = fromUrl.length > 0 ? fromUrl : defaultSelection(list);
         setSelected(scope);
-        if (restore && restore.q && scope.length > 0) {
-          void runSearch(restore.q, scope, restore.k);
+        if (restore && restore.q && (scope.length > 0 || restore.g.length > 0)) {
+          void runSearch(restore.q, scope, restore.k, restore.g);
         }
       } catch (e) {
         setBases(null);
@@ -101,11 +99,11 @@ export default function SearchScreen() {
   useEffect(() => {
     if (restored.current) return;
     restored.current = true;
-    const q = params.get("q")?.trim() ?? "";
-    const k = parseK(params.get("k"));
-    setQuery(q);
-    setTopK(k);
-    void loadBases({ q, b: params.getAll("b"), k });
+    const fromUrl = parseSearchQuery(params);
+    setQuery(fromUrl.q);
+    setTopK(fromUrl.k);
+    setKapaGroups(fromUrl.kapaGroups);
+    void loadBases({ q: fromUrl.q, b: fromUrl.bases, k: fromUrl.k, g: fromUrl.kapaGroups });
   }, [params, loadBases]);
 
   const toggleBase = useCallback((name: string) => {
@@ -114,23 +112,22 @@ export default function SearchScreen() {
     );
   }, []);
 
+  // A search needs a query and at least one source: a knowledge base or a
+  // kapa.ai source group.
+  const hasSource = selected.length > 0 || kapaGroups.length > 0;
   const canSubmit =
-    query.trim() !== "" && selected.length > 0 && !searching && (bases?.length ?? 0) > 0;
+    query.trim() !== "" && hasSource && !searching && ((bases?.length ?? 0) > 0 || kapaGroups.length > 0);
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     const q = query.trim();
-    const url = new URLSearchParams();
-    url.set("q", q);
-    for (const b of selected) url.append("b", b);
-    url.set("k", String(topK));
     // One history entry per executed search: the URL is the shareable record.
-    router.push(`/search/?${url.toString()}`);
+    router.push(`/search/?${searchQuery({ q, bases: selected, k: topK, kapaGroups })}`);
     // Focus stays in the query input after submit (foundation/AT contract),
     // including when the submit button was clicked.
     inputRef.current?.focus();
-    void runSearch(q, selected, topK);
+    void runSearch(q, selected, topK, kapaGroups);
   }
 
   const noBases = bases !== null && bases.length === 0;
@@ -174,7 +171,7 @@ export default function SearchScreen() {
         <button
           type="submit"
           className="p-search-box__button"
-          disabled={searching || !query.trim() || selected.length === 0}
+          disabled={searching || !query.trim() || !hasSource}
         >
           {searching ? (
             <i className="p-icon--spinner u-animation--spin">Searching</i>
@@ -210,9 +207,9 @@ export default function SearchScreen() {
             <span className="p-chip__value">{b.name}</span>
           </button>
         ))}
-        {bases !== null && bases.length > 0 && selected.length === 0 && (
+        {bases !== null && bases.length > 0 && !hasSource && (
           <span className="p-text--small search__scope-hint">
-            Select at least one knowledge base to search.
+            Select at least one knowledge base or kapa.ai source group to search.
           </span>
         )}
         <label className="search__topk" htmlFor="search-topk">
@@ -229,6 +226,12 @@ export default function SearchScreen() {
             ))}
           </select>
         </label>
+      </div>
+
+      {/* kapa.ai sits in its own row with its own label, so a chip is never
+          ambiguous about which retrieval source it scopes. */}
+      <div className="search__kapa">
+        <KapaSourcePicker selected={kapaGroups} onChange={setKapaGroups} disabled={searching} />
       </div>
 
       {basesError && (
@@ -261,6 +264,18 @@ export default function SearchScreen() {
         <div className="p-notification--negative" role="alert">
           <div className="p-notification__content">
             <p className="p-notification__message">{searchError}</p>
+          </div>
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <div className="p-notification--caution">
+          <div className="p-notification__content">
+            {warnings.map((w) => (
+              <p key={w} className="p-notification__message">
+                {w}
+              </p>
+            ))}
           </div>
         </div>
       )}
@@ -310,7 +325,9 @@ export default function SearchScreen() {
                 </div>
                 <p className="search-result__body">{r.content}</p>
                 {/* Source ID stays plain text until the knowledge-detail route
-                    lands (Change 2 flips it to a link). */}
+                    lands (Change 2 flips it to a link). A kapa.ai hit's source
+                    is a kapa.ai URL and never links to a local knowledge base;
+                    its chip above reads "kapa.ai" (the daemon's base for it). */}
                 <p
                   className="search-result__footer p-text--small u-text--muted"
                   title={r.created_at}

@@ -27,6 +27,10 @@ type chatStartRequest struct {
 	Bases       []string `json:"bases,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
 	Resume      string   `json:"resume,omitempty"`
+	// KapaSourceGroups is the initial kapa.ai source-group selection (ids), the
+	// start-time equivalent of set-active-kapa-groups. A session starts with none
+	// unless a client names some here (or resumes a chat that had some).
+	KapaSourceGroups []string `json:"kapa_source_groups,omitempty"`
 	// Prompt optionally names a variant of chat_system_prompt to run this session
 	// on (the slot is implied). It overrides the slot's active pointer for this
 	// session only; an unknown variant fails the request. Empty uses the active
@@ -37,25 +41,40 @@ type chatStartRequest struct {
 // chatControlMessage is a client→server control frame on the chat websocket.
 // Type "prompt" submits a question; type "set-active-kbs" changes the active
 // knowledge bases (the API equivalent of the in-REPL /use-knowledge); type
-// "save" persists the running conversation to the saved-chat store.
+// "set-active-kapa-groups" changes the selected kapa.ai source groups (the
+// equivalent of /use-kapa), independently of the bases; type "save" persists the
+// running conversation to the saved-chat store.
 type chatControlMessage struct {
 	Type    string   `json:"type"`
 	Content string   `json:"content,omitempty"`
 	Bases   []string `json:"bases,omitempty"`
-	Title   string   `json:"title,omitempty"`
+	// KapaGroups is the kapa.ai source-group selection (ids) carried by a
+	// "set-active-kapa-groups" message.
+	KapaGroups []string `json:"kapa_groups,omitempty"`
+	Title      string   `json:"title,omitempty"`
 }
 
+// kapaSelectionUnavailable explains why a kapa.ai source-group selection was
+// not applied to a session.
+const kapaSelectionUnavailable = "kapa.ai is not configured on the daemon (set kapa.project.id and " +
+	"KAPA_API_KEY, then restart ragd); the selection was not applied and answers use local knowledge only"
+
 // chatServerMessage is a server→client frame on the chat websocket: streamed
-// "token"/"think" content, a terminal "done" per answer, an "active-kbs"
-// acknowledgement, a "saved" acknowledgement (carrying the saved chat's id and
-// title), or an "error".
+// "token"/"think" content, a non-fatal "warning" (for example a failed kapa.ai
+// request; the turn still completes), a terminal "done" per answer, an "active-kbs"
+// acknowledgement, an "active-kapa-groups" acknowledgement (carrying the
+// effective selection, or an error when kapa.ai is not configured), a "saved"
+// acknowledgement (carrying the saved chat's id and title), or an "error".
 type chatServerMessage struct {
 	Type    string   `json:"type"`
 	Content string   `json:"content,omitempty"`
 	Bases   []string `json:"bases,omitempty"`
-	Error   string   `json:"error,omitempty"`
-	ChatID  string   `json:"id,omitempty"`
-	Title   string   `json:"title,omitempty"`
+	// KapaGroups is the effective kapa.ai selection on an "active-kapa-groups"
+	// acknowledgement; absent means none is active.
+	KapaGroups []string `json:"kapa_groups,omitempty"`
+	Error      string   `json:"error,omitempty"`
+	ChatID     string   `json:"id,omitempty"`
+	Title      string   `json:"title,omitempty"`
 }
 
 // defaultChatTemperature matches the chat REPL's default sampling temperature.
@@ -68,6 +87,13 @@ const defaultChatTemperature = 0.3
 // Starts a chat session as a websocket-class operation. The operation metadata
 // carries the websocket connect URL and one-time secret; the client dials it to
 // hold the interactive, multi-turn session.
+//
+// The body may name initial kapa.ai source groups by id in
+// "kapa_source_groups" (a session otherwise starts with none). The metadata's
+// "kapa_groups" is the effective selection; "kapa_unavailable" is true when
+// groups were requested (or restored from a resumed chat) but kapa.ai is not
+// configured on the daemon. Change the selection mid-session with a
+// "set-active-kapa-groups" message, acknowledged by "active-kapa-groups".
 //
 //	Responses:
 //	  202: asyncResponse
@@ -144,12 +170,26 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		initialBases, droppedBases = filterExistingBases(r.Context(), knowledgeClient, resumed.Bases)
 	}
 
-	live, err := chat.NewLiveSession(baseURL, model, knowledgeClient, embeddingModelID, initialBases, systemPrompt, temperature, s.ctx.Verbose)
+	live, err := chat.NewLiveSession(baseURL, model, knowledgeClient, s.kapa, embeddingModelID, initialBases, systemPrompt, temperature, s.ctx.Verbose)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "starting chat session: "+err.Error())
 		return
 	}
 	live.SetPromptRef(promptRef)
+
+	// Initial kapa.ai selection: the resumed chat's saved groups (restored as-is:
+	// kapa.ai has no local record to validate them against), otherwise the
+	// request's. Without a kapa client the selection cannot be applied, which is
+	// reported in the metadata rather than dropped silently.
+	initialKapa := req.KapaSourceGroups
+	if resumed != nil {
+		initialKapa = resumed.KapaGroups
+	}
+	kapaUnavailable := len(initialKapa) > 0 && !live.KapaAvailable()
+	if live.KapaAvailable() {
+		live.SetActiveKapaGroups(initialKapa)
+	}
+
 	if resumed != nil {
 		// Seed the conversation history and pin the record so a later save updates
 		// it in place rather than creating a duplicate.
@@ -176,6 +216,10 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 			"url":    op.url() + "/websocket",
 			"secret": op.secretValue(),
 		},
+		"kapa_groups": live.ActiveKapaGroups(),
+	}
+	if kapaUnavailable {
+		meta["kapa_unavailable"] = true
 	}
 	if resumed != nil {
 		// Carry the restored transcript and effective bases so the client can
@@ -186,6 +230,10 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 			"turns":         resumed.Turns,
 			"bases":         live.ActiveBases(),
 			"dropped_bases": droppedBases,
+			// The effective kapa.ai selection, and whether a saved one could not
+			// be applied because kapa.ai is not configured.
+			"kapa_groups":      live.ActiveKapaGroups(),
+			"kapa_unavailable": kapaUnavailable,
 		}
 	}
 	op.UpdateMetadata(meta)
@@ -283,14 +331,30 @@ func (s *Server) runChatSession(ctx context.Context, conn *websocket.Conn, live 
 				return nil
 			}
 
+		case "set-active-kapa-groups":
+			// The API equivalent of /use-kapa, independent of set-active-kbs. With
+			// no kapa.ai client the selection cannot be applied: say so in the
+			// acknowledgement rather than accepting it silently.
+			ack := chatServerMessage{Type: "active-kapa-groups"}
+			if live.KapaAvailable() {
+				live.SetActiveKapaGroups(msg.KapaGroups)
+				ack.KapaGroups = live.ActiveKapaGroups()
+			} else if len(msg.KapaGroups) > 0 {
+				ack.Error = kapaSelectionUnavailable
+			}
+			if err := writeChat(ctx, conn, ack); err != nil {
+				return nil
+			}
+
 		case "save":
 			saved, err := s.chats.Save(chatstore.Chat{
-				ID:     live.ChatID(),
-				Title:  strings.TrimSpace(msg.Title),
-				Model:  live.Model(),
-				Bases:  live.ActiveBases(),
-				Turns:  live.Turns(),
-				Prompt: live.PromptRef(),
+				ID:         live.ChatID(),
+				Title:      strings.TrimSpace(msg.Title),
+				Model:      live.Model(),
+				Bases:      live.ActiveBases(),
+				KapaGroups: live.ActiveKapaGroups(),
+				Turns:      live.Turns(),
+				Prompt:     live.PromptRef(),
 			})
 			if err != nil {
 				// A store failure (or an empty session) is reported without ending

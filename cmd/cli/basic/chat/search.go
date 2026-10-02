@@ -12,11 +12,12 @@ import (
 
 // searchUsage is printed when /search is invoked with missing or invalid args.
 var searchUsage = fmt.Sprintf("Usage: /search [-k N] <query>\n"+
-	"  Retrieve matching chunks from the active knowledge bases (no answer is generated).\n"+
+	"  Retrieve matching chunks from the active knowledge bases and kapa.ai source groups\n"+
+	"  (no answer is generated). Select sources with /use-knowledge and /use-kapa.\n"+
 	"  -k N   maximum number of results (default: %d)", defaultRAGTopK)
 
 // handleSearch implements the /search slash command: a retrieval-only query
-// against the active knowledge bases. It runs the same hybrid pipeline as the
+// against the active knowledge bases and kapa.ai source groups. It runs the same hybrid pipeline as the
 // RAG loop but performs no query rewriting, no augmentation, and no LLM
 // generation — it simply prints the matching chunks with their metadata.
 func handleSearch(args string, session *Session) {
@@ -26,30 +27,39 @@ func handleSearch(args string, session *Session) {
 		return
 	}
 
-	// Preconditions mirror retrieveContext: without a client, active indexes,
-	// and an embedding model, the hybrid pipeline cannot run.
-	if session.KnowledgeClient == nil || session.EmbeddingModelID == "" {
-		fmt.Println("Knowledge retrieval is unavailable for this session.")
+	// Preconditions mirror retrieveContext: a source of either kind must be
+	// active, and local bases additionally need a client and embedding model
+	// for the hybrid pipeline. kapa.ai alone needs neither.
+	hasLocal := len(session.ActiveIndexes) > 0
+	hasKapa := session.KapaClient != nil && len(session.ActiveKapaGroups) > 0
+	if !hasLocal && !hasKapa {
+		fmt.Printf("No active knowledge sources. Select some with %s or %s first.\n", cmdUseKnowledge, cmdUseKapa)
 		return
 	}
-	if len(session.ActiveIndexes) == 0 {
-		fmt.Printf("No active knowledge bases. Select one with %s first.\n", cmdUseKnowledge)
-		return
+	if hasLocal && (session.KnowledgeClient == nil || session.EmbeddingModelID == "") {
+		if !hasKapa {
+			fmt.Println("Knowledge retrieval is unavailable for this session.")
+			return
+		}
+		fmt.Println("Warning: knowledge retrieval is unavailable for this session; searching kapa.ai only.")
+		hasLocal = false
 	}
 
 	// Verbatim terms for both the lexical (BM25) and neural/rerank query —
-	// no rewriteSearchQuery, so no inference-server round-trip.
-	hits, err := session.KnowledgeClient.Search(
-		context.Background(),
-		session.ActiveIndexes,
-		terms,
-		terms,
-		session.EmbeddingModelID,
-		k,
-	)
+	// no rewriteSearchQuery, so no inference-server round-trip. Local and
+	// kapa.ai run concurrently; local hits come first, as in the RAG loop.
+	var indexes []string
+	if hasLocal {
+		indexes = session.ActiveIndexes
+	}
+	hits, kapaErr, err := knowledge.SearchWithKapa(context.Background(), session.KnowledgeClient, indexes,
+		terms, terms, session.EmbeddingModelID, k, session.KapaClient, session.ActiveKapaGroups)
 	if err != nil {
 		fmt.Printf("Search failed: %v\n", err)
 		return
+	}
+	if kapaErr != nil {
+		fmt.Printf("Warning: kapa.ai search failed, showing local results only: %v\n", kapaErr)
 	}
 
 	if len(hits) == 0 {

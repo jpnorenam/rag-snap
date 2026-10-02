@@ -6,6 +6,7 @@ import { parseManifest, ManifestParseError } from "@/lib/manifest";
 import { compileDomains, resolveDomain } from "@/lib/domains";
 import { runBatch, type BatchDomain, type BatchManifest } from "@/lib/api/answer";
 import type { OperationView } from "@/lib/api/operations";
+import KapaSourcePicker from "@/components/common/KapaSourcePicker";
 
 interface Props {
   // onRun hands the started operation, the manifest, and a display name up to
@@ -76,6 +77,9 @@ export default function ManifestRunner({ onRun, onCancel, onError }: Props) {
   const [parseError, setParseError] = useState<string | null>(null);
   const [temperature, setTemperature] = useState<number>(DEFAULT_TEMPERATURE);
   const [running, setRunning] = useState(false);
+  // kapaGroups is the run's kapa.ai source-group selection, seeded from the
+  // manifest and edited in the preview.
+  const [kapaGroups, setKapaGroups] = useState<string[]>([]);
 
   // Resolved once per parsed manifest: the preview walks every question, so it
   // is not recomputed on a temperature change or a re-render.
@@ -85,10 +89,13 @@ export default function ManifestRunner({ onRun, onCancel, onError }: Props) {
     if (!file) return;
     setParseError(null);
     setManifest(null);
+    setKapaGroups([]);
     setFileName(file.name);
     try {
       const text = await file.text();
-      setManifest(parseManifest(text));
+      const parsed = parseManifest(text);
+      setManifest(parsed);
+      setKapaGroups(parsed.kapa_source_groups ?? []);
     } catch (e) {
       // Keep the file re-selectable: clear the parsed manifest, show the error.
       setManifest(null);
@@ -102,7 +109,11 @@ export default function ManifestRunner({ onRun, onCancel, onError }: Props) {
     if (!manifest) return;
     setRunning(true);
     try {
-      const body: BatchManifest = { ...manifest, temperature };
+      const body: BatchManifest = {
+        ...manifest,
+        temperature,
+        kapa_source_groups: kapaGroups.length > 0 ? kapaGroups : undefined,
+      };
       const { view } = await runBatch(body);
       // Name the run by the uploaded file, with any .yaml/.yml extension
       // stripped (e.g. "vendor-rfp.yaml" → "vendor-rfp").
@@ -112,7 +123,7 @@ export default function ManifestRunner({ onRun, onCancel, onError }: Props) {
       onError(errorMessage(e));
       setRunning(false);
     }
-  }, [manifest, temperature, fileName, onRun, onError]);
+  }, [manifest, temperature, kapaGroups, fileName, onRun, onError]);
 
   return (
     <section className="answer-flow">
@@ -195,6 +206,10 @@ export default function ManifestRunner({ onRun, onCancel, onError }: Props) {
               ))}
             </div>
           )}
+
+          {/* The kapa.ai scope sits beside the knowledge bases so the preview
+              shows everything the run will ground against before it starts. */}
+          <KapaSourcePicker selected={kapaGroups} onChange={setKapaGroups} disabled={running} />
 
           {/* Routing summary: what the `domains` block would do to this
               manifest, before it is sent. Absent entirely when the manifest

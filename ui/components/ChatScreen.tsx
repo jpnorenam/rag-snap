@@ -7,6 +7,7 @@ import Markdown from "@/components/common/Markdown";
 import { ApiError, errorMessage } from "@/lib/api/envelope";
 import { startChat, ChatConnection, type ChatFrame, type ChatStartOptions } from "@/lib/api/chat";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
+import KapaSourcePicker from "@/components/common/KapaSourcePicker";
 import { listPrompts } from "@/lib/api/prompts";
 
 // DEFAULT_PROMPT is the dropdown value that forces the built-in chat_system_prompt
@@ -25,7 +26,7 @@ const SLASH_COMMANDS: { name: string; syntax: string }[] = [
 // A transient banner shown for save results and command feedback (distinct from
 // the fatal `error` connection banner).
 interface Notice {
-  type: "positive" | "information";
+  type: "positive" | "information" | "caution";
   message: string;
 }
 
@@ -58,6 +59,10 @@ export default function ChatScreen() {
   const [historyOpen, setHistoryOpen] = useState(false);
   // Highlighted index in the composer's slash-command hint list (-1 = none).
   const [hintIndex, setHintIndex] = useState(-1);
+
+  // kapaGroups is the session's kapa.ai source-group selection (ids). It is
+  // independent of the knowledge bases; a new session starts with none.
+  const [kapaGroups, setKapaGroups] = useState<string[]>([]);
 
   const connRef = useRef<ChatConnection | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -138,6 +143,17 @@ export default function ChatScreen() {
         case "active-kbs":
           setActiveBases(frame.bases ?? []);
           break;
+        case "active-kapa-groups":
+          // The daemon's effective selection; an error means kapa.ai is not
+          // configured there, so nothing was applied.
+          setKapaGroups(frame.kapa_groups ?? []);
+          if (frame.error) setNotice({ type: "caution", message: frame.error });
+          break;
+        case "warning":
+          // Non-fatal: the turn keeps streaming (e.g. kapa.ai failed and the
+          // answer uses local knowledge only).
+          setNotice({ type: "caution", message: frame.content ?? "warning" });
+          break;
         case "saved":
           setNotice({ type: "positive", message: `Saved chat as “${frame.title ?? "Untitled chat"}”.` });
           break;
@@ -192,12 +208,20 @@ export default function ChatScreen() {
     const { conn, session } = await openConnection({
       bases: activeBases,
       ...(promptChoice ? { prompt: promptChoice } : {}),
+      ...(kapaGroups.length > 0 ? { kapa_source_groups: kapaGroups } : {}),
     });
     connRef.current = conn;
     setModel(session.model);
+    setKapaGroups(session.kapaGroups);
+    if (session.kapaUnavailable) {
+      setNotice({
+        type: "caution",
+        message: "kapa.ai is not configured on the daemon, so the selected source groups were not applied.",
+      });
+    }
     setConnState("connected");
     return conn;
-  }, [activeBases, connState, openConnection, promptChoice]);
+  }, [activeBases, connState, kapaGroups, openConnection, promptChoice]);
 
   // resumeChat starts a new session seeded from a saved chat, replacing the
   // transcript and active-base selection with the restored state.
@@ -218,6 +242,14 @@ export default function ChatScreen() {
             session.restored.turns.map((t) => ({ role: t.role, content: t.content, think: "" }))
           );
           setActiveBases(session.restored.bases ?? []);
+          setKapaGroups(session.restored.kapa_groups ?? []);
+          if (session.restored.kapa_unavailable) {
+            setNotice({
+              type: "caution",
+              message:
+                "This chat used kapa.ai source groups, but kapa.ai is not configured on the daemon, so answers use local knowledge only.",
+            });
+          }
           const dropped = session.restored.dropped_bases ?? [];
           if (dropped.length > 0) {
             setNotice({
@@ -314,6 +346,17 @@ export default function ChatScreen() {
         if (connRef.current && connState === "connected") connRef.current.setActiveBases(next);
         return next;
       });
+    },
+    [connState]
+  );
+
+  // changeKapaGroups updates the kapa.ai selection; on a live session it is sent
+  // over the socket (the acknowledgement then carries the effective selection),
+  // otherwise it applies when the next session starts.
+  const changeKapaGroups = useCallback(
+    (ids: string[]) => {
+      setKapaGroups(ids);
+      if (connRef.current && connState === "connected") connRef.current.setActiveKapaGroups(ids);
     },
     [connState]
   );
@@ -422,6 +465,10 @@ export default function ChatScreen() {
             </button>
           ))}
         </div>
+
+        {/* kapa.ai gets its own row and label, so a chip is never ambiguous
+            about which retrieval source it scopes. */}
+        <KapaSourcePicker selected={kapaGroups} onChange={changeKapaGroups} label="Kapa.ai sources:" />
 
         {/* System-prompt selector. Only shown when the slot has stored variants
             to choose between. The prompt is fixed for the whole session (the

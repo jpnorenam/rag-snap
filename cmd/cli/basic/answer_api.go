@@ -15,14 +15,15 @@ import (
 // batchManifestJSON mirrors the daemon's POST /1.0/answer/batch body. The CLI's
 // chat.BatchManifest is YAML-tagged, so we re-shape it for the JSON API.
 type batchManifestJSON struct {
-	Version        string              `json:"version,omitempty"`
-	Model          string              `json:"model,omitempty"`
-	KnowledgeBases []string            `json:"knowledge_bases,omitempty"`
-	Prompt         string              `json:"prompt,omitempty"`
-	PromptRef      string              `json:"prompt_ref,omitempty"`
-	Domains        []batchDomainJSON   `json:"domains,omitempty"`
-	Temperature    *float64            `json:"temperature,omitempty"`
-	Questions      []batchQuestionJSON `json:"questions"`
+	Version          string              `json:"version,omitempty"`
+	Model            string              `json:"model,omitempty"`
+	KnowledgeBases   []string            `json:"knowledge_bases,omitempty"`
+	KapaSourceGroups []string            `json:"kapa_source_groups,omitempty"`
+	Prompt           string              `json:"prompt,omitempty"`
+	PromptRef        string              `json:"prompt_ref,omitempty"`
+	Domains          []batchDomainJSON   `json:"domains,omitempty"`
+	Temperature      *float64            `json:"temperature,omitempty"`
+	Questions        []batchQuestionJSON `json:"questions"`
 }
 
 type batchQuestionJSON struct {
@@ -63,14 +64,15 @@ func batchManifestBody(manifest *chat.BatchManifest, temperature float64) batchM
 		}
 	}
 	return batchManifestJSON{
-		Version:        manifest.Version,
-		Model:          manifest.Model,
-		KnowledgeBases: manifest.KnowledgeBases,
-		Prompt:         manifest.Prompt,
-		PromptRef:      manifest.PromptRef,
-		Domains:        domains,
-		Temperature:    &temperature,
-		Questions:      questions,
+		Version:          manifest.Version,
+		Model:            manifest.Model,
+		KnowledgeBases:   manifest.KnowledgeBases,
+		KapaSourceGroups: manifest.KapaSourceGroups,
+		Prompt:           manifest.Prompt,
+		PromptRef:        manifest.PromptRef,
+		Domains:          domains,
+		Temperature:      &temperature,
+		Questions:        questions,
 	}
 }
 
@@ -90,6 +92,19 @@ func batchResultsFrom(op *apiclient.Operation) []chat.BatchResult {
 		return nil
 	}
 	return results
+}
+
+// batchWarningsFrom decodes the warnings the daemon publishes in the operation
+// metadata (for example kapa.ai requested but not configured).
+func batchWarningsFrom(op *apiclient.Operation) []string {
+	raw, _ := op.Metadata["warnings"].([]any)
+	warnings := make([]string, 0, len(raw))
+	for _, w := range raw {
+		if s, ok := w.(string); ok {
+			warnings = append(warnings, s)
+		}
+	}
+	return warnings
 }
 
 // runBatchRemote posts a prepared manifest to the daemon, waits for the async
@@ -129,7 +144,14 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 		updateSpinner, stopSpinner = common.StartUpdatableSpinner(label)
 		spinning = true
 	}
+	warned := 0
 	printResults := func(op *apiclient.Operation) {
+		if warnings := batchWarningsFrom(op); warned < len(warnings) {
+			haltSpinner()
+			for ; warned < len(warnings); warned++ {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", warnings[warned])
+			}
+		}
 		results := batchResultsFrom(op)
 		if printed < len(results) {
 			// Stop the spinner before writing so its redraw does not garble the

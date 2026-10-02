@@ -8,6 +8,7 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
+	"github.com/jpnorenam/rag-snap/pkg/credentials"
 	"github.com/jpnorenam/rag-snap/pkg/storage"
 	"github.com/spf13/cobra"
 )
@@ -133,26 +134,22 @@ func getConfigBool(ctx *common.Context, key string, fallback bool) bool {
 	return val == "true" || val == "1"
 }
 
-// buildKapaClient reads kapa configuration and environment variables and
-// returns a ready-to-use KapaClient. Returns nil when Kapa is disabled or
-// credentials are not configured.
+// buildKapaClient reads kapa configuration (kapa.enabled, kapa.project.id) and
+// environment variables (KAPA_API_KEY, KAPA_PROJECT_ID) and returns a
+// ready-to-use KapaClient, or nil when Kapa is disabled or not configured. The
+// API key comes from the environment or, when not exported, the CLI's
+// credentials file — never from config. The rule itself lives in
+// knowledge.ResolveKapaClient, shared with the daemon.
 func buildKapaClient(ctx *common.Context) *knowledge.KapaClient {
-	enabled := getConfigBool(ctx, knowledge.ConfKapaEnabled, true)
-	if !enabled {
-		return nil
-	}
-	apiKey, _ := getConfigString(ctx, knowledge.ConfKapaAPIKey)
-	if v := os.Getenv("KAPA_API_KEY"); v != "" {
-		apiKey = v
-	}
+	enabledRaw, _ := config.GetString(ctx.Config, knowledge.ConfKapaEnabled)
 	projectID, _ := getConfigString(ctx, knowledge.ConfKapaProjectID)
-	if v := os.Getenv("KAPA_PROJECT_ID"); v != "" {
+	if v := os.Getenv(knowledge.EnvKapaProjectID); v != "" {
 		projectID = v
 	}
-	if apiKey != "" && projectID != "" {
-		return knowledge.NewKapaClient(projectID, apiKey)
-	}
-	return nil
+	// A malformed credentials file leaves the key unset; commands that need the
+	// file for other secrets report the file problem themselves.
+	apiKey, _, _ := credentials.Lookup(knowledge.EnvKapaAPIKey)
+	return knowledge.ResolveKapaClient(knowledge.KapaEnabled(enabledRaw), projectID, apiKey)
 }
 
 func serverApiUrls(ctx *common.Context) (map[string]string, error) {

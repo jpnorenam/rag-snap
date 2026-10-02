@@ -148,6 +148,10 @@ type BatchResult struct {
 	// pattern. Empty when the question resolved to no domain. It is the routing
 	// audit trail: which rule produced this answer.
 	Domain string `json:"domain,omitempty"`
+	// Retrieved records how many local and kapa.ai hits grounded the answer, so a
+	// run can show kapa.ai took part without verbose logs. Nil when no retrieval
+	// was attempted.
+	Retrieved *RetrievalCounts `json:"retrieved,omitempty"`
 }
 
 // BatchOutput is the structured result of a batch run: the resolved model, a
@@ -172,11 +176,25 @@ const noContextAnswer = "The provided context does not contain enough informatio
 // core to a transport. Each hook is optional; nil hooks are skipped. OnStart
 // fires before a question is answered, OnResult after it is answered, and
 // OnError when a question fails and is skipped (i is 0-based; total is the
-// question count).
+// question count). OnWarning reports a problem that degrades the run without
+// failing it, such as kapa.ai grounding being requested but unavailable.
 type BatchHooks struct {
-	OnStart  func(i, total int, q BatchQuestion)
-	OnResult func(i, total int, result BatchResult)
-	OnError  func(i, total int, q BatchQuestion, err error)
+	OnStart   func(i, total int, q BatchQuestion)
+	OnResult  func(i, total int, result BatchResult)
+	OnError   func(i, total int, q BatchQuestion, err error)
+	OnWarning func(msg string)
+}
+
+// kapaUnavailableWarning is reported once per run when the manifest selects
+// kapa.ai source groups but no kapa client could be built.
+const kapaUnavailableWarning = "kapa.ai grounding was requested (kapa_source_groups) but kapa.ai is " +
+	"disabled or not configured: set kapa.project.id and the KAPA_API_KEY environment variable. " +
+	"Answering from local knowledge bases only."
+
+func (h BatchHooks) warning(msg string) {
+	if h.OnWarning != nil {
+		h.OnWarning(msg)
+	}
 }
 
 func (h BatchHooks) start(i, total int, q BatchQuestion) {
@@ -293,6 +311,18 @@ func RunBatch(
 		ActiveKapaGroups: manifest.KapaSourceGroups,
 	}
 
+	// Pre-flight: groups selected but no client means every question would
+	// silently answer without kapa.ai. Say so once, then run on local knowledge.
+	if len(manifest.KapaSourceGroups) > 0 && kapaClient == nil {
+		hooks.warning(kapaUnavailableWarning)
+	}
+
+	// Per-question retrieval problems are reported against the question they hit.
+	var current string
+	session.Warn = func(msg string) {
+		hooks.warning(fmt.Sprintf("question %s: %s", current, msg))
+	}
+
 	defaultSystemPrompt := batchSystemPrompt(manifest, prompts)
 
 	total := len(manifest.Questions)
@@ -301,6 +331,10 @@ func RunBatch(
 	for i, q := range manifest.Questions {
 		if err := ctx.Err(); err != nil {
 			return nil, err
+		}
+		current = q.ID
+		if current == "" {
+			current = fmt.Sprintf("%d", i+1)
 		}
 		hooks.start(i, total, q)
 
@@ -327,13 +361,13 @@ func RunBatch(
 		if lexicalQuery != q.Question {
 			semanticQuery = q.Question + " " + lexicalQuery
 		}
-		ragContext := retrieveContext(session, semanticQuery, lexicalQuery, verbose)
+		ragContext, retrieved := retrieveContext(session, semanticQuery, lexicalQuery, verbose)
 
 		// When no context was retrieved there is nothing to ground the answer on.
 		// Skip the LLM call entirely and emit the fixed no-answer string to avoid
 		// the model hallucinating from parametric knowledge.
 		if ragContext == "" {
-			result := BatchResult{ID: q.ID, Question: q.Question, Answer: noContextAnswer, Domain: domainMatch}
+			result := BatchResult{ID: q.ID, Question: q.Question, Answer: noContextAnswer, Domain: domainMatch, Retrieved: retrieved}
 			results = append(results, result)
 			hooks.result(i, total, result)
 			continue
@@ -365,7 +399,7 @@ func RunBatch(
 			answer = StripThinkTags(resp.Choices[0].Message.Content)
 		}
 
-		result := BatchResult{ID: q.ID, Question: q.Question, Answer: answer, Domain: domainMatch}
+		result := BatchResult{ID: q.ID, Question: q.Question, Answer: answer, Domain: domainMatch, Retrieved: retrieved}
 		results = append(results, result)
 		hooks.result(i, total, result)
 	}
@@ -400,6 +434,9 @@ func ProcessBatchChat(
 		},
 		OnError: func(i, _ int, _ BatchQuestion, err error) {
 			fmt.Printf("error on question %d: %v\n", i+1, err)
+		},
+		OnWarning: func(msg string) {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
 		},
 	}
 

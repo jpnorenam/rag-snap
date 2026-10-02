@@ -46,12 +46,14 @@ func formatContext(hits []knowledge.SearchHit) string {
 // query. Local OpenSearch indexes and kapa.ai are queried in parallel when both
 // are available. Local hits appear first (more specific); kapa hits follow.
 // Returns an empty string when no sources are configured or retrieval yields nothing.
-func retrieveContext(session *Session, query, lexicalQuery string, verbose bool) string {
+// The counts record how many hits each source contributed; they are nil when no
+// source was active, so no retrieval was attempted.
+func retrieveContext(session *Session, query, lexicalQuery string, verbose bool) (string, *RetrievalCounts) {
 	hasLocal := session.KnowledgeClient != nil && len(session.ActiveIndexes) > 0 && session.EmbeddingModelID != ""
 	hasKapa := session.KapaClient != nil && len(session.ActiveKapaGroups) > 0
 
 	if !hasLocal && !hasKapa {
-		return ""
+		return "", nil
 	}
 
 	var (
@@ -93,23 +95,37 @@ func retrieveContext(session *Session, query, lexicalQuery string, verbose bool)
 	if localErr != nil && verbose {
 		fmt.Printf("Knowledge search failed: %v\n", localErr)
 	}
-	if kapaErr != nil && verbose {
-		fmt.Printf("Kapa search failed: %v\n", kapaErr)
+	if kapaErr != nil {
+		// A kapa.ai failure never fails the turn: the answer proceeds on the
+		// local context, but the user is told it is missing kapa.ai grounding.
+		if session.Warn != nil {
+			session.Warn(fmt.Sprintf("kapa.ai retrieval failed, answering from local knowledge only: %v", kapaErr))
+		} else if verbose {
+			fmt.Printf("Kapa search failed: %v\n", kapaErr)
+		}
 	}
 
 	allHits := make([]knowledge.SearchHit, 0, len(localHits)+len(kapaHits))
 	allHits = append(allHits, localHits...)
 	allHits = append(allHits, kapaHits...)
 
+	counts := &RetrievalCounts{Local: len(localHits), Kapa: len(kapaHits)}
 	if len(allHits) == 0 {
-		return ""
+		return "", counts
 	}
 
 	if verbose {
 		fmt.Printf("Retrieved %d local + %d kapa results\n", len(localHits), len(kapaHits))
 	}
 
-	return formatContext(allHits)
+	return formatContext(allHits), counts
+}
+
+// RetrievalCounts records how many hits each source contributed to an answer's
+// context: the audit trail for whether kapa.ai grounding took part.
+type RetrievalCounts struct {
+	Local int `json:"local"`
+	Kapa  int `json:"kapa"`
 }
 
 // rewriteSearchQuery uses the inference server to extract search keywords

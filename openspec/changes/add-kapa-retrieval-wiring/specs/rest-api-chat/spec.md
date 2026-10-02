@@ -10,7 +10,8 @@ change the active bases, and selecting bases SHALL NOT clear the source groups.
 
 A session SHALL start with no source groups selected, so a session never begins by querying an entire
 kapa project. When the integration is unconfigured, a session SHALL report that a selection cannot be
-applied rather than accepting it silently, as defined by `kapa-retrieval`.
+applied rather than accepting it silently, as defined by `kapa-retrieval`. A kapa request that fails
+during a turn SHALL likewise be reported to the client, as a warning that does not fail the turn.
 
 #### Scenario: Selecting active source groups
 
@@ -31,6 +32,12 @@ applied rather than accepting it silently, as defined by `kapa-retrieval`.
 
 - **WHEN** a client starts a chat session without selecting source groups
 - **THEN** no kapa retrieval occurs until a selection is made
+
+#### Scenario: Kapa fails during a turn
+
+- **WHEN** source groups are selected and the kapa request for a prompt fails
+- **THEN** the daemon sends a non-fatal warning frame on the chat connection before the answer
+- **AND** the turn completes with an answer grounded on the active knowledge bases alone
 
 #### Scenario: Selecting with an unconfigured integration
 

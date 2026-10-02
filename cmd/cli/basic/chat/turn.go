@@ -19,6 +19,9 @@ const (
 	TokenAnswer TokenKind = "token"
 	// TokenThink is reasoning/<think> content.
 	TokenThink TokenKind = "think"
+	// TokenWarning is a non-fatal notice about the turn, such as a failed kapa.ai
+	// request; the turn still completes. Clients must not treat it as an error.
+	TokenWarning TokenKind = "warning"
 )
 
 // StreamFunc receives streamed model output as it is produced. Returning a
@@ -61,9 +64,10 @@ type LiveSession struct {
 // NewLiveSession creates a session against the inference server at baseURL.
 // model is the resolved chat model; when empty it is looked up from the server.
 // knowledgeClient and embeddingModelID enable RAG retrieval; pass a nil client
-// to disable it. activeBases are initial active knowledge-base names (resolved
+// to disable it. kapaClient enables kapa.ai retrieval once source groups are
+// selected (SetActiveKapaGroups); nil means kapa.ai is unavailable. activeBases are initial active knowledge-base names (resolved
 // to indexes). systemPrompt and temperature seed the conversation.
-func NewLiveSession(baseURL, model string, knowledgeClient *knowledge.OpenSearchClient, embeddingModelID string, activeBases []string, systemPrompt string, temperature float64, verbose bool) (*LiveSession, error) {
+func NewLiveSession(baseURL, model string, knowledgeClient *knowledge.OpenSearchClient, kapaClient *knowledge.KapaClient, embeddingModelID string, activeBases []string, systemPrompt string, temperature float64, verbose bool) (*LiveSession, error) {
 	if model == "" {
 		var err error
 		model, err = FindModelName(baseURL)
@@ -91,8 +95,11 @@ func NewLiveSession(baseURL, model string, knowledgeClient *knowledge.OpenSearch
 			Model:       model,
 			Temperature: openai.Float(temperature),
 		},
+		// A session starts with no kapa.ai source groups selected, so it never
+		// opens by querying an entire kapa.ai project.
 		session: &Session{
 			KnowledgeClient:  knowledgeClient,
+			KapaClient:       kapaClient,
 			EmbeddingModelID: embeddingModelID,
 			ActiveIndexes:    indexes,
 		},
@@ -157,6 +164,23 @@ func (ls *LiveSession) ActiveBases() []string {
 	return names
 }
 
+// KapaAvailable reports whether the session has a kapa.ai client, that is
+// whether a source-group selection can be applied at all.
+func (ls *LiveSession) KapaAvailable() bool { return ls.session.KapaClient != nil }
+
+// SetActiveKapaGroups replaces the session's selected kapa.ai source groups (by
+// id), independently of the active knowledge bases. Retrieval for subsequent
+// prompts queries exactly these groups; an empty selection means no kapa.ai
+// retrieval.
+func (ls *LiveSession) SetActiveKapaGroups(ids []string) {
+	ls.session.ActiveKapaGroups = append([]string(nil), ids...)
+}
+
+// ActiveKapaGroups returns the selected kapa.ai source-group ids.
+func (ls *LiveSession) ActiveKapaGroups() []string {
+	return append([]string(nil), ls.session.ActiveKapaGroups...)
+}
+
 // Prompt runs one RAG turn for text, streaming output through emit, and appends
 // the user prompt and assistant reply to the session history so the next turn
 // continues the conversation. It is the presentation-free counterpart of the
@@ -165,19 +189,27 @@ func (ls *LiveSession) ActiveBases() []string {
 // one active base are present; with no active bases the prompt is answered
 // without retrieval.
 func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc) error {
+	// Retrieval runs when local bases or kapa.ai source groups are active,
+	// matching the REPL's handlePrompt.
 	hasRAG := ls.session.KnowledgeClient != nil && len(ls.session.ActiveIndexes) > 0
+	hasKapa := ls.session.KapaClient != nil && len(ls.session.ActiveKapaGroups) > 0
+	hasContext := hasRAG || hasKapa
 
 	lexicalQuery := text
 	ragContext := ""
-	if hasRAG {
+	if hasContext {
+		// Retrieval problems (a failed kapa.ai request) reach the client as a
+		// warning frame on this turn's stream instead of staying in the logs.
+		ls.session.Warn = func(msg string) { _ = emit(TokenWarning, msg) }
+		defer func() { ls.session.Warn = nil }()
 		lexicalQuery = rewriteSearchQuery(ls.client, ls.params.Model, ls.params.Messages, text, ls.verbose)
-		ragContext = retrieveContext(ls.session, text, lexicalQuery, ls.verbose)
+		ragContext, _ = retrieveContext(ls.session, text, lexicalQuery, ls.verbose)
 	}
 
 	llmPrompt := text
 	if ragContext != "" {
 		llmPrompt = buildRAGPrompt(ragContext, "", "", text)
-	} else if hasRAG {
+	} else if hasContext {
 		// A base is active but retrieval returned nothing: inject an explicit
 		// empty-context note so the grounding rules apply and the model does
 		// not answer from parametric knowledge (matching the REPL).
