@@ -86,7 +86,7 @@ a third-party OpenAI-compatible API.
 
 #### -op2) (Alternative) Canonical Inference Snap
 
-An [Inference snap](https://github.com/canonical/inference-snaps)** running locally. 
+An [Inference snap](https://github.com/canonical/inference-snaps) running locally. 
 
 ```
 sudo snap install gemma3
@@ -154,7 +154,7 @@ From the Snap store:
 sudo snap install rag-cli --channel edge
 ```
 
-Or build and install locally:
+Or [build locally](./CONTRIBUTING.md):
 
 ```bash
 snapcraft -v
