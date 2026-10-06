@@ -37,22 +37,31 @@ ones — nothing below requires them to be on `127.0.0.1`).
 ### 1. OpenSearch (the `knowledge` store)
 
 The [Official OpenSearch product](https://opensearch.org/) which we will install via [OpenSearch snap](https://github.com/canonical/opensearch-snap) for an easier set up
+Follow the specific snap version guidelines
+
 ```
-sudo snap install opensearch
+sudo snap install opensearch --channel=3/edge
+sudo snap connect opensearch:process-control
+
+sudo sysctl -w vm.swappiness=0
+sudo sysctl -w vm.max_map_count=262144
+sudo sysctl -w net.ipv4.tcp_retries2=5
+
+sudo snap run opensearch.setup          \
+    --node-name cm0                     \
+    --node-roles cluster_manager,data,ingest,ml \                # differs from official guidelines (*1)
+    --tls-priv-key-root-pass root1234   \
+    --tls-priv-key-admin-pass admin1234 \
+    --tls-priv-key-node-pass node1234   \
+    --tls-init-setup yes    # this creates the root and admin certs as well.
+
+sudo snap start opensearch.daemon
+
+sudo snap run opensearch.security-init --tls-priv-key-admin-pass=admin1234
 ```
 
-During [certificate creation](https://github.com/canonical/opensearch-snap?tab=readme-ov-file#creating-certificates),
-make sure the `ingest` and `ml` roles are set on the node:
-
-```bash
-sudo snap run opensearch.setup                  \
-    --node-name vdb0                            \
-    --node-roles cluster_manager,data,ingest,ml \
-    --tls-priv-key-root-pass root1234           \
-    --tls-priv-key-admin-pass admin1234         \
-    --tls-priv-key-node-pass node1234           \
-    --tls-init-setup yes
-```
+(*1) during [certificate creation](https://github.com/canonical/opensearch-snap?tab=readme-ov-file#creating-certificates),
+make sure the `ingest` and `ml` roles are set on the `node-roles`
 
 Increase the JVM heap size to fit the sentence-transformer and cross-encoder models (at least
 6 GB is recommended; adjust to your machine's available RAM):
