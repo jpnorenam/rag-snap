@@ -37,7 +37,11 @@ ones — nothing below requires them to be on `127.0.0.1`).
 ### 1. OpenSearch (the `knowledge` store)
 
 The [Official OpenSearch product](https://opensearch.org/) which we will install via [OpenSearch snap](https://github.com/canonical/opensearch-snap) for an easier set up
-Follow the specific snap version guidelines
+Follow the specific snap version guidelines, but with the following changes
+- during [certificate creation](https://github.com/canonical/opensearch-snap?tab=readme-ov-file#creating-certificates), make sure the `ingest` and `ml` roles are set on the `node-roles`
+
+
+whole sequence with changes
 
 ```
 sudo snap install opensearch --channel=3/edge
@@ -49,7 +53,7 @@ sudo sysctl -w net.ipv4.tcp_retries2=5
 
 sudo snap run opensearch.setup          \
     --node-name cm0                     \
-    --node-roles cluster_manager,data,ingest,ml \                # differs from official guidelines (*1)
+    --node-roles cluster_manager,data,ingest,ml \
     --tls-priv-key-root-pass root1234   \
     --tls-priv-key-admin-pass admin1234 \
     --tls-priv-key-node-pass node1234   \
@@ -60,9 +64,6 @@ sudo snap start opensearch.daemon
 sudo snap run opensearch.security-init --tls-priv-key-admin-pass=admin1234
 ```
 
-(*1) during [certificate creation](https://github.com/canonical/opensearch-snap?tab=readme-ov-file#creating-certificates),
-make sure the `ingest` and `ml` roles are set on the `node-roles`
-
 Increase the JVM heap size to fit the sentence-transformer and cross-encoder models (at least
 6 GB is recommended; adjust to your machine's available RAM):
 
@@ -72,10 +73,18 @@ echo '-Xmx6g' | sudo tee -a /var/snap/opensearch/current/etc/opensearch/jvm.opti
 sudo snap restart opensearch
 ```
 
+Wait for logs to stabilize and startup to finalize
+```
+sudo snap logs opensearch -n 100 -f
+
+```
+
 Validate the node roles:
 
 ```bash
-curl -k -u admin:admin https://localhost:9200/_cat/nodes?v
+$ curl -k -u admin:admin https://localhost:9200/_cat/nodes?v
+ip             heap.percent ram.percent cpu load_1m load_5m load_15m node.role node.roles                     cluster_manager name
+10.180.233.144            4          83   2    0.54    0.47     0.33 dim       cluster_manager,data,ingest,ml *               cm0
 ```
 
 You can also point `rag-cli` at an existing/remote OpenSearch cluster you already manage —
@@ -104,7 +113,7 @@ sudo snap install gemma3
 Pick the engine appropriate for your hardware 
 
 ``` bash
-# sudo gemma3 use-engine --auto
+$ sudo gemma3 use-engine --auto
 Evaluating engines for optimal hardware compatibility:
 ✘ amd-gpu: not compatible
 ✔ cpu: compatible, score=10
@@ -113,7 +122,7 @@ Evaluating engines for optimal hardware compatibility:
 ✘ nvidia-gpu: not compatible
 Selected engine: intel-cpu
 
-# gemma3 status
+$ sudo gemma3 status
 engine: intel-cpu
 services:
     server: active
@@ -134,15 +143,15 @@ model:
 and confirm it responds through the `openai` entrypoint, using the `model` name
 
 ```bash
-curl http://localhost:8328/v3/chat/completions \
--H 'Content-Type: application/json'          \
--d '{
-  "model": "gemma3-4b-ov" 
-  "messages": [
-    {"role": "system", "content": "You are a helpful assistant."},
-    {"role": "user", "content": "Hello!"}
-  ]
-}'
+$ curl http://localhost:8328/v3/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "gemma3-4b-ov",
+    "messages": [
+      {"role": "system", "content": "You are a helpful assistant."},
+      {"role": "user", "content": "Hello!"}
+    ]
+  }'
 ```
 
 ### 3. Tika (the `input metadata/text extraction` service)
@@ -158,18 +167,11 @@ Bundled with the snap — nothing to install separately. It's started in
 
 ### 1. Snap Install
 From the Snap store:
-
 ```bash
 sudo snap install rag-cli --channel edge
 ```
 
-Or [build locally](./CONTRIBUTING.md):
-
-```bash
-snapcraft -v
-sudo snap install --dangerous ./rag-cli_*.snap
-```
-
+Or [build locally](./CONTRIBUTING.md)
 
 ### 2. Configure the backends
 
