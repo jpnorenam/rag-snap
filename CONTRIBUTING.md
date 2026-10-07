@@ -11,21 +11,22 @@ By contributing, you agree that your contributions are licensed under the
 project's [GPL-3.0](LICENSE) license.
 
 
+---
+
+## Development setup
+
 ## Development environment
 
 Feel free to setup the environment as you see it fit.
 Here a proposal.
-Launch an LXC instance `src-rag` with the requirements and local lxd vm following [installation guidelines](INSTALL.md#-op1-local-lxd)
-On host, clone this repo and mount it as an lxc device into the testing environment
+On host, clone this repo.
+Launch an LXC instance `src-rag` with the requirements and local lxd vm following [installation guidelines](INSTALL.md#-op1-local-lxd).
+Mount src on such instance, as an lxc device into the testing environment
 ```
 lxc config device add src-rag rag-snap-src disk \
   source="$HOME/src/rag-snap" \
   path=/root/rag-snap-src
 ```
-
----
-
-## Development setup
 
 ### Prerequisites
 
@@ -45,33 +46,49 @@ sudo snap install tika-server
 sudo snap refresh snapd
 ```
 
+### Building and validating the snap
 
-### Common commands
+Build it
 
 ```bash
+make all                # tidy + fmt + vet + lint + test + build
+
+OR
 make build              # build the binary to ./bin/cli
-make run ARGS="status"  # go run ./cmd/cli with arguments
 make test               # go test ./...
 make lint               # golangci-lint run ./...
-make all                # tidy + fmt + vet + lint + test + build
-go test ./pkg/utils/ -run TestName   # run a single test
 ```
 
-There is **no test/lint gate in CI**, so please run `make all` locally before
-pushing.
-
-### Building and validating the snap
+and generate snap
 
 ```bash
 snapcraft -v
 sudo snap install --dangerous ./rag-cli_*.snap
 ```
 
-> **Important:** all configuration is read and written through `snapctl`
-> (see `pkg/storage/`). Any code path that touches config only works when
-> running **inside the installed snap** — `make run` / `go run` will fail on
-> `snapctl get/set` outside a snap context. When your change touches config,
-> validate it from an installed snap, not just `make run`.
+### Other ways to run locally
+
+
+```
+make run ARGS="status"  # go run ./cmd/cli with arguments
+```
+
+
+
+### ⚠️ Configuration changes
+
+All configuration is read and written through `snapctl` (see `pkg/storage/`).
+Any code path that touches config only works when running **inside the installed snap**
+— `make run` / `go run` will fail on `snapctl get/set` outside a snap context.
+ When your change touches config, validate it from an installed snap, not just `make run`.
+
+
+### Testing
+If you need to run a single test, 
+```go test ./pkg/utils/ -run TestName   # run a single test
+```
+There is **no test/lint gate in CI**, so please run `make all` locally before
+pushing.
 
 ---
 
