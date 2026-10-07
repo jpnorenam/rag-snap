@@ -44,7 +44,7 @@ Follow the specific snap version guidelines, but with the following changes
 whole sequence with changes
 
 ```
-sudo snap install opensearch --channel=3/edge
+sudo snap install opensearch --channel=2/edge
 sudo snap connect opensearch:process-control
 
 sudo sysctl -w vm.swappiness=0
@@ -83,6 +83,7 @@ Validate the node roles:
 
 ```bash
 $ curl -k -u admin:admin https://localhost:9200/_cat/nodes?v
+
 ip             heap.percent ram.percent cpu load_1m load_5m load_15m node.role node.roles                     cluster_manager name
 10.180.233.144            4          83   2    0.54    0.47     0.33 dim       cluster_manager,data,ingest,ml *               cm0
 ```
@@ -106,6 +107,7 @@ a third-party OpenAI-compatible API.
 
 An [Inference snap](https://github.com/canonical/inference-snaps) running locally. 
 
+for example, with `gemma3`
 ```
 sudo snap install gemma3
 
@@ -192,10 +194,14 @@ sudo rag-cli.rag set --package chat.model="mistral.mistral-large-3-675b-instruct
 
 #### -op2) via local inference snap
 
+Use the status of the inference installed
+
+
 ```bash
+# for gemma3
 sudo rag-cli.rag set --package chat.http.host="127.0.0.1"
-sudo rag-cli.rag set --package chat.http.port="8324"
-sudo rag-cli.rag set --package chat.http.path="v1"
+sudo rag-cli.rag set --package chat.http.port="8328"
+sudo rag-cli.rag set --package chat.http.path="v3"
 ```
 
 ### 3. Knowledge (OpenSearch)
@@ -344,7 +350,7 @@ The loopback listener is off by default. Enable it and start the daemon:
 
 ```bash
 sudo rag-cli.rag set api.loopback.enabled=true
-sudo snap start --enable rag-cli.ragd
+sudo snap restart rag-cli.ragd
 ```
 
 (If you already started `ragd` before enabling the listener, restart it instead:
