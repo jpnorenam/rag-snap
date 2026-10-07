@@ -198,10 +198,11 @@ Use the status of the inference installed
 
 
 ```bash
-# for gemma3
+# for gemma3 example
 sudo rag-cli.rag set --package chat.http.host="127.0.0.1"
 sudo rag-cli.rag set --package chat.http.port="8328"
 sudo rag-cli.rag set --package chat.http.path="v3"
+sudo rag-cli.rag set --package chat.model="gemma3-4b-ov"
 ```
 
 ### 3. Knowledge (OpenSearch)
