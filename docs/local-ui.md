@@ -9,12 +9,11 @@ Remote/HTTPS exposure is intentionally **not** part of this surface: the listene
 `127.0.0.1` only and refuses any non-loopback address.
 
 - [Quick start: from install to a first answer](#quick-start-from-install-to-a-first-answer)
-- [Navigating the UI](#navigating-the-ui)
-- [Enabling the listener](#enabling-the-listener)
-- [Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key)
-- [Launching with `rag ui`](#launching-with-rag-ui)
-- [Trust model](#trust-model)
-- [Troubleshooting](#troubleshooting)
+  - [Launching with `rag ui`](#launching-with-rag-ui)
+  - [Trust model](#trust-model)
+  - [Troubleshooting](#troubleshooting)
+- [Navigating the UI](#navigating-the-ui) operations, prompts, status and answering to RFPs
+
 
 ---
 
@@ -35,6 +34,143 @@ which streams the model's answer back token by token. If you keep knowledge base
 from the chips at the top of the page to ground answers in your documents.
 
 > For obtaining a Bedrock API key step by step, see the [Bedrock guide](bedrock_guide.md).
+
+
+### Launching with `rag ui`
+
+The simplest way in is the `rag ui` command. It contacts the daemon over the trusted unix
+socket, discovers the loopback URL and token, and opens your browser with the token applied:
+
+```bash
+rag-cli.rag ui
+
+# Print the URL instead of opening a browser (e.g. on a headless host)
+rag-cli.rag ui --no-browser
+```
+
+When the listener is disabled, `rag ui` explains how to enable it (via
+`api.loopback.enabled`) rather than failing silently. You must be a member of the API access
+group (default `rag`) to reach the daemon over the unix socket and launch the UI.
+
+### Enabling the listener
+
+The loopback listener is opt-in and **off by default** (the unix socket remains the only
+default surface). Enable it and restart the daemon:
+
+```bash
+# Turn on the loopback listener (serves the API and the UI on 127.0.0.1)
+sudo rag-cli.rag set api.loopback.enabled=true
+
+# Restart ragd so it opens the listener
+sudo snap restart rag-cli.ragd
+```
+
+Two config keys control the listener:
+
+| Key                    | Default        | Meaning                                                                 |
+| ---------------------- | -------------- | ----------------------------------------------------------------------- |
+| `api.loopback.enabled` | `false`        | Whether `ragd` opens the loopback listener and serves the UI.           |
+| `api.loopback.address` | `127.0.0.1:0`  | Loopback bind address. `:0` picks an OS-assigned port. **Must be loopback** — a non-loopback address is refused at startup. |
+
+
+```bash
+sudo rag-cli.rag get api.loopback
+api.loopback.address: 127.0.0.0:0
+api.loopback.enabled: true
+
+```
+
+The resolved URL (with the OS-assigned port) is written to the daemon log and reported by
+`GET /1.0` under `config.loopback`:
+
+```bash
+sudo snap logs rag-cli.ragd | grep 'serving loopback API'
+# serving loopback API on 127.0.0.1:43210
+```
+
+The UI is then reachable at `http://127.0.0.1:43210/ui/` on that resolved port. Prefer
+`rag-cli.rag ui`, which discovers the port and token for you.
+
+
+### Exposing Guest to Host
+
+In case you're using an LXD VM to run rag-snap, some hints
+- Use a static port on `api.loopback.address`, like `127.0.0.1:35555`
+  ```bash
+  sudo rag-cli.rag set api.loopback.address=127.0.0.1:35555
+  sudo snap restart rag-cli.ragd  
+  ```
+- Use socat to redirect lxd vm to loopback
+  ```bash
+  (on host)
+ check UP interface, in this example 10.180.233.90
+  
+  (on guest)
+  # sudo socat TCP-LISTEN:35555,bind=10.180.233.90,fork,reuseaddr TCP:127.0.0.1:35555
+  
+  # ss -ntlp | grep 3555
+  LISTEN 0      4096                127.0.0.1:35555      0.0.0.0:*    users:(("ragd",pid=4662,fd=7))           
+  LISTEN 0      5               10.180.233.90:35555      0.0.0.0:*    users:(("socat",pid=5227,fd=5))     
+  
+  ```
+
+### Trust model
+
+The unix socket authenticates peers by their kernel credentials (`SO_PEERCRED`). Those
+credentials do not exist for TCP connections, so the loopback listener authenticates with a
+**localhost bearer token** instead:
+
+- On first enable, the daemon generates a high-entropy token and stores it **owner-only
+  (`0600`)** under `$SNAP_COMMON` (`ragd/ui.token`). Under strict confinement the daemon
+  cannot chown the file to the API access group, so it does **not** try to; clients obtain the
+  token value over the **peercred-gated `GET /1.0`** instead of reading the file. Any user who
+  can reach the unix socket (root or a member of the API access group, default `rag`) can
+  therefore retrieve it — the same trust boundary as the socket. The token is reused across
+  restarts.
+- Requests to `/1.0/...` over the loopback listener must present the token (as a
+  `Bearer` header or the `rag_ui_token` cookie). Requests without a valid token are rejected.
+- **Static UI assets under `/ui/` load without the token** so the page shell can render;
+  only the `/1.0/...` API is gated.
+- `rag ui` performs the handoff by opening `/ui/login?token=…`, which sets an `HttpOnly`
+  cookie scoped to the loopback origin and redirects into the app. The token therefore never
+  enters the page's JavaScript or the address-bar history, and same-origin API calls and the
+  chat websocket carry it automatically.
+- The token is **per-installation** and is **never** baked into the embedded UI assets.
+
+> **⚠️ A loopback port is reachable by any local user.** As with the unix socket, treat
+> membership in the API access group — and possession of the token — as equivalent to full
+> access over the RAG stack. The token is the local trust boundary, and the seam where TLS
+> client certs / OIDC attach if the surface is ever exposed remotely (a separate, deferred
+> decision).
+
+---
+
+### Troubleshooting
+
+**`unknown command "ui"` from `rag-cli.rag ui`.** The installed snap predates the UI command.
+Confirm the version with `snap list rag-cli` and reinstall the latest build, naming the file
+explicitly (e.g. `sudo snap install --dangerous ./rag-cli_<version>_amd64.snap`, using the exact
+filename from `ls rag-cli_*.snap`) — a `rag-cli_*.snap` glob can match an older snap left in the
+directory.
+
+**The old UI URL no longer loads after a restart.** Expected. With the default
+`api.loopback.address=127.0.0.1:0` the OS assigns a fresh port on every start, so a bookmarked
+link goes stale. Always reopen with `rag-cli.rag ui` rather than reusing a previous URL.
+
+**`401 Unauthorized` / `"Authorization header is missing"` when sending a message.** The
+daemon has no chat API key. See
+[Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key) — set it
+via the systemd drop-in, not a shell `export`.
+
+**`chat operation did not return a websocket URL/secret`.** The UI bundle is older than the
+daemon. Rebuild the snap so the embedded UI matches (`make ui` then `snapcraft`), reinstall,
+restart the daemon, and hard-reload the browser (Ctrl+Shift+R) to bypass the cached bundle.
+
+**A knowledge base fails to load, or search/ingest errors with `opensearch not available`, even
+though the CLI works fine against the same cluster.** The daemon doesn't have your OpenSearch
+credentials. Give it `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD` the same way as `CHAT_API_KEY` —
+see [Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key).
+
 
 ---
 
@@ -172,6 +308,7 @@ Secret values are never shown. The service credentials are environment variables
 configuration, and the one config key that *is* a secret (`gdrive.client.secret`) is redacted by
 the daemon — it renders as `••••` and can be written but never read back.
 
+
 ### Answer RFPs
 
 The **Answer RFPs** section is browser parity with the CLI's `answer batch` (and `answer batch
@@ -219,161 +356,3 @@ pattern above its answer — this is the authoritative record of what applied, t
 itself rather than recomputed. Nothing is shown for a question that matched no entry, or for a
 results file written before domain routing existed. (Per-question source provenance is not shown
 yet — the batch API does not return it.)
-
----
-
-## Enabling the listener
-
-The loopback listener is opt-in and **off by default** (the unix socket remains the only
-default surface). Enable it and restart the daemon:
-
-```bash
-# Turn on the loopback listener (serves the API and the UI on 127.0.0.1)
-sudo rag-cli.rag set api.loopback.enabled=true
-
-# Restart ragd so it opens the listener
-sudo snap restart rag-cli.ragd
-```
-
-Two config keys control the listener:
-
-| Key                    | Default        | Meaning                                                                 |
-| ---------------------- | -------------- | ----------------------------------------------------------------------- |
-| `api.loopback.enabled` | `false`        | Whether `ragd` opens the loopback listener and serves the UI.           |
-| `api.loopback.address` | `127.0.0.1:0`  | Loopback bind address. `:0` picks an OS-assigned port. **Must be loopback** — a non-loopback address is refused at startup. |
-
-The resolved URL (with the OS-assigned port) is written to the daemon log and reported by
-`GET /1.0` under `config.loopback`:
-
-```bash
-sudo snap logs rag-cli.ragd | grep 'serving loopback API'
-# serving loopback API on 127.0.0.1:43210
-```
-
-The UI is then reachable at `http://127.0.0.1:43210/ui/` on that resolved port. Prefer
-`rag-cli.rag ui`, which discovers the port and token for you.
-
----
-
-## Configuring the chat backend and API key
-
-The UI talks to the daemon, and the **daemon** — not your shell — makes the call to the
-inference backend. Backend secrets are passed to `ragd` through environment variables
-(`OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `CHAT_API_KEY`), never through config.
-
-This matters for the chat API key. When you run `rag-cli.rag chat` interactively, the CLI
-inherits `CHAT_API_KEY` from your shell, so a plain `export CHAT_API_KEY=…` is enough. But
-the UI is served by the **`ragd` systemd service**, which has its own environment and does
-**not** see your shell exports. Without the key, the daemon calls the backend with no
-`Authorization` header and the backend replies `401 Unauthorized` (e.g. Bedrock:
-`"Authorization header is missing"`).
-
-Give the daemon its secrets — the chat key, and your real OpenSearch credentials if your
-cluster doesn't use the `admin`/`admin` default — with a **root-only systemd drop-in** (the
-snap's auto-generated unit is regenerated on every restart and must not be edited directly).
-The same recipe is in [the REST API guide](rest-api.md):
-
-```bash
-sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\n' \
-  "$YOUR_CHAT_KEY" "$YOUR_OPENSEARCH_USER" "$YOUR_OPENSEARCH_PASSWORD" | \
-  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf >/dev/null
-sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
-sudo systemctl daemon-reload
-sudo snap restart rag-cli.ragd
-```
-
-The drop-in is `root:root 0600`, so the secrets are never world-readable and never pass
-through the `snapctl` config store or the `GET /1.0` config summary.
-
-Confirm the running daemon actually has them (checks the live process, not just the unit):
-
-```bash
-sudo tr '\0' '\n' < /proc/$(pgrep -x ragd)/environ | grep -E 'CHAT_API_KEY|OPENSEARCH_USERNAME|OPENSEARCH_PASSWORD'
-```
-
-The drop-in directory survives `snap restart` and `snap install --dangerous` of the same
-build. A full `snap remove` clears it, so re-apply the drop-in after a clean reinstall.
-
-> **Note:** the snap deliberately declares no `environment:` values for `CHAT_API_KEY`,
-> `OPENSEARCH_USERNAME`, or `OPENSEARCH_PASSWORD` in its own metadata. Hardcoding any of them
-> (even as an empty string) would make snapd apply that value over whatever the systemd unit
-> provides, so the drop-in could never take effect — this is what lets a non-default OpenSearch
-> username/password work the same way as the chat key.
-
----
-
-## Launching with `rag ui`
-
-The simplest way in is the `rag ui` command. It contacts the daemon over the trusted unix
-socket, discovers the loopback URL and token, and opens your browser with the token applied:
-
-```bash
-rag-cli.rag ui
-
-# Print the URL instead of opening a browser (e.g. on a headless host)
-rag-cli.rag ui --no-browser
-```
-
-When the listener is disabled, `rag ui` explains how to enable it (via
-`api.loopback.enabled`) rather than failing silently. You must be a member of the API access
-group (default `rag`) to reach the daemon over the unix socket and launch the UI.
-
----
-
-## Trust model
-
-The unix socket authenticates peers by their kernel credentials (`SO_PEERCRED`). Those
-credentials do not exist for TCP connections, so the loopback listener authenticates with a
-**localhost bearer token** instead:
-
-- On first enable, the daemon generates a high-entropy token and stores it **owner-only
-  (`0600`)** under `$SNAP_COMMON` (`ragd/ui.token`). Under strict confinement the daemon
-  cannot chown the file to the API access group, so it does **not** try to; clients obtain the
-  token value over the **peercred-gated `GET /1.0`** instead of reading the file. Any user who
-  can reach the unix socket (root or a member of the API access group, default `rag`) can
-  therefore retrieve it — the same trust boundary as the socket. The token is reused across
-  restarts.
-- Requests to `/1.0/...` over the loopback listener must present the token (as a
-  `Bearer` header or the `rag_ui_token` cookie). Requests without a valid token are rejected.
-- **Static UI assets under `/ui/` load without the token** so the page shell can render;
-  only the `/1.0/...` API is gated.
-- `rag ui` performs the handoff by opening `/ui/login?token=…`, which sets an `HttpOnly`
-  cookie scoped to the loopback origin and redirects into the app. The token therefore never
-  enters the page's JavaScript or the address-bar history, and same-origin API calls and the
-  chat websocket carry it automatically.
-- The token is **per-installation** and is **never** baked into the embedded UI assets.
-
-> **⚠️ A loopback port is reachable by any local user.** As with the unix socket, treat
-> membership in the API access group — and possession of the token — as equivalent to full
-> access over the RAG stack. The token is the local trust boundary, and the seam where TLS
-> client certs / OIDC attach if the surface is ever exposed remotely (a separate, deferred
-> decision).
-
----
-
-## Troubleshooting
-
-**`unknown command "ui"` from `rag-cli.rag ui`.** The installed snap predates the UI command.
-Confirm the version with `snap list rag-cli` and reinstall the latest build, naming the file
-explicitly (e.g. `sudo snap install --dangerous ./rag-cli_<version>_amd64.snap`, using the exact
-filename from `ls rag-cli_*.snap`) — a `rag-cli_*.snap` glob can match an older snap left in the
-directory.
-
-**The old UI URL no longer loads after a restart.** Expected. With the default
-`api.loopback.address=127.0.0.1:0` the OS assigns a fresh port on every start, so a bookmarked
-link goes stale. Always reopen with `rag-cli.rag ui` rather than reusing a previous URL.
-
-**`401 Unauthorized` / `"Authorization header is missing"` when sending a message.** The
-daemon has no chat API key. See
-[Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key) — set it
-via the systemd drop-in, not a shell `export`.
-
-**`chat operation did not return a websocket URL/secret`.** The UI bundle is older than the
-daemon. Rebuild the snap so the embedded UI matches (`make ui` then `snapcraft`), reinstall,
-restart the daemon, and hard-reload the browser (Ctrl+Shift+R) to bypass the cached bundle.
-
-**A knowledge base fails to load, or search/ingest errors with `opensearch not available`, even
-though the CLI works fine against the same cluster.** The daemon doesn't have your OpenSearch
-credentials. Give it `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD` the same way as `CHAT_API_KEY` —
-see [Configuring the chat backend and API key](#configuring-the-chat-backend-and-api-key).

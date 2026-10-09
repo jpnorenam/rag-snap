@@ -1,12 +1,96 @@
 # Contributing to rag-cli
 
-Thanks for your interest in contributing! `rag-cli` is a CLI-based RAG tool
-packaged as a snap. This document covers how to set up a development
+Thanks for your interest in contributing!
+`rag-cli` is a CLI-based RAG tool packaged as a snap.
+
+This document covers how to set up a development
 environment, the change workflow we follow (OpenSpec), and our stance on
 AI-assisted contributions.
 
 By contributing, you agree that your contributions are licensed under the
 project's [GPL-3.0](LICENSE) license.
+
+
+---
+
+## Development setup
+
+## Development environment
+
+Feel free to setup the environment as you see it fit.
+Here a proposal.
+On host, clone this repo.
+Launch an LXC instance `src-rag` with the requirements and local lxd vm following [installation guidelines](INSTALL.md#-op1-local-lxd).
+Mount src on such instance, as an lxc device into the testing environment
+```
+lxc config device add src-rag rag-snap-src disk \
+  source="$HOME/src/rag-snap" \
+  path=/root/rag-snap-src
+```
+
+### Prerequisites
+
+- Make
+- [Go](https://snapcraft.io/go) 1.24+
+- `snapcraft` and `snapd` (for building/installing the snap)
+- `golangci-lint` (for linting; config is in `.golangci.yml`)
+- For running end to end: an OpenSearch snap, an inference server (a local
+  Inference snap or a third-party OpenAI-compatible API), and the bundled Tika
+  service. See the [README](README.md) for full service setup.
+```
+sudo apt intall make
+sudo snap install go --classic
+sudo snap install golangci-lint --classic 
+sudo snap install snapcraft --classic
+sudo snap install tika-server
+sudo snap refresh snapd
+```
+
+### Building and validating the snap
+
+Build it
+
+```bash
+make all                # tidy + fmt + vet + lint + test + build
+
+OR
+make build              # build the binary to ./bin/cli
+make test               # go test ./...
+make lint               # golangci-lint run ./...
+```
+
+and generate snap
+
+```bash
+snapcraft -v
+sudo snap install --dangerous ./rag-cli_*.snap
+```
+
+### Other ways to run locally
+
+
+```
+make run ARGS="status"  # go run ./cmd/cli with arguments
+```
+
+
+
+### ⚠️ Configuration changes
+
+All configuration is read and written through `snapctl` (see `pkg/storage/`).
+Any code path that touches config only works when running **inside the installed snap**
+— `make run` / `go run` will fail on `snapctl get/set` outside a snap context.
+ When your change touches config, validate it from an installed snap, not just `make run`.
+
+
+### Testing
+If you need to run a single test, 
+```go test ./pkg/utils/ -run TestName   # run a single test
+```
+There is **no test/lint gate in CI**, so please run `make all` locally before
+pushing.
+
+---
 
 ## AI-assisted contributions are welcome
 
@@ -29,44 +113,7 @@ We only ask that you treat AI as an assistant, not an author of record:
 - The OpenSpec workflow below is the recommended way to drive an agent through a
   non-trivial change.
 
-## Development setup
-
-### Prerequisites
-
-- Go 1.24+
-- `snapcraft` and `snapd` (for building/installing the snap)
-- `golangci-lint` (for linting; config is in `.golangci.yml`)
-- For running end to end: an OpenSearch snap, an inference server (a local
-  Inference snap or a third-party OpenAI-compatible API), and the bundled Tika
-  service. See the [README](README.md) for full service setup.
-
-### Common commands
-
-```bash
-make build              # build the binary to ./bin/cli
-make run ARGS="status"  # go run ./cmd/cli with arguments
-make test               # go test ./...
-make lint               # golangci-lint run ./...
-make all                # tidy + fmt + vet + lint + test + build
-go test ./pkg/utils/ -run TestName   # run a single test
-```
-
-There is **no test/lint gate in CI**, so please run `make all` locally before
-pushing.
-
-### Building and validating the snap
-
-```bash
-snapcraft -v
-sudo snap install --dangerous ./rag-cli_*.snap
-```
-
-> **Important:** all configuration is read and written through `snapctl`
-> (see `pkg/storage/`). Any code path that touches config only works when
-> running **inside the installed snap** — `make run` / `go run` will fail on
-> `snapctl get/set` outside a snap context. When your change touches config,
-> validate it from an installed snap, not just `make run`.
-
+  
 ## The OpenSpec workflow
 
 For anything beyond a trivial fix, we use [OpenSpec](https://github.com/Fission-AI/OpenSpec/)
@@ -102,6 +149,8 @@ example, state which external services (OpenSearch / inference server / Tika) a
 change touches, and call out any new config keys and whether they are `package`
 or `user` scoped.
 
+---
+
 ## Pull requests
 
 - Branch off `main` and open a PR against `main`. Merging to `main` publishes
@@ -114,6 +163,8 @@ or `user` scoped.
   `feat:` / `fix:` prefix where it fits (see `git log`).
 - Preserve the fixed command order in `cmd/cli/main.go`
   (`cobra.EnableCommandSorting = false`) when adding commands.
+
+---
 
 ## Questions
 
