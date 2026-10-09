@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"syscall"
 	"time"
@@ -19,17 +18,24 @@ import (
 	"github.com/fatih/color"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
+	"github.com/jpnorenam/rag-snap/pkg/credentials"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/ssestream"
 )
 
-func clientOptions(baseURL string) []option.RequestOption {
+// clientOptions builds the inference client options. CHAT_API_KEY comes from
+// the environment or, in the CLI, the credentials file; empty means no key.
+func clientOptions(baseURL string) ([]option.RequestOption, error) {
 	opts := []option.RequestOption{option.WithBaseURL(baseURL)}
-	if key := os.Getenv("CHAT_API_KEY"); key != "" {
+	key, _, err := credentials.Lookup("CHAT_API_KEY")
+	if err != nil {
+		return nil, err
+	}
+	if key != "" {
 		opts = append(opts, option.WithAPIKey(key))
 	}
-	return opts
+	return opts, nil
 }
 
 // ModelListingUnsupported reports whether err is the inference server rejecting
@@ -52,7 +58,11 @@ func ModelListingUnsupported(err error) bool {
 // and returns the first model name. Returns an error if the server is
 // unreachable or returns no models.
 func FindModelName(baseURL string) (string, error) {
-	modelService := openai.NewModelService(clientOptions(baseURL)...)
+	opts, err := clientOptions(baseURL)
+	if err != nil {
+		return "", err
+	}
+	modelService := openai.NewModelService(opts...)
 	modelPage, err := modelService.List(context.Background())
 	if err != nil {
 		return "", err
@@ -98,7 +108,11 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 	}
 
 	// OpenAI API Client
-	client := openai.NewClient(clientOptions(baseURL)...)
+	opts, err := clientOptions(baseURL)
+	if err != nil {
+		return err
+	}
+	client := openai.NewClient(opts...)
 
 	if err := checkServer(client, llmModelName); err != nil {
 		return err
@@ -295,7 +309,11 @@ func findModelName(baseURL string, verbose bool) (string, error) {
 	stopProgress := common.StartProgressSpinner("Looking up model name")
 	defer stopProgress()
 
-	modelService := openai.NewModelService(clientOptions(baseURL)...)
+	opts, err := clientOptions(baseURL)
+	if err != nil {
+		return "", err
+	}
+	modelService := openai.NewModelService(opts...)
 
 	const (
 		retryInterval = 5 * time.Second

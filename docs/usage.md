@@ -1717,6 +1717,33 @@ to edit it or reset it to the built-in default.
 
 ---
 
+## AWS setup
+
+`rag-cli.rag prepare-script aws --output <directory>` exports the AWS setup assets into a
+directory you own:
+
+- `opensearch-on-aws.sh`, the host script;
+- `bootstrap-opensearch.sh`, the guest bootstrap;
+- Terraform templates;
+- `snap-context.env`.
+
+Run it as your normal user. Use a non-hidden directory under your home, because `/tmp` inside the
+snap is not the host's `/tmp`. Re-running the command refreshes the scripts and keeps saved
+answers, secrets, keys and Terraform state.
+
+```bash
+rag-cli.rag prepare-script aws --output ~/rag-aws
+cd ~/rag-aws && ./opensearch-on-aws.sh setup      # provision and configure
+./opensearch-on-aws.sh destroy                    # remove the AWS resources
+```
+
+See **[AWS setup guide](opensearch-on-aws.md)** for prerequisites, the saved files, reruns and Google Drive
+import. After setup, the CLI reads its OpenSearch and chat secrets from
+`~/snap/rag-cli/common/credentials.json` unless they are exported (see
+[INSTALL.md](../INSTALL.md#credentials-file)).
+
+---
+
 ## REST API (`ragd`)
 
 `rag-cli` ships an optional daemon, `ragd`, that exposes the knowledge, search, chat, and
