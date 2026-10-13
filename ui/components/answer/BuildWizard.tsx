@@ -13,10 +13,21 @@ import {
   parseInspectMetadata,
   BuildMetadataError,
   runBatch,
+  analyzeDocuments,
+  generateManifest,
+  parseAnalyzeMetadata,
+  parseGenerateMetadata,
+  ANALYSIS_EXTENSION,
+  type AnswerLengthMode,
   type BatchManifest,
   type BuildQuestion,
   type BuildTable,
+  type CheckResult,
+  type OpenStackFlavour,
+  type Triage,
 } from "@/lib/api/answer";
+import { getServerInfo } from "@/lib/api/server";
+import { TriageStep, InterviewStep, GeneratedReviewStep } from "@/components/answer/AnalysisSteps";
 import { serializeManifest } from "@/lib/manifest";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
 
@@ -30,7 +41,29 @@ interface Props {
 // Tabular (XLSX/CSV): upload → inspecting → columns → extracting → review →
 // configure. "inspecting" is pass 1 (document read); "extracting" is pass 2
 // (chosen-column extraction).
-type WizardStep = "upload" | "inspecting" | "columns" | "extracting" | "review" | "configure";
+type WizardStep =
+  | "upload"
+  | "inspecting"
+  | "columns"
+  | "extracting"
+  | "review"
+  | "configure"
+  // Analysis path: triage is reviewed, then the interview, then the generated
+  // manifest. These replace the extraction steps rather than layering on them, so a
+  // column-selection step and an interview are never both presented.
+  | "triage"
+  | "interview"
+  | "generating"
+  | "generated";
+
+// BuildMode is how an uploaded document becomes a manifest. Extraction is the
+// default, so an unchanged interaction produces the wizard's established behaviour.
+type BuildMode = "extract" | "analyze";
+
+// ANALYSIS_DEFAULT_WORDS mirrors the daemon's analysis.answer.words default. The
+// interview is prefilled with it; the daemon remains the authority.
+const ANALYSIS_DEFAULT_WORDS = 100;
+const ANALYSIS_DEFAULT_LIMIT: AnswerLengthMode = "soft";
 
 // DEFAULT_MIN_LENGTH matches the daemon's default minimum cell length.
 const DEFAULT_MIN_LENGTH = 20;
@@ -79,6 +112,26 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [cancelBusy, setCancelBusy] = useState(false);
 
+  // The chosen primary document, held until the user submits.
+  //
+  // Selecting a file used to start the build immediately. That was tolerable when the
+  // only options sat above the picker, but it makes the analysis path impossible to
+  // use: there is no moment in which to add context documents, and a mis-click spends
+  // a Tika or model call with no chance to reconsider. Selection and submission are
+  // now separate for both paths.
+  const [primaryFile, setPrimaryFile] = useState<File | null>(null);
+
+  // Analysis path state.
+  const [mode, setMode] = useState<BuildMode>("extract");
+  const [contextFiles, setContextFiles] = useState<File[]>([]);
+  const [analysisReason, setAnalysisReason] = useState<string | null>(null);
+  const [analysisToken, setAnalysisToken] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [triage, setTriage] = useState<Triage | null>(null);
+  const [generated, setGenerated] = useState<BatchManifest | null>(null);
+  const [check, setCheck] = useState<CheckResult | null>(null);
+  const [generatedModel, setGeneratedModel] = useState("");
+
   const buildOp = useMemo<OperationView | null>(
     () => (buildOpId ? ops.operations.find((o) => o.id === buildOpId) ?? null : null),
     [ops.operations, buildOpId]
@@ -86,7 +139,7 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
 
   // Track whether there is unsaved wizard progress worth warning about.
   const dirtyRef = useRef(false);
-  dirtyRef.current = questions.length > 0 && !saved && step !== "upload";
+  dirtyRef.current = (questions.length > 0 || generated !== null) && !saved && step !== "upload";
 
   // Warn before unloading the page with an unsaved built manifest.
   useEffect(() => {
@@ -107,6 +160,31 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
       .catch(() => setBases([]));
   }, []);
 
+  // Ask the daemon whether analysis can actually run. It advertises the capability
+  // only when analysis is enabled with a Gemini model and an API key, so this is
+  // what lets the choice be shown as unavailable rather than offered and then failing
+  // at submit time.
+  //
+  // GET /1.0, not GET /. The two both carry api_extensions, but on the loopback
+  // listener the browser talks to, "/" is a redirect into this SPA — so fetching it
+  // returns HTML and fails to parse as an envelope. Only /1.0 is registered as an API
+  // route on both listeners.
+  useEffect(() => {
+    getServerInfo()
+      .then((info) => {
+        if (!info.api_extensions?.includes(ANALYSIS_EXTENSION)) {
+          setAnalysisReason(
+            "This daemon does not offer analysis. It needs analysis enabled, a Gemini model id and an API key — check analysis.enabled, analysis.model and GEMINI_API_KEY on the daemon."
+          );
+        }
+      })
+      .catch((e) =>
+        // Say what went wrong rather than only that something did: an unreachable
+        // daemon and a rejected request need different fixes.
+        setAnalysisReason(`Could not confirm whether this daemon offers analysis: ${errorMessage(e)}`)
+      );
+  }, []);
+
   // Build-operation completion. Both passes are one-shot operations whose result
   // the wizard consumes, so each is dismissed from the indicator on completion —
   // neither is a resumable batch run (the wizard's step state is local).
@@ -114,7 +192,13 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
   //   extracting → review (chosen-column questions)
   useEffect(() => {
     if (!buildOp || !isTerminal(buildOp)) return;
-    if (step !== "inspecting" && step !== "extracting") return;
+    if (
+      step !== "inspecting" &&
+      step !== "extracting" &&
+      step !== "generating"
+    ) {
+      return;
+    }
     const status = statusOf(buildOp);
     const id = buildOp.id;
     const finish = (next: WizardStep) => {
@@ -124,8 +208,55 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
     };
 
     if (status !== "succeeded") {
-      onError(buildOp.err || `${step === "inspecting" ? "document read" : "extraction"} ${status}`);
-      finish("upload");
+      const what =
+        step === "inspecting" ? "document read" : step === "generating" ? "generation" : "extraction";
+      onError(buildOp.err || `${what} ${status}`);
+      // An expired session is recoverable, and the only recovery is a fresh upload —
+      // so it returns to upload rather than to an interview whose token is dead.
+      finish(step === "generating" && !/expired/i.test(buildOp.err ?? "") ? "interview" : "upload");
+      return;
+    }
+
+    if (step === "generating") {
+      let meta;
+      try {
+        meta = parseGenerateMetadata(buildOp.metadata);
+      } catch (e) {
+        onError(e instanceof BuildMetadataError ? e.message : "could not read the generated manifest");
+        finish("interview");
+        return;
+      }
+      setGenerated(meta.manifest);
+      setCheck(meta.check);
+      setGeneratedModel(meta.model);
+      // The generated questions become the editable list, so an edit before running is
+      // the same interaction as it is for extracted candidates.
+      setQuestions(
+        meta.manifest.questions.map((q, i) => ({
+          id: q.id || String(i + 1),
+          question: q.question,
+          source: q.source,
+          selected: true,
+        }))
+      );
+      if (meta.manifest.knowledge_bases?.length) setActiveBases(meta.manifest.knowledge_bases);
+      finish("generated");
+      return;
+    }
+
+    if (step === "inspecting" && mode === "analyze") {
+      let meta;
+      try {
+        meta = parseAnalyzeMetadata(buildOp.metadata);
+      } catch (e) {
+        onError(e instanceof BuildMetadataError ? e.message : "could not read the analysis result");
+        finish("upload");
+        return;
+      }
+      setAnalysisToken(meta.analysisToken);
+      setExpiresAt(meta.expiresAt);
+      setTriage(meta.triage);
+      finish("triage");
       return;
     }
 
@@ -161,7 +292,7 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
       extracted.map((q) => ({ id: q.id, question: q.question, source: q.source, selected: true }))
     );
     finish("review");
-  }, [step, buildOp, ops, onError]);
+  }, [step, mode, buildOp, ops, onError]);
 
   // extractColumn runs pass 2 for the chosen table/column/min-length.
   const extractColumn = useCallback(async () => {
@@ -186,7 +317,8 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
   // returns to the appropriate prior step. Copy is phase-appropriate — nothing
   // meaningful is lost, so it does not use the batch-run "progress lost" warning.
   const cancelBuild = useCallback(async () => {
-    const returnStep: WizardStep = step === "extracting" ? "columns" : "upload";
+    const returnStep: WizardStep =
+      step === "extracting" ? "columns" : step === "generating" ? "interview" : "upload";
     setCancelBusy(true);
     try {
       if (buildOpId) {
@@ -203,27 +335,55 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
     }
   }, [ops, buildOpId, step]);
 
-  const onFile = useCallback(
-    async (file: File | undefined) => {
-      if (!file) return;
-      setFileName(file.name);
-      // Default the manifest name to the document's name with the extension
-      // stripped (e.g. "vendor-rfp.pdf" → "vendor-rfp"); the user can still edit
-      // it in the configure step.
-      setManifestName(file.name.replace(/\.[^.]+$/, ""));
-      setStep("inspecting");
+  // onFile records the chosen document without starting anything.
+  const onFile = useCallback((file: File | undefined) => {
+    if (!file) return;
+    setPrimaryFile(file);
+    setFileName(file.name);
+    // Default the manifest name to the document's name with the extension
+    // stripped (e.g. "vendor-rfp.pdf" → "vendor-rfp"); the user can still edit
+    // it in the configure step.
+    setManifestName(file.name.replace(/\.[^.]+$/, ""));
+  }, []);
+
+  // start submits the chosen document down the chosen path.
+  const start = useCallback(async () => {
+    if (!primaryFile) return;
+    setStep("inspecting");
+    try {
+      const { view } =
+        mode === "analyze"
+          ? await analyzeDocuments(primaryFile, contextFiles)
+          : await buildFromDocument(primaryFile, { refine });
+      // Record the originating route so the indicator can link back to the
+      // Answer tab while the build runs.
+      ops.track(view, "/answer/");
+      setBuildOpId(view.id);
+    } catch (e) {
+      onError(errorMessage(e));
+      setStep("upload");
+    }
+  }, [primaryFile, refine, mode, contextFiles, ops, onError]);
+
+  // submitInterview runs the second analysis pass against the staged documents.
+  const submitInterview = useCallback(
+    async (words: number, limit: AnswerLengthMode, flavour?: OpenStackFlavour) => {
+      setStep("generating");
       try {
-        const { view } = await buildFromDocument(file, { refine });
-        // Record the originating route so the indicator can link back to the
-        // Answer tab while the build runs.
+        const { view } = await generateManifest({
+          analysisToken,
+          answerWords: words,
+          answerLimit: limit,
+          openstack: flavour,
+        });
         ops.track(view, "/answer/");
         setBuildOpId(view.id);
       } catch (e) {
         onError(errorMessage(e));
-        setStep("upload");
+        setStep("interview");
       }
     },
-    [refine, ops, onError]
+    [analysisToken, ops, onError]
   );
 
   const selectedCount = questions.filter((q) => q.selected).length;
@@ -263,6 +423,44 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
     setSaved(true);
   }, [buildManifest, manifestName]);
 
+  // generatedWithEdits merges the generated manifest with the edited question list, so
+  // what is downloaded or run is what the review step actually showed.
+  const generatedWithEdits = useCallback((): BatchManifest | null => {
+    if (!generated) return null;
+    return { ...generated, questions: buildManifest().questions, temperature };
+  }, [generated, buildManifest, temperature]);
+
+  // downloadGenerated saves the generated manifest as YAML. No domains stub: the
+  // domains block here is real, and a commented-out stub beneath it would be confusing.
+  // Available even when the check found defects, so the operator can fix it by hand.
+  const downloadGenerated = useCallback(() => {
+    const manifest = generatedWithEdits();
+    if (!manifest) return;
+    const yaml = serializeManifest(manifest, { domainsStub: false });
+    const blob = new Blob([yaml], { type: "application/x-yaml" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${manifestName.trim() || "manifest"}.yaml`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setSaved(true);
+  }, [generatedWithEdits, manifestName]);
+
+  const runGenerated = useCallback(async () => {
+    const manifest = generatedWithEdits();
+    if (!manifest) return;
+    setRunning(true);
+    try {
+      const { view } = await runBatch(manifest);
+      setSaved(true);
+      onRun(view, manifest, manifestName.trim() || undefined);
+    } catch (e) {
+      onError(errorMessage(e));
+      setRunning(false);
+    }
+  }, [generatedWithEdits, manifestName, onRun, onError]);
+
   const doRun = useCallback(async () => {
     setRunning(true);
     try {
@@ -281,8 +479,10 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
     <>
     <section className="answer-flow">
       <div className="answer-flow__head">
-        <h2 className="p-heading--4 u-no-margin--bottom">Build from a document</h2>
-        {step === "inspecting" || step === "extracting" ? (
+        <h2 className="p-heading--4 u-no-margin--bottom">
+          {mode === "analyze" ? "Analyse a document" : "Build from a document"}
+        </h2>
+        {step === "inspecting" || step === "extracting" || step === "generating" ? (
           // While a build op runs, the in-place exit is Cancel (confirmed).
           // Navigating away leaves it in the indicator.
           <button
@@ -299,7 +499,7 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
         )}
       </div>
 
-      <WizardSteps step={step} tabular={tables.length > 0} />
+      <WizardSteps step={step} tabular={tables.length > 0} analysis={mode === "analyze"} />
 
       {step === "upload" && (
         <div className="answer-wizard__upload">
@@ -311,22 +511,188 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
               id="build-file"
               type="file"
               accept={ACCEPT}
-              onChange={(e) => void onFile(e.target.files?.[0])}
+              onChange={(e) => onFile(e.target.files?.[0])}
             />
+            {primaryFile && (
+              <p className="p-form-help-text">
+                Selected: <strong>{primaryFile.name}</strong>
+              </p>
+            )}
           </div>
-          <label className="p-checkbox">
-            <input
-              type="checkbox"
-              className="p-checkbox__input"
-              checked={refine}
-              onChange={(e) => setRefine(e.target.checked)}
-            />
-            <span className="p-checkbox__label">Refine questions with the model</span>
-          </label>
+          <fieldset className="answer-path">
+            <legend className="p-form__label">How should the manifest be built?</legend>
+
+            <label className="p-radio">
+              <input
+                type="radio"
+                className="p-radio__input"
+                name="build-mode"
+                checked={mode === "extract"}
+                onChange={() => setMode("extract")}
+              />
+              <span className="p-radio__label">
+                Extract questions
+                <span className="u-text--muted p-text--small">
+                  {" "}
+                  — reads the document locally and finds candidate questions. You supply the prompt
+                  and domains.
+                </span>
+              </span>
+            </label>
+
+            <label className={["p-radio", analysisReason ? "is-disabled" : ""].join(" ")}>
+              <input
+                type="radio"
+                className="p-radio__input"
+                name="build-mode"
+                checked={mode === "analyze"}
+                disabled={analysisReason !== null}
+                onChange={() => setMode("analyze")}
+              />
+              <span className="p-radio__label">
+                Analyse with a model
+                <span className="u-text--muted p-text--small">
+                  {" "}
+                  — generates a complete manifest: questions, knowledge bases, an RFP prompt and
+                  domain routing.
+                </span>
+              </span>
+            </label>
+
+            {/* Shown as unavailable with the reason, rather than hidden or offered and
+                then failing on submit. */}
+            {analysisReason && (
+              <p className="p-notification--information u-no-margin--bottom">
+                <span className="p-notification__content">
+                  <span className="p-notification__message">{analysisReason}</span>
+                </span>
+              </p>
+            )}
+            {mode === "analyze" && !analysisReason && (
+              <p className="u-text--muted p-text--small">
+                Analysis sends the document content to the configured analysis provider.
+              </p>
+            )}
+          </fieldset>
+
+          {mode === "extract" && (
+            <>
+              <label className="p-checkbox">
+                <input
+                  type="checkbox"
+                  className="p-checkbox__input"
+                  checked={refine}
+                  onChange={(e) => setRefine(e.target.checked)}
+                />
+                <span className="p-checkbox__label">Refine questions with the model</span>
+              </label>
+              <p className="u-text--muted p-text--small">
+                Uses the chat model to clean up extracted questions.
+              </p>
+            </>
+          )}
+
+          {mode === "analyze" && (
+            <div className="p-form__group">
+              <label className="p-form__label" htmlFor="analysis-context">
+                Supporting context documents (optional)
+              </label>
+              <input
+                id="analysis-context"
+                type="file"
+                accept={ACCEPT}
+                multiple
+                onChange={(e) =>
+                  setContextFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])])
+                }
+              />
+              <p className="p-form-help-text">
+                Background material that helps the model write the prompt. The RFP itself goes in the
+                field above.
+              </p>
+              {contextFiles.length > 0 && (
+                <ul className="answer-context-list">
+                  {contextFiles.map((f, i) => (
+                    <li key={`${f.name}-${i}`}>
+                      <span>{f.name}</span>
+                      <button
+                        type="button"
+                        className="p-button--base u-no-margin--bottom"
+                        aria-label={`Remove ${f.name}`}
+                        onClick={() => setContextFiles((prev) => prev.filter((_, j) => j !== i))}
+                      >
+                        Remove
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
+          {/* Nothing is sent until this is pressed, so the document, the path and any
+              context documents can all be changed first. */}
+          <div className="answer-upload__actions">
+            <button
+              type="button"
+              className="p-button--positive u-no-margin--bottom"
+              disabled={!primaryFile}
+              onClick={() => void start()}
+            >
+              {mode === "analyze" ? "Analyse document" : "Extract questions"}
+            </button>
+            {!primaryFile && (
+              <span className="u-text--muted p-text--small">Choose an RFP document to continue.</span>
+            )}
+          </div>
+        </div>
+      )}
+
+      {step === "triage" && triage && (
+        <TriageStep
+          triage={triage}
+          expiresAt={expiresAt}
+          onBack={() => {
+            setTriage(null);
+            setAnalysisToken("");
+            setStep("upload");
+          }}
+          onContinue={() => setStep("interview")}
+        />
+      )}
+
+      {step === "interview" && triage && (
+        <InterviewStep
+          triage={triage}
+          defaultWords={ANALYSIS_DEFAULT_WORDS}
+          defaultLimit={ANALYSIS_DEFAULT_LIMIT}
+          busy={false}
+          onBack={() => setStep("triage")}
+          onSubmit={(words, limit, flavour) => void submitInterview(words, limit, flavour)}
+        />
+      )}
+
+      {step === "generating" && (
+        <div className="answer-running" aria-live="polite">
+          <Spinner label="Generating the manifest…" />
           <p className="u-text--muted p-text--small">
-            Uses the chat model to clean up extracted questions.
+            Two model calls: one to extract every question, one to design the prompt and domain
+            routing. Track or cancel from the operations indicator.
           </p>
         </div>
+      )}
+
+      {step === "generated" && generated && check && (
+        <GeneratedReviewStep
+          manifest={{ ...generated, questions: buildManifest().questions }}
+          check={check}
+          model={generatedModel}
+          estimated={triage?.estimated_questions ?? 0}
+          running={running}
+          onBack={() => setStep("interview")}
+          onDownload={() => downloadGenerated()}
+          onRun={() => void runGenerated()}
+        />
       )}
 
       {step === "inspecting" && (
@@ -469,9 +835,26 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
 
 // WizardSteps is the slim step indicator. The current step is bold via text
 // emphasis only — no brand-orange accent in content (foundation §1).
-function WizardSteps({ step, tabular }: { step: WizardStep; tabular: boolean }) {
-  // Free-text: Upload → Review → Configure. Tabular inserts "Choose column".
-  const items: { key: WizardStep; label: string }[] = tabular
+function WizardSteps({
+  step,
+  tabular,
+  analysis,
+}: {
+  step: WizardStep;
+  tabular: boolean;
+  analysis: boolean;
+}) {
+  // The analysis path replaces the extraction steps rather than layering on them, so a
+  // column-selection step and an interview are never both shown.
+  const items: { key: WizardStep; label: string }[] = analysis
+    ? [
+        { key: "upload", label: "1. Upload" },
+        { key: "triage", label: "2. Review document" },
+        { key: "interview", label: "3. Answer style" },
+        { key: "generated", label: "4. Review & run" },
+      ]
+    : // Free-text: Upload → Review → Configure. Tabular inserts "Choose column".
+    tabular
     ? [
         { key: "upload", label: "1. Upload" },
         { key: "columns", label: "2. Choose column" },
@@ -485,7 +868,13 @@ function WizardSteps({ step, tabular }: { step: WizardStep; tabular: boolean }) 
       ];
   // Map in-flight phases onto the nearest visible step.
   const currentKey: WizardStep =
-    step === "inspecting" ? "upload" : step === "extracting" ? "columns" : step;
+    step === "inspecting"
+      ? "upload"
+      : step === "extracting"
+        ? "columns"
+        : step === "generating"
+          ? "interview"
+          : step;
   return (
     <ol className="answer-steps" aria-label="Build steps">
       {items.map((it) => (

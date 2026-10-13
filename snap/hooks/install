@@ -40,6 +40,35 @@ snapctl set config.package.kapa.enabled="true"
 snapctl set config.package.kapa.api.key=""
 snapctl set config.package.kapa.project.id=""
 
+# Register RFP analysis keys. Analysis sends RFP documents directly to Google's
+# Gemini API and generates a complete answer-batch manifest, so it is OFF by
+# default: it sends document content to a third party. There is no gateway and no
+# configurable endpoint — the destination is fixed in code. Enable it with:
+#   sudo rag set analysis.enabled=true
+#   sudo rag set analysis.model=<gemini-model-id>
+#
+# analysis.model has no default on purpose. Gemini model ids are versioned (the Pro
+# tier currently ships only under a preview identifier), so baking one in would age
+# badly and fail as an opaque 404. Ids are unprefixed — not google/... as on a
+# gateway. Verified values:
+#   gemini-3.1-pro-preview   Pro tier, preview (deprecated with >= 2 weeks' notice)
+#   gemini-3.8-flash         newest stable model
+#
+# The API key is NEVER config: it comes from GEMINI_API_KEY only, with no fallback
+# to CHAT_API_KEY (that key belongs to the chat backend, never to Google). The key
+# MUST belong to a billing-enabled (paid-tier) Google project: on the unpaid tier,
+# Google may use submitted content to improve its products and human reviewers may
+# read it. See the `ragd` app's environment comment in snapcraft.yaml.
+#
+# Keep this list in sync with the seeding block in the post-refresh hook, which
+# registers the same keys on an already-installed snap.
+snapctl set config.package.analysis.enabled="false"
+snapctl set config.package.analysis.model=""
+snapctl set config.package.analysis.reasoning.questions="low"
+snapctl set config.package.analysis.reasoning.strategy="high"
+snapctl set config.package.analysis.answer.words="100"
+snapctl set config.package.analysis.answer.limit="soft"
+
 # Register the REST API daemon (ragd) socket keys. Members of api.socket.group
 # (plus root) may access the local unix socket; access is enforced by the daemon's
 # SO_PEERCRED check, not by the socket's file ownership (under strict confinement
@@ -62,5 +91,10 @@ snapctl set config.package.api.socket.mode="0666"
 snapctl set config.package.api.loopback.enabled="false"
 snapctl set config.package.api.loopback.address="127.0.0.1:0"
 #
-# sudo snap start $SNAP_INSTANCE_NAME.tika-server
-# sudo snap start $SNAP_INSTANCE_NAME.ragd
+# Both daemons below are install-mode: disable, so snapd creates their systemd units but
+# leaves them stopped AND disabled at boot. Always start them with --enable: plain
+# `snap start` runs them for the current boot only, and they vanish at the next reboot.
+# (`snap enable <snap>` is unrelated -- it controls the whole snap, not service startup.)
+#
+# sudo snap start --enable $SNAP_INSTANCE_NAME.tika-server
+# sudo snap start --enable $SNAP_INSTANCE_NAME.ragd

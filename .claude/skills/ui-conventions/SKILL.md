@@ -62,6 +62,15 @@ Flex row `.app-shell` = dark `<Sidebar>` rail (15rem, sticky) + `.app-content` c
 | Code / IDs | `p-code-snippet` + `p-code-snippet__block` |
 | Spinner | `<i className="p-icon--spinner u-animation--spin" aria-hidden="true" />` + visible text |
 | Muted text | `u-text--muted`, `p-text--small` |
+| Mutually exclusive path chooser | `<fieldset className="answer-path">` + `<legend>` + `p-radio` per option; an unavailable option stays rendered `disabled` with a `p-notification--information` giving the reason, never hidden (see `BuildWizard.tsx`) |
+| Severity findings list | `.check-findings__group--{defect,warning}` with a left border from `--vf-color-border-{negative,caution}`, an inline line-SVG icon whose **shape** differs per severity, and the severity named in words; `role="alert"` on the defect group only (see `CheckFindings.tsx`) |
+| Long generated text for review | `.analysis-prompt` — bordered `--vf-color-background-alt` region, `max-height` + `overflow:auto`, `white-space:pre-wrap`, `tabIndex={0}` with `role="region"` and an `aria-label` so it is keyboard-scrollable |
+| Fact list (key/value pairs) | `<dl className="analysis-triage">` — two-column grid collapsing to one at 620px |
+
+**Severity must never be carried by colour alone.** Where a UI distinguishes "this will
+fail" from "this may be deliberate", encode it in at least two of: icon shape, a word,
+and position. A viewer who cannot separate the hues, and anyone pasting the text into a
+ticket, both need the distinction to survive.
 
 New visual patterns require updating this skill in the same PR.
 

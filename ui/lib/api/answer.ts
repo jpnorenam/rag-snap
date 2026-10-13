@@ -1,4 +1,4 @@
-import { postAsync, postAsyncForm } from "./envelope";
+import { postAsync, postAsyncForm, postSync } from "./envelope";
 import type { OperationView } from "./operations";
 
 // BatchQuestion is a single question in a prepared manifest. `id`, `question`,
@@ -214,4 +214,245 @@ export async function buildExtract(opts: BuildExtractOptions): Promise<TrackedOp
   if (opts.refine !== undefined) body.refine = opts.refine;
   const { operation, metadata } = await postAsync<OperationView>("/1.0/answer/build/extract", body);
   return { operation, view: metadata };
+}
+
+// --- RFP analysis ---------------------------------------------------------
+//
+// Analysis is the alternative to extraction: it hands the documents to a
+// document-capable model and returns a complete manifest — questions, knowledge
+// bases, an RFP-level prompt and a populated domains block. It runs in two passes
+// for the same reason the build flow does: the interview between them is
+// conditioned on what the first pass found, so the OpenStack question is asked
+// only when the RFP actually requires OpenStack.
+
+// ANALYSIS_EXTENSION is the capability the daemon advertises only when analysis can
+// actually run — it needs analysis enabled, a Gemini model id and a GEMINI_API_KEY
+// that a given installation may not have. The UI reads it to present the path as
+// unavailable rather than offering it and failing at submit time.
+export const ANALYSIS_EXTENSION = "answer_analyze";
+
+// TriageSection is one section, sheet or part the triage found. `id_prefix` is the
+// question-id prefix its rows use, which is what a domains pattern keys on.
+export interface TriageSection {
+  name: string;
+  id_prefix?: string;
+  estimated_questions?: number;
+  summary?: string;
+}
+
+// ConveyanceReport says how one document reached the model. `path` is "native"
+// (the model read the original bytes) or "converted" (rag-cli turned it into
+// table-preserving text first, because no model API accepts a spreadsheet). A
+// converted document changes how much to trust the result, so it is surfaced.
+export interface ConveyanceReport {
+  filename: string;
+  format: string;
+  path: "native" | "converted";
+  converted: boolean;
+  detail?: string;
+  bytes: number;
+}
+
+// Triage is the first pass: what the documents are, before any manifest exists.
+export interface Triage {
+  title?: string;
+  issuer?: string;
+  sections: TriageSection[];
+  estimated_questions: number;
+  // openstack_in_scope gates the OpenStack interview question.
+  openstack_in_scope: boolean;
+  openstack_evidence?: string;
+  // multi_field_answers says each question expects more than one field filled.
+  multi_field_answers: boolean;
+  multi_field_detail?: string;
+  suggested_knowledge_bases: string[];
+  suggested_kapa_source_groups: string[];
+  notes?: string;
+  report: ConveyanceReport[];
+  model: string;
+}
+
+// AnalyzeMetadata is published on the triage operation once it completes.
+export interface AnalyzeMetadata {
+  analysisToken: string;
+  expiresAt: string;
+  model: string;
+  triage: Triage;
+}
+
+// CheckSeverity distinguishes a manifest that will not run, or names a retrieval
+// target that contributes nothing, from one that runs but may not be intended.
+export type CheckSeverity = "defect" | "warning";
+
+export interface CheckFinding {
+  severity: CheckSeverity;
+  code: string;
+  message: string;
+  subject?: string;
+}
+
+export interface DomainMatchCount {
+  match: string;
+  count: number;
+}
+
+// PromptAssertions records what a manifest's inline prompt still carries.
+// `applicable` is false for a manifest with no inline prompt.
+export interface PromptAssertions {
+  applicable: boolean;
+  no_context_rule: boolean;
+  directness_rule: boolean;
+  length_stated: boolean;
+  length_hard: boolean;
+}
+
+// CheckResult is the outcome of checking one manifest. `references_checked` and
+// `kapa_checked` are reported separately, and each is false when that check did
+// not run — silence about a check that never happened would be false reassurance.
+export interface CheckResult {
+  questions: number;
+  domains: number;
+  domain_matches: DomainMatchCount[];
+  findings: CheckFinding[];
+  references_checked: boolean;
+  kapa_checked: boolean;
+  prompt: PromptAssertions;
+}
+
+// GenerateMetadata is published on the generation operation once it completes.
+export interface GenerateMetadata {
+  manifest: BatchManifest;
+  check: CheckResult;
+  model: string;
+}
+
+// AnswerLengthMode says whether the target answer length may be exceeded.
+export type AnswerLengthMode = "hard" | "soft";
+
+// OpenStackFlavour is the offering answers should present. Only meaningful when
+// the triage reported OpenStack in scope.
+export type OpenStackFlavour = "sunbeam" | "charmed";
+
+// InterviewAnswers are the operator's answers, which materially shape the manifest.
+export interface InterviewAnswers {
+  analysisToken: string;
+  answerWords: number;
+  answerLimit: AnswerLengthMode;
+  openstack?: OpenStackFlavour;
+}
+
+// analyzeDocuments uploads the primary RFP plus any number of supporting context
+// documents to POST /1.0/answer/analyze and returns the async triage operation.
+// The triage, the per-document conveyance report and the session token are
+// published on the operation metadata once it completes.
+export async function analyzeDocuments(
+  file: File,
+  contextFiles: File[] = []
+): Promise<TrackedOperation> {
+  const form = new FormData();
+  form.append("file", file);
+  for (const f of contextFiles) form.append("context", f);
+  const { operation, metadata } = await postAsyncForm<OperationView>("/1.0/answer/analyze", form);
+  return { operation, view: metadata };
+}
+
+// generateManifest runs the second pass against a triage token plus the interview
+// answers. The documents are not re-uploaded.
+export async function generateManifest(answers: InterviewAnswers): Promise<TrackedOperation> {
+  const body: Record<string, unknown> = {
+    analysis_token: answers.analysisToken,
+    answer_words: answers.answerWords,
+    answer_limit: answers.answerLimit,
+  };
+  if (answers.openstack) body.openstack = answers.openstack;
+  const { operation, metadata } = await postAsync<OperationView>(
+    "/1.0/answer/analyze/generate",
+    body
+  );
+  return { operation, view: metadata };
+}
+
+// checkManifest validates a manifest without running it. Synchronous: no model
+// call, no run, nothing stored.
+export function checkManifest(manifest: BatchManifest): Promise<CheckResult> {
+  return postSync<CheckResult>("/1.0/answer/check", manifest);
+}
+
+// parseAnalyzeMetadata reads the triage operation's metadata, normalising the null
+// arrays the daemon may send to empty ones so callers can map over them freely.
+export function parseAnalyzeMetadata(meta: Record<string, unknown>): AnalyzeMetadata {
+  const token = typeof meta.analysis_token === "string" ? meta.analysis_token : "";
+  if (!token) {
+    throw new BuildMetadataError("the analysis response carried no session token");
+  }
+  const raw = (meta.triage ?? {}) as Partial<Triage>;
+  return {
+    analysisToken: token,
+    expiresAt: typeof meta.expires_at === "string" ? meta.expires_at : "",
+    model: typeof meta.model === "string" ? meta.model : "",
+    triage: {
+      title: raw.title,
+      issuer: raw.issuer,
+      sections: raw.sections ?? [],
+      estimated_questions: raw.estimated_questions ?? 0,
+      openstack_in_scope: raw.openstack_in_scope === true,
+      openstack_evidence: raw.openstack_evidence,
+      multi_field_answers: raw.multi_field_answers === true,
+      multi_field_detail: raw.multi_field_detail,
+      suggested_knowledge_bases: raw.suggested_knowledge_bases ?? [],
+      suggested_kapa_source_groups: raw.suggested_kapa_source_groups ?? [],
+      notes: raw.notes,
+      report: raw.report ?? [],
+      model: raw.model ?? "",
+    },
+  };
+}
+
+// parseGenerateMetadata reads the generation operation's metadata.
+export function parseGenerateMetadata(meta: Record<string, unknown>): GenerateMetadata {
+  const manifest = meta.manifest as BatchManifest | undefined;
+  if (!manifest || !Array.isArray(manifest.questions)) {
+    throw new BuildMetadataError("the generation response carried no manifest");
+  }
+  return {
+    manifest: {
+      ...manifest,
+      questions: manifest.questions ?? [],
+      domains: manifest.domains ?? [],
+      knowledge_bases: manifest.knowledge_bases ?? [],
+    },
+    check: normaliseCheck(meta.check as Partial<CheckResult> | undefined),
+    model: typeof meta.model === "string" ? meta.model : "",
+  };
+}
+
+// normaliseCheck fills in the arrays the daemon omits when empty.
+export function normaliseCheck(raw: Partial<CheckResult> | undefined): CheckResult {
+  return {
+    questions: raw?.questions ?? 0,
+    domains: raw?.domains ?? 0,
+    domain_matches: raw?.domain_matches ?? [],
+    findings: raw?.findings ?? [],
+    references_checked: raw?.references_checked === true,
+    kapa_checked: raw?.kapa_checked === true,
+    prompt: raw?.prompt ?? {
+      applicable: false,
+      no_context_rule: false,
+      directness_rule: false,
+      length_stated: false,
+      length_hard: false,
+    },
+  };
+}
+
+// defects and warnings split findings by severity. A manifest carrying only
+// warnings must be distinguishable from both a clean and a defective one, since
+// the common case — a domain pattern reserved for a section with no questions yet
+// — is warnings-only and must not read as a failure.
+export function defects(result: CheckResult): CheckFinding[] {
+  return result.findings.filter((f) => f.severity === "defect");
+}
+
+export function warnings(result: CheckResult): CheckFinding[] {
+  return result.findings.filter((f) => f.severity === "warning");
 }
