@@ -43,6 +43,9 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 	var previewOnly bool
 	var noRefine bool
 	var temperature float64
+	var analyze bool
+	var contextDocs []string
+	var checkPath string
 
 	c := &cobra.Command{
 		Use:   "batch [manifest.yaml]",
@@ -52,11 +55,29 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			"An optional top-level 'prompt' field in the manifest overrides the default system prompt for the entire batch.\n" +
 			"Alternatively, 'prompt_ref: <name>' selects a stored answer_system_prompt variant (requires the ragd daemon; mutually exclusive with 'prompt').\n\n" +
 			"Use --build <document> to extract RFP/RFI questions from a PDF, DOCX, XLSX, or CSV file and " +
-			"generate a manifest without running the batch.",
+			"generate a manifest without running the batch.\n\n" +
+			"Add --analyze to that to hand the document to Google's Gemini API instead, which produces a " +
+			"complete manifest: questions, knowledge bases, an RFP-level prompt, and a populated domains block. " +
+			"Pass --context for supporting documents that add background. Analysis is off by default and sends " +
+			"document content to Google under GEMINI_API_KEY; see 'rag get analysis.enabled'.\n\n" +
+			"Use --check <manifest.yaml> to validate a manifest without running it: routing reachability, " +
+			"unknown knowledge bases, duplicate ids, and whether the prompt still carries its rules.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
+			if checkPath != "" {
+				return cmd.runCheck(checkPath)
+			}
 			if buildDoc != "" {
+				if analyze {
+					return cmd.runAnalyze(buildDoc, contextDocs, outputPath)
+				}
 				return cmd.runBuild(buildDoc, outputPath, previewOnly, noRefine)
+			}
+			if analyze {
+				return fmt.Errorf("--analyze applies to --build <document>; pass the document to analyse")
+			}
+			if len(contextDocs) > 0 {
+				return fmt.Errorf("--context applies to --build <document> --analyze")
 			}
 			if len(args) == 0 {
 				return fmt.Errorf("requires a manifest file argument, or use --build <document> to generate one")
@@ -86,8 +107,18 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("getting server API URLs: %w", err)
 			}
-			knowledgeClient, _ := knowledge.NewClient(apiUrls[opensearch])
-			embeddingModelID, _ := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
+			// Every question is grounded on the knowledge bases, so an unusable
+			// client must fail the run: otherwise each answer silently degrades to
+			// the fixed no-context string without the LLM ever being asked.
+			knowledgeClient, err := knowledge.NewClient(apiUrls[opensearch])
+			if err != nil {
+				return fmt.Errorf("knowledge base not available in direct mode (ragd not reachable): %w; "+
+					"run with sudo or join the ragd socket group to use the daemon, or export OPENSEARCH_USERNAME/OPENSEARCH_PASSWORD", err)
+			}
+			embeddingModelID, err := getConfigString(cmd.Context, knowledge.ConfEmbeddingModelID)
+			if err != nil || embeddingModelID == "" {
+				return fmt.Errorf("embedding model ID is not configured (%s); run 'knowledge init' and set it", knowledge.ConfEmbeddingModelID)
+			}
 			kapaClient := buildKapaClient(cmd.Context)
 			return chat.ProcessBatchChat(apiUrls[openAi], knowledgeClient, kapaClient, embeddingModelID, manifest, chat.LoadPrompts(), temperature, cmd.Verbose)
 		},
@@ -97,6 +128,9 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 	c.Flags().StringVarP(&outputPath, "output", "o", "", "Output YAML manifest path (default: <document-name>-rfp.yaml) — used with --build")
 	c.Flags().BoolVar(&previewOnly, "preview", false, "Preview extracted questions without saving the manifest — used with --build")
 	c.Flags().BoolVar(&noRefine, "no-refine", false, "Skip LLM semantic refinement of extracted questions — used with --build")
+	c.Flags().BoolVar(&analyze, "analyze", false, "Generate a complete manifest (questions, prompt, knowledge bases, domains) with Gemini — used with --build")
+	c.Flags().StringArrayVar(&contextDocs, "context", nil, "Supporting document that adds context, repeatable — used with --build --analyze")
+	c.Flags().StringVar(&checkPath, "check", "", "Validate a manifest without running it, and exit non-zero if it carries defects")
 	c.Flags().Float64Var(&temperature, "temperature", 0.1, "Sampling temperature (0.0–1.0); lower = more deterministic")
 
 	return c

@@ -39,6 +39,7 @@ var apiExtensions = []string{
 	"batch_answer",
 	"answer_build",
 	"answer_build_columns",
+	"answer_check",
 	"prompts",
 	"prompt_variants",
 	"status",
@@ -65,7 +66,12 @@ type Server struct {
 	chats *chatstore.Store
 	// builds stages parsed spreadsheet/CSV tables between the two answer-build
 	// passes (inspect → extract) so the document is parsed once, not re-uploaded.
-	builds   *buildStore
+	builds *buildStore
+	// analyses stages conveyed RFP documents between the two analysis passes
+	// (triage → generate). Unlike builds it holds the document content itself
+	// rather than parsed rows, since conveyance produces base64 bytes with no
+	// server-side handle to point at, so it is bounded by bytes as well as count.
+	analyses *analysisStore
 	httpSrv  *http.Server
 	listener net.Listener
 	// token is the localhost bearer token authenticating loopback requests. It
@@ -107,6 +113,7 @@ func New(opts Options) *Server {
 		prompts:  newPromptStore(),
 		chats:    newChatStore(),
 		builds:   newBuildStore(),
+		analyses: newAnalysisStore(),
 	}
 	s.httpSrv = &http.Server{
 		Handler:           s.routes(),
@@ -344,6 +351,15 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	// from a chosen column of tables staged by POST /1.0/answer/build.
 	mux.HandleFunc("POST /1.0/answer/build/extract", s.requireAuth(s.handleAnswerBuildExtract))
 
+	// RFP analysis: triage an uploaded document set, then generate a complete
+	// manifest from the staged conveyance. Two passes for the same reason the build
+	// path has two — the interview between them is conditioned on what triage found.
+	mux.HandleFunc("POST /1.0/answer/analyze", s.requireAuth(s.handleAnswerAnalyze))
+	mux.HandleFunc("POST /1.0/answer/analyze/generate", s.requireAuth(s.handleAnswerAnalyzeGenerate))
+
+	// Check a manifest without running it. Synchronous: no model call, no run.
+	mux.HandleFunc("POST /1.0/answer/check", s.requireAuth(s.handleAnswerCheck))
+
 	// Prompt slots (daemon-owned; seed chat sessions and batch runs). The
 	// slot-level endpoints keep their pre-variants semantics; the nested variant
 	// endpoints add named variants and version history on the generation slots.
@@ -384,7 +400,7 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 		"api_status":     "stable",
 		"api_version":    apiVersion,
 		"auth":           s.authState(r),
-		"api_extensions": apiExtensions,
+		"api_extensions": s.extensions(),
 	})
 }
 
@@ -401,11 +417,27 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 	respondSync(w, map[string]any{
 		"api_version":    apiVersion,
-		"api_extensions": apiExtensions,
+		"api_extensions": s.extensions(),
 		"auth":           s.authState(r),
 		"backends":       s.backends.snapshot(),
 		"config":         s.configSummary(),
 	})
+}
+
+// extensions returns the advertised feature list for this daemon.
+//
+// Most entries are static, but "answer_analyze" is advertised only when analysis can
+// actually run — it needs analysis enabled, a Gemini model id and a GEMINI_API_KEY that
+// a given installation may not have. A client uses this to present the analysis path as
+// unavailable rather than offering it and failing at submit time, so advertising it
+// unconditionally would defeat the point of advertising it at all.
+func (s *Server) extensions() []string {
+	out := make([]string, len(apiExtensions), len(apiExtensions)+1)
+	copy(out, apiExtensions)
+	if ok, _ := s.analysisAvailable(); ok {
+		out = append(out, "answer_analyze")
+	}
+	return out
 }
 
 // authState reports whether the caller is trusted ("trusted") or not

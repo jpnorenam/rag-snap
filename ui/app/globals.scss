@@ -2028,3 +2028,211 @@ $sidebar-accent: #e95420; // Ubuntu orange
   margin: 0.5rem 0 0;
   padding-left: 1rem;
 }
+
+// --- rfp analysis -----------------------------------------------------------
+// The analysis path through the build wizard: the path chooser on upload, the
+// triage and interview steps, the generated-manifest review, and the shared check
+// findings surface. Every colour comes from a Vanilla custom property so both
+// themes follow the viewer's choice.
+
+// The two ways an uploaded document becomes a manifest. Bordered so the choice
+// reads as a group rather than two loose radios among the other upload fields.
+.answer-path {
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.125rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+
+  legend {
+    padding: 0 0.25rem;
+  }
+
+  .p-radio {
+    margin-bottom: 0.5rem;
+  }
+
+  // An unavailable path stays visible and readable — it is shown with its reason
+  // rather than hidden, so the operator knows the option exists and what to fix.
+  .p-radio.is-disabled .p-radio__label {
+    color: var(--vf-color-text-muted);
+  }
+}
+
+// Context documents queued alongside the primary RFP, each removable.
+.answer-context-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+
+  li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+    border-bottom: 1px solid var(--vf-color-border-default);
+  }
+
+  li:last-child {
+    border-bottom: 0;
+  }
+}
+
+.analysis-step {
+  margin-top: 1rem;
+}
+
+.analysis-step__heading {
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vf-color-text-muted);
+  margin: 1.5rem 0 0.5rem;
+}
+
+.analysis-step__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+// Tables here can be wider than a phone, so they scroll inside their own wrapper
+// and the page itself never scrolls sideways.
+.analysis-step__scroll,
+.check-findings__scroll {
+  overflow-x: auto;
+}
+
+// Triage facts as a two-column definition list, collapsing to stacked rows when
+// there is no room for two columns.
+.analysis-triage {
+  display: grid;
+  grid-template-columns: minmax(8rem, max-content) 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0 0 1rem;
+
+  dt {
+    color: var(--vf-color-text-muted);
+    font-size: 0.875rem;
+  }
+
+  dd {
+    margin: 0;
+  }
+
+  @media (max-width: 620px) {
+    grid-template-columns: 1fr;
+
+    dd {
+      margin-bottom: 0.5rem;
+    }
+  }
+}
+
+.analysis-sections {
+  margin: 0 0 1rem;
+  padding-left: 1rem;
+}
+
+// The generated prompt in full rather than truncated: it is the field most likely
+// to need an edit, so a preview would hide the part worth reading. Capped in height
+// and scrollable so it does not push the actions off the screen.
+.analysis-prompt {
+  max-height: 24rem;
+  overflow: auto;
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.125rem;
+  background-color: var(--vf-color-background-alt);
+}
+
+.analysis-prompt__body {
+  margin: 0;
+  padding: 0.75rem;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.875rem;
+  background: transparent;
+  border: 0;
+}
+
+.check-findings {
+  margin: 1rem 0;
+}
+
+.check-findings__summary {
+  margin-bottom: 0.5rem;
+}
+
+.check-findings__heading {
+  font-size: 0.875rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vf-color-text-muted);
+  margin: 1rem 0 0.5rem;
+}
+
+// A pattern that routes nothing. Muted rather than coloured red: it may be a
+// deliberate reservation, and the finding list below says so in words.
+.check-findings__row--empty td {
+  color: var(--vf-color-text-muted);
+}
+
+.check-findings__group {
+  border-left: 3px solid var(--vf-color-border-default);
+  padding-left: 0.75rem;
+  margin-top: 1rem;
+}
+
+.check-findings__group--defect {
+  border-left-color: var(--vf-color-border-negative);
+}
+
+.check-findings__group--warning {
+  border-left-color: var(--vf-color-border-caution);
+}
+
+.check-findings__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.check-findings__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+// Severity is carried by the icon shape and the word next to it, not by colour
+// alone, so the distinction survives for a viewer who cannot separate the hues and
+// a copy-paste into a ticket.
+.check-findings__icon {
+  flex: 0 0 auto;
+  margin-top: 0.2rem;
+}
+
+.check-findings__group--defect .check-findings__icon {
+  color: var(--vf-color-text-negative, var(--vf-color-border-negative));
+}
+
+.check-findings__group--warning .check-findings__icon {
+  color: var(--vf-color-text-caution, var(--vf-color-border-caution));
+}
+
+.check-findings__severity {
+  margin-right: 0.25rem;
+}
+
+// The upload step's submit row. Selection and submission are separate so the
+// document, the build path and any context documents can all be changed before
+// anything is sent.
+.answer-upload__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-top: 1.5rem;
+}

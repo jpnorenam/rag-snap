@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
+	"strings"
 )
 
 // TikaMetadata holds metadata fields extracted by the Tika /meta endpoint.
@@ -15,6 +17,10 @@ type TikaMetadata struct {
 	Title       string
 	Author      string
 	Language    string
+	// Pages is the document's page count, or 0 when the format carries no page
+	// count or Tika did not report one. Tika spells it differently depending on the
+	// parser that handled the file, so several keys are consulted.
+	Pages int
 }
 
 // TikaClient sends files to a Tika server for content extraction.
@@ -139,9 +145,52 @@ func (t *TikaClient) ExtractMetadata(filePath string) (*TikaMetadata, error) {
 		Title:       metaString(raw, "dc:title"),
 		Author:      metaString(raw, "dc:creator"),
 		Language:    metaString(raw, "language"),
+		Pages:       metaPages(raw),
 	}
 
 	return meta, nil
+}
+
+// pageCountKeys are the metadata keys Tika uses for a page count, most specific
+// first. Which one appears depends on the parser that handled the file, so all are
+// tried rather than assuming one parser's spelling. Verified against Tika 3.1.0:
+// a PDF reports "xmpTPg:NPages" (one P, not two — the XMP paged-text namespace).
+var pageCountKeys = []string{"xmpTPg:NPages", "Page-Count", "meta:page-count", "Number of Pages"}
+
+// perPageArrayKeys hold one entry per page, so their length is a page count. They
+// are the fallback for a document whose parser reported no explicit count.
+var perPageArrayKeys = []string{"pdf:charsPerPage", "pdf:unmappedUnicodeCharsPerPage"}
+
+// metaPages extracts a page count from a metadata map, returning 0 when nothing in
+// it carries one. Values arrive as a JSON number or a string depending on the key,
+// so both are accepted.
+func metaPages(m map[string]any) int {
+	for _, key := range pageCountKeys {
+		if n := metaInt(m[key]); n > 0 {
+			return n
+		}
+	}
+	for _, key := range perPageArrayKeys {
+		if arr, ok := m[key].([]any); ok && len(arr) > 0 {
+			return len(arr)
+		}
+	}
+	return 0
+}
+
+// metaInt coerces a metadata value to a positive int, or 0.
+func metaInt(v any) int {
+	switch t := v.(type) {
+	case float64:
+		if t > 0 {
+			return int(t)
+		}
+	case string:
+		if n, err := strconv.Atoi(strings.TrimSpace(t)); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 0
 }
 
 // metaString defensively extracts a string value from a metadata map.

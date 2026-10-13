@@ -7,4 +7,38 @@ exec 1> >(tee >(logger --tag=$tag))
 # Redirect stderr to stderr+syslog
 exec 2> >(logger --stderr --priority error --tag=$tag)
 
-# snap start $SNAP_INSTANCE_NAME.tika-server
+# Register config keys introduced after a machine's original install.
+#
+# A `user` set is rejected for a key that has no `package` layer, so a key added in
+# a later revision is unsettable on an already-installed snap unless it is seeded
+# here as well as in the install hook.
+#
+# seed() only writes a key that is currently absent or empty, so re-running a
+# refresh never clobbers a value a maintainer set with `set --package`.
+seed() {
+	if [ -z "$(snapctl get "config.package.$1" 2>/dev/null || true)" ]; then
+		snapctl set "config.package.$1=$2"
+	fi
+}
+
+# RFP analysis. Keep in sync with the install hook, which documents each key.
+seed analysis.enabled "false"
+seed analysis.model ""
+seed analysis.reasoning.questions "low"
+seed analysis.reasoning.strategy "high"
+seed analysis.answer.words "100"
+seed analysis.answer.limit "soft"
+
+# Retired keys. analysis.http.* addressed a configurable (gateway) endpoint; analysis
+# now calls the Gemini API only, so the keys are gone. An install that seeded them
+# would otherwise keep showing them in `rag get`, and a stale user-layer value would
+# survive with nothing reading it. Both layers are cleared; unsetting an absent key
+# is harmless, so this is safe to run on every refresh.
+snapctl unset config.package.analysis.http || true
+snapctl unset config.user.analysis.http || true
+
+# A refresh preserves whatever startup state the services already had, so an operator who
+# enabled them once needs nothing here. Only a service that has never been enabled stays
+# disabled, and it needs --enable to survive the next reboot:
+#
+# snap start --enable $SNAP_INSTANCE_NAME.tika-server

@@ -4,6 +4,81 @@
 > knowledge bases over an opt-in loopback listener. See the
 > [Local web UI guide](local-ui.md) (`rag-cli.rag ui`).
 
+## Services
+
+`rag-cli` orchestrates three services. Only the first is mandatory for every command:
+
+| Service | Provides | Default port |
+|---|---|---|
+| `opensearch.daemon` | the knowledge store — required by every `knowledge`, `chat` and `answer` command | 9200 |
+| `rag-cli.tika-server` | text extraction — required to ingest anything other than plain text | 9998 |
+| `rag-cli.ragd` | the optional REST API and web UI | unix socket |
+
+Check them all at once with `rag-cli.rag status`, which reports reachability rather than just
+process state.
+
+### Enabling the services at boot
+
+Both the Tika and `ragd` daemons ship as `install-mode: disable`, and the OpenSearch snap does the
+same. That means snapd creates their systemd units but never enables them, so **a freshly installed
+machine comes back from every reboot with all services down** until they are enabled once:
+
+```bash
+sudo snap start --enable opensearch
+sudo snap start --enable rag-cli.tika-server
+sudo snap start --enable rag-cli.ragd      # only if you use the REST API or web UI
+```
+
+Verify — both columns must read `enabled active`:
+
+```bash
+snap services | grep -E 'opensearch|rag-cli'
+```
+
+```
+opensearch.daemon     enabled  active  -
+rag-cli.tika-server   enabled  active  -
+rag-cli.ragd          enabled  active  -
+```
+
+This is a one-time operation per machine. It survives reboots and snap refreshes: `install-mode`
+applies only to a service being installed for the first time, never to a refresh of one that is
+already enabled.
+
+> **`snap enable` is not the command you want.** `snap enable <snap>` controls whether the whole
+> snap is available at all, and reports `already enabled` when it has nothing to do — it does not
+> touch service startup. Likewise, plain `snap start <service>` starts the service *for the current
+> boot only* and leaves the `Startup` column at `disabled`, so the service disappears again at the
+> next reboot. Only `snap start --enable` changes boot behaviour.
+
+### Restarting after an unclean shutdown
+
+If the services are not enabled at boot (see above), or the VM was powered off hard, bring the
+stack up in dependency order and wait for each one:
+
+```bash
+# 1. The knowledge store. Needs 30-90s before it answers, even though snap start returns at once.
+sudo snap start opensearch
+curl -sk -u "$OPENSEARCH_USERNAME:$OPENSEARCH_PASSWORD" \
+  https://localhost:9200/_cluster/health | jq .status
+
+# 2. Text extraction.
+sudo snap start rag-cli.tika-server
+curl -s localhost:9998/tika
+
+# 3. The REST API, if you use it.
+sudo snap start rag-cli.ragd
+
+# 4. Confirm the CLI can reach all three.
+rag-cli.rag status
+```
+
+Boot ordering between snaps cannot be declared — snapcraft's `after:`/`before:` only order services
+*within* a single snap, so at boot systemd starts all of them in parallel. `ragd` will therefore be
+listening well before OpenSearch is green. This is harmless, because both the CLI and `ragd` connect
+per request rather than at startup, but a query issued in the first minute after a reboot can fail
+with a connection error. Treat `rag-cli.rag status` as the readiness gate.
+
 ## Knowledge base management
 
 The `knowledge` command (alias `k`) manages the OpenSearch-backed knowledge bases used for
@@ -13,7 +88,8 @@ vector-embedded documents. You can maintain multiple independent bases and searc
 ### Prerequisites
 
 The OpenSearch snap must be running and reachable. Run `rag-cli.rag status` to verify connectivity before
-using any `knowledge` sub-command.
+using any `knowledge` sub-command. If it is unreachable after a reboot, see [Services](#services) —
+the daemons are not enabled at boot until you enable them once.
 
 ---
 
@@ -1180,6 +1256,8 @@ compliance questionnaires, and documentation audits.
 |---|---|
 | `answer batch <manifest.yaml>` | Run questions from a YAML file and export answers to JSON |
 | `answer batch --build <document>` | Extract RFP/RFI questions from a document and generate a batch manifest |
+| `answer batch --build <doc> --analyze` | Generate a complete manifest — questions, prompt, knowledge bases and domain routing — with a document-capable model |
+| `answer batch --check <manifest.yaml>` | Validate a manifest without running it; non-zero exit on defects |
 
 ---
 
@@ -1577,6 +1655,187 @@ Extracted 61 question(s). Preview (first 5):
 # Dry-run to inspect extraction before committing
 rag-cli.rag answer batch --build ~/rfp/ericsson.pdf --preview
 ```
+
+---
+
+### `answer batch --build --analyze`
+
+Hand the RFP to a document-capable model and get a **complete** manifest back: every question, the
+knowledge bases to retrieve from, a single RFP-level `prompt`, and a populated `domains` block. This
+is the difference between the extraction path above — which finds questions and leaves the semantic
+half to you — and analysis, which drafts the semantic half too.
+
+```
+rag-cli.rag answer batch --build <document> --analyze [--context <file>]... [--output <path>]
+```
+
+| Flag | Default | Description |
+|---|---|---|
+| `--analyze` | `false` | Generate a complete manifest with Google's Gemini API instead of extracting questions locally |
+| `--context` | _(none)_ | A supporting document that adds background, repeatable. The RFP itself is `--build` |
+| `--output` | `<document-name>.yaml` | Output manifest path |
+
+> **Analysis sends your document content to a third party: Google's Gemini API.** It is off by
+> default for that reason. Requests go straight to Google under your own key, with no gateway in
+> between, and the destination cannot be changed by configuration. Use a key from a
+> **billing-enabled (paid-tier)** Google project (see [Configuration](#configuration)), and
+> check the per-document report the command prints before you let it generate.
+
+#### Why Office formats are converted locally
+
+No mainstream model API accepts a spreadsheet or a word-processor document. Anthropic's
+documentation says so outright — binary formats such as `.xlsx` or `.docx` "must be converted to
+text or PDF first" — and Gemini lists neither among its supported types. **A spreadsheet that works
+when you drop it into a vendor's chat UI is not evidence the API accepts it:** the web app converts
+it for you, and the same file through the API does not work. That is why this feature converts
+locally rather than uploading.
+
+So conveyance depends on the format, and the command reports which path each document took:
+
+| Format | How it reaches the model |
+|---|---|
+| PDF | The original bytes, so the model applies its own document understanding to layout, tables and figures |
+| XLSX, CSV | Converted to Markdown tables — **every row, every column, each table labelled with its sheet name** |
+| DOCX | Converted to Markdown headings and tables |
+
+Keeping every column is the point. The description, current-environment and evaluator-guidance
+columns beside a requirement are the material an RFP-level prompt and a domain context are built
+from; the single-column extraction path discards them by design, and this path must not.
+
+#### The two phases
+
+Analysis runs in two passes with a short interview between them:
+
+1. **Triage.** The documents are conveyed once and the model reports what it found: the RFP's
+   identity, its section structure, an estimated question count, whether OpenStack is in scope, and
+   whether each question expects more than one field to be filled. Nothing is generated yet, and you
+   can stop here.
+2. **Interview.** You are asked for a target answer length in words (default 100) and whether that
+   is a hard limit or a soft target. **When — and only when — triage found OpenStack in scope**, you
+   are also asked whether answers should present Sunbeam or Charmed OpenStack. That question is
+   conditional, which is the whole reason triage runs first.
+3. **Generation.** The manifest is produced from the documents already conveyed, checked, and shown
+   to you before it is written.
+
+Two rules are appended to every generated prompt by rag-cli, not requested of the model: that saying
+"no context available" or that a technology is NOT covered beats inventing an answer, and that
+answers are direct with no filler. An RFP is untrusted input — a document can contain text that
+reads as instructions — so these are enforced afterwards and re-verified by `--check`.
+
+```bash
+rag-cli.rag answer batch --build ~/rfp/telco-matrix.xlsx \
+  --context ~/rfp/current-environment.pdf \
+  --output telco.yaml
+```
+
+```
+Conveyed 2 document(s) to the Gemini API (model gemini-3.1-pro-preview):
+  telco-matrix.xlsx    xlsx   converted  converted to Markdown tables: 17 sheet(s), 415 data row(s), all columns kept
+  current-environment.pdf pdf native     conveyed as PDF bytes, 12 pages
+
+Document:   Telco Cloud Compliance Matrix
+Questions:  about 192
+OpenStack:  yes
+Sections:   17
+```
+
+If analysis is unconfigured or the provider is unreachable, the failure says so **and** reminds you
+that the extraction path still works — drop `--analyze`.
+
+---
+
+### `answer batch --check`
+
+Validate a manifest without running it. No model is called, nothing is modified, and it is safe to
+run repeatedly. A long RFP is many model calls, and a manifest's most damaging defects are silent:
+a domain pattern that matches nothing routes nothing, a knowledge base named with a typo simply
+contributes no hits, and neither fails a run.
+
+```
+rag-cli.rag answer batch --check <manifest.yaml>
+```
+
+It reports the question and domain counts, how many questions **each** domain pattern would route
+(resolved with the run's own resolver, so the check cannot disagree with a run), and its findings at
+two severities:
+
+- **Defect** — would fail a run, or names a retrieval target that contributes nothing: a duplicated
+  question id, an invalid `domains` entry, a knowledge base that does not exist (with a near-miss
+  suggestion, since a typo gives you no other signal).
+- **Warning** — will run, but may not be intended: a pattern matching no question, a question no
+  pattern matches, or a prompt missing its no-context rule or its word budget.
+
+A zero-match pattern is deliberately only a warning. Reserving a pattern for a section that carries
+no questions yet is legitimate, and failing on it would make the check useless on real manifests.
+
+The exit status distinguishes the two, so it is usable in a script: non-zero for defects, **zero for
+warnings alone**.
+
+```bash
+$ rag-cli.rag answer batch --check telco.yaml
+
+Check: 192 question(s), 19 domain(s)
+
+  Domain routing:
+    A*                         10 question(s)
+    GIS1.*                      8 question(s)
+    GIS2.*                     12 question(s)
+    GIS*                        0 question(s)  <- matches nothing
+
+  1 warning(s) — these run, but may not be what was intended:
+    warning  domain "GIS*" matches none of this manifest's questions … this may be intentional
+```
+
+#### Configuration
+
+All keys are seeded as `package` keys, so `rag set <key>` works on any of them.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `analysis.enabled` | `false` | Gate the feature. Off by default because it sends document content to a third party |
+| `analysis.model` | _(unset)_ | The Gemini model id to call. No default: ids are versioned, so a baked-in one would age badly. Ids are **unprefixed** — `gemini-3.1-pro-preview`, not `google/gemini-3.1-pro-preview` |
+| `analysis.reasoning.questions` | `low` | Reasoning effort for the question-extraction call: `minimal`, `low`, `medium` or `high` |
+| `analysis.reasoning.strategy` | `high` | Reasoning effort for the prompt-and-domains call. `none` is rejected — no Gemini 3 model can turn reasoning off |
+| `analysis.answer.words` | `100` | Interview default for answer length |
+| `analysis.answer.limit` | `soft` | Interview default for hard-versus-soft |
+
+There is no endpoint setting. Analysis always calls `generativelanguage.googleapis.com`, and the client
+pins that destination, the backend and the key explicitly, so environment variables meant for Google's
+SDK (`GOOGLE_GEMINI_BASE_URL`, `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_API_KEY`) cannot redirect it.
+Documents travel inline inside each request. Nothing is uploaded to Google's file store, and no
+server-side conversation state is used.
+
+Verified model ids:
+
+| Model id | Status |
+|---|---|
+| `gemini-3.1-pro-preview` | Pro tier. Preview only, so Google can deprecate it with at least two weeks' notice |
+| `gemini-3.8-flash` | Newest stable model, and the fallback when the Pro preview is unavailable |
+
+**The key is `GEMINI_API_KEY`, and nothing else.** It is never configuration, and there is no fallback
+to `CHAT_API_KEY`: that key belongs to your chat backend (Bedrock or a local server) and must never be
+sent to Google. An `ANALYSIS_API_KEY` left over from an earlier build is not read; the error says so.
+
+**Use a key from a billing-enabled project.** Under Google's Gemini API terms, content sent on the
+unpaid tier may be used to improve Google's products and may be read by human reviewers. On the paid
+tier it is not, but Google still logs prompts and responses for a limited period for abuse detection.
+rag-cli cannot detect which tier a key belongs to, so confirm it before you set `analysis.enabled=true`.
+
+```bash
+# CLI
+export GEMINI_API_KEY=<key>
+
+# Daemon (ragd): on the service environment, like the other secrets
+sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
+printf '[Service]\nEnvironment=GEMINI_API_KEY=%s\n' "$KEY" | \
+  sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/20-analysis.conf
+sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/20-analysis.conf
+sudo systemctl daemon-reload && sudo snap restart rag-cli.ragd
+```
+
+If reasoning consumes the model's whole output budget the call fails rather than returning a short
+manifest — on a reasoning model the output ceiling covers the model's own thinking. The remedy is to
+lower `analysis.reasoning.strategy`, not to shorten the RFP.
 
 ---
 

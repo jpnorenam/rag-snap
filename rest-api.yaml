@@ -357,6 +357,62 @@ paths:
             summary: Return server information.
             tags:
                 - server
+    /1.0/answer/analyze:
+        post:
+            consumes:
+                - multipart/form-data
+            description: |-
+                Accepts an RFP/RFI document plus any number of supporting context documents as
+                multipart/form-data ("file" for the primary document, repeated "context" fields for
+                the rest) and runs the first analysis phase as an asynchronous operation. Publishes
+                on the operation metadata: the triage (RFP identity, section structure, estimated
+                question count, whether OpenStack is in scope, whether questions carry several answer
+                fields, suggested knowledge bases), a per-document conveyance report saying which
+                documents were read natively and which were converted, and an opaque
+                "analysis_token" with its "expires_at" for the follow-up generation call. Generates
+                no manifest and answers no question. Rejected with 400 when analysis is not
+                configured or no API key is present in the environment; the API key never appears in
+                any response.
+            operationId: answerAnalyze
+            responses:
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Triage RFP documents for manifest generation.
+            tags:
+                - answer
+    /1.0/answer/analyze/generate:
+        post:
+            description: |-
+                Takes the "analysis_token" from a completed POST /1.0/answer/analyze call together
+                with the interview answers — "answer_words", "answer_limit" ("hard" or "soft"), and
+                "openstack" ("sunbeam" or "charmed") when the triage reported OpenStack in scope —
+                and runs the second analysis phase as an asynchronous operation. The documents are
+                not re-uploaded: generation runs against the set the token refers to. Publishes the
+                generated "manifest" in the same JSON shape POST /1.0/answer/batch accepts, its
+                "check" findings, and the generating "model". An unknown or expired token is a 400
+                stating that the session expired and the documents must be uploaded again. A
+                truncated response, an empty response at the model's output ceiling, or a question
+                count materially short of the triage estimate fails the operation naming both counts
+                rather than completing with a short manifest.
+            operationId: answerAnalyzeGenerate
+            responses:
+                "202":
+                    $ref: '#/responses/asyncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: Generate a manifest from a triage token.
+            tags:
+                - answer
     /1.0/answer/batch:
         post:
             description: |-
@@ -441,6 +497,30 @@ paths:
                 "500":
                     $ref: '#/responses/errorResponse'
             summary: Extract questions from a chosen spreadsheet column.
+            tags:
+                - answer
+    /1.0/answer/check:
+        post:
+            description: |-
+                Accepts a batch manifest in the same JSON shape POST /1.0/answer/batch accepts and
+                returns its check findings synchronously. Answers no question and calls no model.
+                The response carries the question and domain counts, the per-domain match counts
+                (resolved with the run's own routing, so the check cannot disagree with a run), and
+                the findings at two severities: a defect would fail a run or contribute nothing,
+                while a warning may be deliberate — a domain pattern reserved for a section with no
+                questions yet is the canonical example. When the knowledge store is unreachable, or
+                kapa is not configured, the corresponding reference checks are reported as not
+                performed ("references_checked", "kapa_checked") rather than as passing. Modifies
+                and stores nothing.
+            operationId: answerCheck
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+            summary: Check a manifest without running it.
             tags:
                 - answer
     /1.0/chat:
