@@ -65,7 +65,7 @@
 - [x] 7.1 In `AnalysisSteps.tsx`, render a generation failure whose metadata carries `shortfall` as a `p-notification--caution` with icon, title, both counts, the per-section table and `p-notification__actions` ("Continue with N questions" primary; "Re-run with more reasoning" and "Start again" secondary, the re-run omitted at `high`); keep other failures as `p-notification--negative` without a continue action
 - [x] 7.2 Wire "Continue" through `postAsync` with `accept_shortfall: true`, and "Re-run with more reasoning" with `retry_questions: true`, both with the existing running state; wire "Start again" to the upload step
 - [x] 7.3 Extend the Banners row of `.claude/skills/ui-conventions/SKILL.md` to sanction a notification with actions, citing `AnalysisSteps.tsx`
-- [ ] 7.4 Verify `ui-conventions` compliance: both themes, keyboard-only pass through the continue and start-again actions, `--vf-*` tokens only, all four view states, 620px width, and `npm test` plus `npm run build` under `output: 'export'`
+- [x] 7.4 Verify `ui-conventions` compliance: both themes, keyboard-only pass through the continue and start-again actions, `--vf-*` tokens only, all four view states, 620px width, and `npm test` plus `npm run build` under `output: 'export'` — confirmed by the operator 2026-10-21 (both themes, keyboard-only through the three shortfall actions, 620px); `npm test` 80/80 and `npm run build` pass
 
 ## 8. Documentation
 
