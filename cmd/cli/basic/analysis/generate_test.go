@@ -3,6 +3,7 @@ package analysis
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -358,6 +359,55 @@ func TestAttributeSectionsByLongestPrefix(t *testing.T) {
 	}
 	if attributeSections(nil, qs) != nil {
 		t.Error("no triage means no breakdown")
+	}
+}
+
+func TestAttributeSectionsFallsBackToSource(t *testing.T) {
+	// The live MASCOM case: triage listed the sections with no id prefixes, but extraction
+	// wrote each section's title into "source".
+	tr := &Triage{Sections: []TriageSection{
+		{Name: "A.1 Functional Requirements Compliance Matrix", EstimatedQuestions: 100},
+		{Name: "A.2 Non-Functional Requirements Compliance Matrix", EstimatedQuestions: 130},
+	}}
+	qs := []chat.BatchQuestion{
+		{ID: "FR_01-a", Source: "A.1 Functional Requirements Compliance Matrix / FR_01 Hypervisor"},
+		{ID: "FR_02-a", Source: "a.1 functional requirements compliance matrix"},
+		{ID: "NFR_01-a", Source: "A.2 Non-Functional Requirements Compliance Matrix / NFR_01 Performance"},
+	}
+	got := attributeSections(tr, qs)
+	if len(got) != 2 || got[0].Produced != 2 || got[1].Produced != 1 {
+		t.Errorf("attributeSections = %+v, want 2 and 1 attributed by source", got)
+	}
+}
+
+func TestShortfallWithoutSectionEstimatesSaysSo(t *testing.T) {
+	err := &ShortfallError{Expected: 230, Produced: 146, FinishReason: "STOP", Effort: EffortMedium,
+		Sections: []SectionCount{{Name: "A.1", Produced: 80}, {Name: "A.2", Produced: 66}}}
+	msg := err.Error()
+	if !strings.Contains(msg, "no per-section estimates") || strings.Contains(msg, "points at unsplit rows") {
+		t.Errorf("without estimates the message must not offer a comparison it cannot make:\n%s", msg)
+	}
+}
+
+func TestTriageSchemaRequiresWhatTheBreakdownNeeds(t *testing.T) {
+	sections := triageSchema()["properties"].(map[string]any)["sections"].(map[string]any)
+	items := sections["items"].(map[string]any)
+	req := fmt.Sprint(items["required"])
+	for _, f := range []string{"id_prefix", "estimated_questions"} {
+		if !strings.Contains(req, f) {
+			t.Errorf("triage sections must require %q, got required=%s", f, req)
+		}
+	}
+	// Both found live: Gemini rejects maxItems on this schema with a bare 400, and an
+	// unused per-section summary was the field a whitespace runaway filled.
+	if _, has := sections["maxItems"]; has {
+		t.Error("Gemini rejects maxItems on the triage schema; it must not be sent")
+	}
+	if _, has := items["properties"].(map[string]any)["summary"]; has {
+		t.Error("the unused per-section summary is a runaway surface and must not be in the schema")
+	}
+	if !strings.Contains(operatorSection("x"), "do not restate or quote them") {
+		t.Error("the operator section must ask the model not to echo the instructions")
 	}
 }
 

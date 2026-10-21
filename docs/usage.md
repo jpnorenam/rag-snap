@@ -1673,6 +1673,8 @@ rag-cli.rag answer batch --build <document> --analyze [--context <file>]... [--o
 |---|---|---|
 | `--analyze` | `false` | Generate a complete manifest with Google's Gemini API instead of extracting questions locally |
 | `--context` | _(none)_ | A supporting document that adds background, repeatable. The RFP itself is `--build` |
+| `--instructions` | _(none)_ | Instructions that steer the analysis — granularity, scope, which questions to include. See [Instructions](#instructions) |
+| `--instructions-file` | _(none)_ | Read the instructions from a file under your home directory. Mutually exclusive with `--instructions` |
 | `--output` | `<document-name>.yaml` | Output manifest path |
 
 > **Analysis sends your document content to a third party: Google's Gemini API.** It is off by
@@ -1756,6 +1758,40 @@ Questions:  about 192
 OpenStack:  yes
 Sections:   17
 ```
+
+#### Instructions
+
+The same document can be read at very different granularities. One 40-page compliance matrix has
+produced 57, 83, 205 and 269 questions on different runs, and a prose RFI produced 172 where a person
+wrote 24. You usually know the right answer, so say it:
+
+```bash
+rag-cli.rag answer batch --build ~/rfp/mascom.pdf --analyze \
+  --instructions "Split every matrix row into one question per requirement. Only the Annexure A compliance matrix."
+
+rag-cli.rag answer batch --build ~/rfp/lafika.pdf --analyze \
+  --instructions "One question per section of the RFI. Do not split comma-separated lists."
+```
+
+- Instructions reach **all three** analysis calls. Triage gets them too, so a scope instruction ("only
+  the matrix on page 32") narrows the estimate as well as the extraction, rather than making a correct
+  extraction look short.
+- They travel as operator text, separate from the documents, which stay untrusted input.
+- They take precedence over the default extraction guidance (how finely to split, which parts to
+  read). They **cannot** override the manifest's own rules — routable ids, knowledge bases chosen from
+  the live catalogue — and they **cannot remove the rules rag-cli appends to the prompt**, which are
+  still added afterwards and still have the final word.
+- They are limited to 4,000 characters and are recorded in the manifest's header:
+
+  ```
+  # Operator instructions:
+  #   Split every matrix row into one question per requirement.
+  #   Only the Annexure A compliance matrix.
+  ```
+
+Instructions steer how the **manifest** is generated. To change how **answers** are written, edit the
+prompt: in the web UI, the model-written part of the generated prompt is editable on the review step,
+while the rules rag-cli appends stay read-only below it.
 
 #### When fewer questions come back than triage estimated
 

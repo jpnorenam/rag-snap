@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/analysis"
@@ -69,8 +70,11 @@ func (s *Server) analysisClient() (*analysis.Client, *analysis.Catalogue, error)
 // question count, whether OpenStack is in scope, whether questions carry several answer
 // fields, suggested knowledge bases), a per-document conveyance report saying which
 // documents were read natively and which were converted, and an opaque
-// "analysis_token" with its "expires_at" for the follow-up generation call. Generates
-// no manifest and answers no question. Rejected with 400 when analysis is not
+// "analysis_token" with its "expires_at" for the follow-up generation call. An optional
+// "instructions" field carries the operator's free-text instructions (granularity,
+// scope, which questions to include), applied to every analysis call for this session
+// and echoed as "instructions" in the metadata; over 4000 characters is a 400 before any
+// operation starts. Generates no manifest and answers no question. Rejected with 400 when analysis is not
 // configured or no API key is present in the environment; the API key never appears in
 // any response.
 //
@@ -89,6 +93,14 @@ func (s *Server) handleAnswerAnalyze(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := r.ParseMultipartForm(processing.MaxIngestFileSize); err != nil {
 		respondError(w, http.StatusBadRequest, "parsing upload: "+err.Error())
+		return
+	}
+
+	// Checked before anything is staged or any operation started, so an over-long set of
+	// instructions costs nothing and fails with the same message the CLI gives.
+	instructions := strings.TrimSpace(r.FormValue("instructions"))
+	if err := analysis.ValidateInstructions(instructions); err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -144,12 +156,12 @@ func (s *Server) handleAnswerAnalyze(w http.ResponseWriter, r *http.Request) {
 				return err
 			}
 
-			triage, err := client.Triage(ctx, conveyance, catalogue)
+			triage, err := client.TriageWith(ctx, conveyance, catalogue, instructions)
 			if err != nil {
 				return err
 			}
 
-			token, err := s.analyses.stage(conveyance, triage, catalogue)
+			token, err := s.analyses.stageWith(conveyance, triage, catalogue, instructions)
 			if err != nil {
 				return err
 			}
@@ -161,6 +173,7 @@ func (s *Server) handleAnswerAnalyze(w http.ResponseWriter, r *http.Request) {
 				"model":          client.Model(),
 				"triage":         triage,
 				"report":         triage.Report,
+				"instructions":   instructions,
 			})
 			return nil
 		},
@@ -191,6 +204,29 @@ type analysisGenerateRequest struct {
 	RetryQuestions bool `json:"retry_questions,omitempty"`
 }
 
+// generationMetadata is what a completed generation publishes.
+//
+// The prompt's two halves are included so a client can let the model-written part be
+// edited while the appended rules stay untouched; joined by analysis.JoinPrompt they are
+// the manifest's prompt. They are omitted, rather than guessed, if the prompt does not end
+// with the exact appended block.
+func generationMetadata(manifest *chat.BatchManifest, result chat.CheckResult, model string,
+	iv analysis.Interview, triage *analysis.Triage, accepted *analysis.ShortfallAcceptance) map[string]any {
+	meta := map[string]any{
+		"manifest": manifestToJSON(manifest),
+		"check":    result,
+		"model":    model,
+	}
+	if generated, appended, ok := analysis.SplitAssembledPrompt(manifest.Prompt, iv, triage); ok {
+		meta["prompt_generated"] = generated
+		meta["prompt_appended"] = appended
+	}
+	if accepted != nil {
+		meta["shortfall_accepted"] = accepted
+	}
+	return meta
+}
+
 // shortfallMetadata is the structured detail a client reads from a generation that
 // failed on a shortfall. Clients must read this, never parse the error string.
 func shortfallMetadata(sf *analysis.ShortfallError) map[string]any {
@@ -216,7 +252,11 @@ func shortfallMetadata(sf *analysis.ShortfallError) map[string]any {
 // and runs the second analysis phase as an asynchronous operation. The documents are
 // not re-uploaded: generation runs against the set the token refers to. Publishes the
 // generated "manifest" in the same JSON shape POST /1.0/answer/batch accepts, its
-// "check" findings, and the generating "model". An unknown or expired token is a 400
+// "check" findings, and the generating "model". It also publishes the prompt's two
+// halves: "prompt_generated", the model-written part, and "prompt_appended", the rules
+// rag-cli adds; joined with a blank line between them they are the manifest's prompt,
+// so a client can let the first be edited without touching the second. The session's
+// instructions are applied without being sent again. An unknown or expired token is a 400
 // stating that the session expired and the documents must be uploaded again. A
 // truncated response, or an empty response at the model's output ceiling, fails the
 // operation rather than completing with a short manifest, and cannot be accepted.
@@ -272,8 +312,10 @@ func (s *Server) handleAnswerAnalyzeGenerate(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Resolve the operator's decision on a previous shortfall, if there is one.
+	// The session's instructions apply to every generation for this token, including an
+	// accept or a re-run after a shortfall.
 	var (
-		opts     analysis.GenerateOptions
+		opts     = analysis.GenerateOptions{Instructions: entry.instructions}
 		accepted *analysis.ShortfallAcceptance
 	)
 	if req.AcceptShortfall && req.RetryQuestions {
@@ -328,15 +370,7 @@ func (s *Server) handleAnswerAnalyzeGenerate(w http.ResponseWriter, r *http.Requ
 			s.analyses.consume(token)
 
 			result := chat.CheckManifest(manifest, s.checkRefs())
-			meta := map[string]any{
-				"manifest": manifestToJSON(manifest),
-				"check":    result,
-				"model":    client.Model(),
-			}
-			if accepted != nil {
-				meta["shortfall_accepted"] = accepted
-			}
-			op.UpdateMetadata(meta)
+			op.UpdateMetadata(generationMetadata(manifest, result, client.Model(), interview, entry.triage, accepted))
 			return nil
 		},
 	)

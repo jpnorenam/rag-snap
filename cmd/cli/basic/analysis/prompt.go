@@ -139,10 +139,41 @@ No filler. No preamble, no restating the question, no meta-commentary about the 
 // Order matters. The mandatory block comes last so that it reads as the final word on
 // any point the generated prose might have contradicted.
 func AssembleGeneratedPrompt(generated string, iv Interview, t *Triage) string {
-	var b strings.Builder
-	b.WriteString(strings.TrimSpace(generated))
-	b.WriteString("\n\n")
+	return JoinPrompt(PromptParts(generated, iv, t))
+}
 
+// PromptParts returns the two halves of an assembled prompt: the model-written part,
+// trimmed, and the block rag-cli appends. They are kept apart so a client can let the
+// model-written part be edited without being able to touch the appended rules — and
+// without having to find the boundary by searching for a heading the model's own prose
+// may also contain.
+func PromptParts(generated string, iv Interview, t *Triage) (model, appended string) {
+	return strings.TrimSpace(generated), appendedBlock(iv, t)
+}
+
+// JoinPrompt is the one way the two halves are combined, in Go and (mirrored and pinned
+// by a test) in the UI.
+func JoinPrompt(model, appended string) string {
+	return strings.TrimSpace(model) + "\n\n" + appended
+}
+
+// SplitAssembledPrompt recovers the two halves of a prompt assembled for this interview and
+// triage. It removes the exact appended block rather than searching for a heading, and
+// reports false when the prompt does not end with that block — a hand-edited manifest,
+// say — so a caller can fall back to showing the prompt whole.
+func SplitAssembledPrompt(prompt string, iv Interview, t *Triage) (model, appended string, ok bool) {
+	appended = appendedBlock(iv, t)
+	model, ok = strings.CutSuffix(prompt, "\n\n"+appended)
+	if !ok {
+		return "", "", false
+	}
+	return model, appended, true
+}
+
+// appendedBlock renders everything rag-cli adds after the model's prompt, ending in one
+// newline.
+func appendedBlock(iv Interview, t *Triage) string {
+	var b strings.Builder
 	b.WriteString("ANSWER LENGTH\n")
 	b.WriteString(iv.LengthSentence())
 	b.WriteString("\n\n")
@@ -162,8 +193,6 @@ func AssembleGeneratedPrompt(generated string, iv Interview, t *Triage) string {
 	}
 
 	b.WriteString(mandatoryRules)
-	b.WriteString("\n")
-
 	return strings.TrimSpace(b.String()) + "\n"
 }
 

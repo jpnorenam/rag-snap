@@ -45,6 +45,8 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 	var temperature float64
 	var analyze bool
 	var contextDocs []string
+	var instructions string
+	var instructionsFile string
 	var checkPath string
 
 	c := &cobra.Command{
@@ -58,7 +60,11 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			"generate a manifest without running the batch.\n\n" +
 			"Add --analyze to that to hand the document to Google's Gemini API instead, which produces a " +
 			"complete manifest: questions, knowledge bases, an RFP-level prompt, and a populated domains block. " +
-			"Pass --context for supporting documents that add background. Analysis is off by default and sends " +
+			"Pass --context for supporting documents that add background, and --instructions (or --instructions-file) " +
+			"to steer the analysis — granularity, scope, which questions to include — for example " +
+			"\"Split every matrix row into one question per requirement. Only the Annexure A compliance matrix.\" " +
+			"Instructions reach every analysis call, cannot remove the rules rag-cli appends to the prompt, and are " +
+			"recorded in the manifest's header. Analysis is off by default and sends " +
 			"document content to Google under GEMINI_API_KEY; see 'rag get analysis.enabled'.\n\n" +
 			"Use --check <manifest.yaml> to validate a manifest without running it: routing reachability, " +
 			"unknown knowledge bases, duplicate ids, and whether the prompt still carries its rules.",
@@ -69,7 +75,14 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			}
 			if buildDoc != "" {
 				if analyze {
-					return cmd.runAnalyze(buildDoc, contextDocs, outputPath)
+					instr, err := resolveInstructions(instructions, instructionsFile)
+					if err != nil {
+						return err
+					}
+					return cmd.runAnalyze(buildDoc, contextDocs, outputPath, instr)
+				}
+				if instructions != "" || instructionsFile != "" {
+					return fmt.Errorf("--instructions and --instructions-file apply to --build <document> --analyze")
 				}
 				return cmd.runBuild(buildDoc, outputPath, previewOnly, noRefine)
 			}
@@ -78,6 +91,9 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			}
 			if len(contextDocs) > 0 {
 				return fmt.Errorf("--context applies to --build <document> --analyze")
+			}
+			if instructions != "" || instructionsFile != "" {
+				return fmt.Errorf("--instructions and --instructions-file apply to --build <document> --analyze")
 			}
 			if len(args) == 0 {
 				return fmt.Errorf("requires a manifest file argument, or use --build <document> to generate one")
@@ -130,6 +146,9 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 	c.Flags().BoolVar(&noRefine, "no-refine", false, "Skip LLM semantic refinement of extracted questions — used with --build")
 	c.Flags().BoolVar(&analyze, "analyze", false, "Generate a complete manifest (questions, prompt, knowledge bases, domains) with Gemini — used with --build")
 	c.Flags().StringArrayVar(&contextDocs, "context", nil, "Supporting document that adds context, repeatable — used with --build --analyze")
+	c.Flags().StringVar(&instructions, "instructions", "", "Instructions that steer the analysis, such as granularity or scope (\"split every row into one question per requirement\") — used with --build --analyze")
+	c.Flags().StringVar(&instructionsFile, "instructions-file", "", "Read the analysis instructions from a file under your home directory — used with --build --analyze")
+	c.MarkFlagsMutuallyExclusive("instructions", "instructions-file")
 	c.Flags().StringVar(&checkPath, "check", "", "Validate a manifest without running it, and exit non-zero if it carries defects")
 	c.Flags().Float64Var(&temperature, "temperature", 0.1, "Sampling temperature (0.0–1.0); lower = more deterministic")
 

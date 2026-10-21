@@ -495,3 +495,73 @@ func TestShortfallMetadataCarriesTheDecisionEvidence(t *testing.T) {
 		t.Errorf("shortfall metadata must not carry the question list: %s", raw)
 	}
 }
+
+func TestAnalyzeRejectsOverLongInstructionsBeforeAnyOperation(t *testing.T) {
+	sock, _ := startTestServerWithConfig(t, map[string]string{backendTika: "http://127.0.0.1:1"},
+		[]string{"analysis.enabled=true", "analysis.model=gemini-3.1-pro-preview"})
+	t.Setenv("GEMINI_API_KEY", "test-key")
+	client := dialSocket(sock)
+
+	long := strings.Repeat("x", analysis.MaxInstructionsLength+1)
+	body, contentType := multipartFile(t, "rfp.csv", "Req,Text\nC1,SR-IOV\n", map[string]string{"instructions": long})
+	resp, err := client.Post("http://unix/1.0/answer/analyze", contentType, body)
+	if err != nil {
+		t.Fatalf("POST /1.0/answer/analyze: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusBadRequest || !strings.Contains(string(raw), "4000-character limit") {
+		t.Errorf("status %d, body %s — want a 400 naming the limit", resp.StatusCode, raw)
+	}
+	if strings.Contains(string(raw), "operation") {
+		t.Errorf("no operation may be started for over-long instructions: %s", raw)
+	}
+}
+
+func TestStagedSessionKeepsItsInstructions(t *testing.T) {
+	store := newAnalysisStore()
+	token, err := store.stageWith(&analysis.Conveyance{}, &analysis.Triage{}, &analysis.Catalogue{}, "Only Annexure A.")
+	if err != nil {
+		t.Fatalf("stageWith: %v", err)
+	}
+	e, ok := store.get(token)
+	if !ok || e.instructions != "Only Annexure A." {
+		t.Errorf("the session should keep its instructions, got %+v", e)
+	}
+	if store.total != int64(len("Only Annexure A.")) {
+		t.Errorf("instructions should count against the store bound, total = %d", store.total)
+	}
+}
+
+func TestGenerationMetadataCarriesPromptPartsThatJoinToThePrompt(t *testing.T) {
+	iv := analysis.Interview{AnswerWords: 100, AnswerLimit: analysis.LengthSoft}
+	tr := &analysis.Triage{MultiFieldAnswers: true, MultiFieldDetail: "Compliance, Comment"}
+	m := &chat.BatchManifest{Version: "1.0", Prompt: analysis.AssembleGeneratedPrompt("You are a solutions engineer.", iv, tr),
+		Questions: []chat.BatchQuestion{{ID: "C1", Question: "SR-IOV"}}}
+
+	raw, _ := json.Marshal(generationMetadata(m, chat.CheckResult{}, "gemini-3.1-pro-preview", iv, tr, nil))
+	var wire struct {
+		Manifest struct {
+			Prompt string `json:"prompt"`
+		} `json:"manifest"`
+		Generated string `json:"prompt_generated"`
+		Appended  string `json:"prompt_appended"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if wire.Generated != "You are a solutions engineer." || wire.Appended == "" {
+		t.Fatalf("prompt parts missing or wrong on the wire: %s", raw)
+	}
+	if analysis.JoinPrompt(wire.Generated, wire.Appended) != wire.Manifest.Prompt {
+		t.Error("prompt_generated and prompt_appended must join to the manifest's prompt")
+	}
+
+	// A prompt that no longer ends with the exact rules block publishes no parts, so a
+	// client falls back to showing it whole rather than mis-splitting it.
+	m.Prompt = "A hand-written prompt."
+	raw, _ = json.Marshal(generationMetadata(m, chat.CheckResult{}, "m", iv, tr, nil))
+	if strings.Contains(string(raw), "prompt_generated") {
+		t.Errorf("parts must be omitted when the prompt does not split exactly: %s", raw)
+	}
+}

@@ -18,17 +18,28 @@ import type {
 export function TriageStep({
   triage,
   expiresAt,
+  instructions,
   onBack,
   onContinue,
 }: {
   triage: Triage;
   expiresAt: string;
+  instructions: string;
   onBack: () => void;
   onContinue: () => void;
 }) {
   return (
     <div className="analysis-step">
       <h3 className="p-heading--5">What the document appears to be</h3>
+
+      {/* What every analysis call in this session is being told, so a surprising
+          estimate can be traced to the instructions that produced it. */}
+      {instructions && (
+        <>
+          <h4 className="analysis-step__heading">Working to</h4>
+          <p className="analysis-instructions">{instructions}</p>
+        </>
+      )}
 
       <dl className="analysis-triage">
         {triage.title && (
@@ -350,12 +361,72 @@ export function ShortfallStep({
   );
 }
 
+// PromptEditor is the model-written part of the prompt, editable, above the rules
+// rag-cli appends, which are not. The rules sit outside the editable area, so no edit
+// can remove, reorder or alter them; download and run join the two with joinPrompt.
+export function PromptEditor({
+  generated,
+  appended,
+  value,
+  onChange,
+  onRestore,
+  disabled,
+}: {
+  generated: string;
+  appended: string;
+  value: string;
+  onChange: (next: string) => void;
+  onRestore: () => void;
+  disabled: boolean;
+}) {
+  const edited = value !== generated;
+  return (
+    <>
+      <div className="p-form__group">
+        <label className="p-form__label" htmlFor="analysis-prompt-edit">
+          RFP prompt (generated — editable){" "}
+          {edited && (
+            <span className="p-chip u-no-margin--bottom">
+              <span className="p-chip__value">Edited</span>
+            </span>
+          )}
+        </label>
+        <textarea
+          id="analysis-prompt-edit"
+          className="analysis-prompt__editor"
+          rows={14}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+        />
+        <p className="p-form-help-text">
+          Sent as the system prompt with every question, followed by the rules below.
+        </p>
+        {edited && (
+          <button type="button" className="p-button u-no-margin--bottom" onClick={onRestore} disabled={disabled}>
+            Restore generated prompt
+          </button>
+        )}
+      </div>
+      <h4 className="analysis-step__heading">Added by rag-cli — not editable here</h4>
+      <div className="analysis-prompt" tabIndex={0} role="region" aria-label="Rules rag-cli appends to the prompt">
+        <pre className="analysis-prompt__body">{appended}</pre>
+      </div>
+    </>
+  );
+}
+
 export function GeneratedReviewStep({
   manifest,
   check,
   model,
   estimated,
   shortfallAccepted,
+  promptGenerated,
+  promptAppended,
+  promptValue,
+  onPromptChange,
+  onPromptRestore,
   onBack,
   onDownload,
   onRun,
@@ -366,6 +437,13 @@ export function GeneratedReviewStep({
   model: string;
   estimated: number;
   shortfallAccepted: ShortfallAcceptance | null;
+  // The prompt's halves; null from a daemon that does not send them, in which case the
+  // prompt is shown whole and read-only as before.
+  promptGenerated: string | null;
+  promptAppended: string | null;
+  promptValue: string;
+  onPromptChange: (next: string) => void;
+  onPromptRestore: () => void;
   onBack: () => void;
   onDownload: () => void;
   onRun: () => void;
@@ -403,14 +481,27 @@ export function GeneratedReviewStep({
 
       <CheckFindings result={check} />
 
-      <h4 className="analysis-step__heading">RFP prompt</h4>
-      <p className="u-text--muted p-text--small">
-        Sent as the system prompt with every question. The answer-length and gap-reporting rules at
-        the end are added by rag-cli, not the model.
-      </p>
-      <div className="analysis-prompt" tabIndex={0} role="region" aria-label="Generated RFP prompt">
-        <pre className="analysis-prompt__body">{manifest.prompt}</pre>
-      </div>
+      {promptGenerated !== null && promptAppended !== null ? (
+        <PromptEditor
+          generated={promptGenerated}
+          appended={promptAppended}
+          value={promptValue}
+          onChange={onPromptChange}
+          onRestore={onPromptRestore}
+          disabled={running}
+        />
+      ) : (
+        <>
+          <h4 className="analysis-step__heading">RFP prompt</h4>
+          <p className="u-text--muted p-text--small">
+            Sent as the system prompt with every question. The answer-length and gap-reporting rules at
+            the end are added by rag-cli, not the model.
+          </p>
+          <div className="analysis-prompt" tabIndex={0} role="region" aria-label="Generated RFP prompt">
+            <pre className="analysis-prompt__body">{manifest.prompt}</pre>
+          </div>
+        </>
+      )}
 
       <div className="analysis-step__actions">
         <button

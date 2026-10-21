@@ -26,14 +26,32 @@ const extractionFallbackHint = "\n\nThe pattern-based extraction path is unaffec
 // Every failure it can return is wrapped with extractionFallbackHint by the caller, so
 // an operator whose analysis is unconfigured or whose provider is unreachable is told
 // what still works rather than being left at a dead end.
-func (cmd *answerCommand) runAnalyze(docPath string, contextPaths []string, outputPath string) error {
-	if err := cmd.analyze(docPath, contextPaths, outputPath); err != nil {
+func (cmd *answerCommand) runAnalyze(docPath string, contextPaths []string, outputPath, instructions string) error {
+	if err := cmd.analyze(docPath, contextPaths, outputPath, instructions); err != nil {
 		return fmt.Errorf("%w%s", err, extractionFallbackHint)
 	}
 	return nil
 }
 
-func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputPath string) error {
+// resolveInstructions returns the analysis instructions from the flag or the file, checked
+// against the same bound the daemon applies. The file is read in full; under strict
+// confinement it must be under the user's home directory, like every other CLI input.
+func resolveInstructions(text, file string) (string, error) {
+	if file != "" {
+		raw, err := os.ReadFile(file)
+		if err != nil {
+			return "", fmt.Errorf("reading --instructions-file: %w", err)
+		}
+		text = string(raw)
+	}
+	text = strings.TrimSpace(text)
+	if err := analysis.ValidateInstructions(text); err != nil {
+		return "", err
+	}
+	return text, nil
+}
+
+func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputPath, instructions string) error {
 	if _, err := os.Stat(docPath); err != nil {
 		return fmt.Errorf("cannot access file: %w", err)
 	}
@@ -78,11 +96,18 @@ func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputP
 	for _, r := range conveyance.Report {
 		fmt.Printf("  %-30s %-6s %-10s %s\n", r.Filename, r.Format, r.Path, r.Detail)
 	}
+	// What triage is about to be told, so the operator can see it before spending a call.
+	if instructions != "" {
+		fmt.Println("\nWorking to these instructions:")
+		for _, line := range strings.Split(instructions, "\n") {
+			fmt.Printf("  %s\n", line)
+		}
+	}
 	fmt.Println()
 
 	// Phase one.
 	stop = common.StartProgressSpinner("Analysing (triage)")
-	triage, err := client.Triage(context.Background(), conveyance, catalogue)
+	triage, err := client.TriageWith(context.Background(), conveyance, catalogue, instructions)
 	stop()
 	if err != nil {
 		return err
@@ -106,7 +131,7 @@ func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputP
 	// re-run the extraction one effort level higher, or abandon.
 	var (
 		manifest *chat.BatchManifest
-		opts     analysis.GenerateOptions
+		opts     = analysis.GenerateOptions{Instructions: instructions}
 		accepted *analysis.ShortfallAcceptance
 	)
 	for {
@@ -129,10 +154,10 @@ func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputP
 		}
 		switch choice {
 		case shortfallAccept:
-			opts = analysis.GenerateOptions{AcceptedQuestions: sf.Questions}
+			opts = analysis.GenerateOptions{AcceptedQuestions: sf.Questions, Instructions: instructions}
 			accepted = &analysis.ShortfallAcceptance{Expected: sf.Expected, Produced: sf.Produced}
 		case shortfallRerun:
-			opts = analysis.GenerateOptions{QuestionsEffort: analysis.NextEffort(sf.Effort)}
+			opts = analysis.GenerateOptions{QuestionsEffort: analysis.NextEffort(sf.Effort), Instructions: instructions}
 			accepted = nil
 		default:
 			return fmt.Errorf("abandoned after a question-count shortfall; no manifest was written")
@@ -163,7 +188,7 @@ func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputP
 	// Written only after validation, and never over a previously valid file on failure:
 	// Generate already validated, and WriteManifest creates the file only once it is
 	// ready to encode.
-	provenance := analysis.Provenance{Model: client.Model(), Documents: conveyance.Report, ShortfallAccepted: accepted}
+	provenance := analysis.Provenance{Model: client.Model(), Documents: conveyance.Report, ShortfallAccepted: accepted, Instructions: instructions}
 	if err := analysis.WriteManifest(outputPath, manifest, provenance); err != nil {
 		return fmt.Errorf("writing manifest: %w", err)
 	}

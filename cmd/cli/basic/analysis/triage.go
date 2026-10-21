@@ -75,6 +75,17 @@ func triageSchema() map[string]any {
 		"properties": map[string]any{
 			"title":  map[string]any{"type": "string", "description": "The RFP's title as stated in the document."},
 			"issuer": map[string]any{"type": "string", "description": "The organisation issuing the RFP, as stated."},
+			// The shortfall decision compares each section's estimate against what extraction
+			// produced for it, so both fields are required: left optional, a live run omitted
+			// them and the breakdown came out empty. An id_prefix may be "" for a section
+			// whose rows carry no id.
+			//
+			// Two things are deliberately absent, both found with the live schema test:
+			// maxItems, which Gemini rejects here with a bare 400 although its documentation
+			// lists it; and a per-section free-text "summary", which nothing read and which
+			// a minimal live prompt filled with escaped spaces up to the output ceiling. No
+			// string field can be length-capped (the schema subset has no maxLength), so an
+			// unused one is pure risk.
 			"sections": map[string]any{
 				"type":        "array",
 				"description": "Each section, sheet or part that groups requirements.",
@@ -84,9 +95,8 @@ func triageSchema() map[string]any {
 						"name":                map[string]any{"type": "string"},
 						"id_prefix":           map[string]any{"type": "string", "description": "The question-id prefix this section's rows use, if any (e.g. \"C\" for C1, C2)."},
 						"estimated_questions": map[string]any{"type": "integer"},
-						"summary":             map[string]any{"type": "string"},
 					},
-					"required": []any{"name"},
+					"required": []any{"name", "id_prefix", "estimated_questions"},
 				},
 			},
 			"estimated_questions": map[string]any{
@@ -126,7 +136,17 @@ This is a triage pass. Its purpose is to tell a human operator what was found, a
 
 // Triage runs the first phase over an already-conveyed document set.
 func (c *Client) Triage(ctx context.Context, conv *Conveyance, cat *Catalogue) (*Triage, error) {
-	system := Grounding() + "\n\n" + cat.Prompt()
+	return c.TriageWith(ctx, conv, cat, "")
+}
+
+// TriageWith is Triage with the operator's instructions. Triage needs them as much as
+// extraction does: its estimate is the yardstick the extraction is checked against, so a
+// scope instruction given to extraction alone would make a correct extraction look short.
+func (c *Client) TriageWith(ctx context.Context, conv *Conveyance, cat *Catalogue, instructions string) (*Triage, error) {
+	if err := ValidateInstructions(instructions); err != nil {
+		return nil, err
+	}
+	system := Grounding() + "\n\n" + cat.Prompt() + operatorSection(instructions)
 
 	parts := append([]part{textPart(triageInstruction)}, documentParts(conv)...)
 

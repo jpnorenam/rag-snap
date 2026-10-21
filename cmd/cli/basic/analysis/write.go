@@ -19,6 +19,25 @@ type Provenance struct {
 	// ShortfallAccepted is set when the operator accepted fewer questions than triage
 	// estimated. It is written into the header so the decision travels with the file.
 	ShortfallAccepted *ShortfallAcceptance
+
+	// Instructions are the operator's instructions, recorded so a manifest shows what its
+	// generation was asked to do.
+	Instructions string
+}
+
+// InstructionsHeaderLines renders instructions as provenance lines, one per instruction
+// line so multi-line text stays a valid YAML comment. Shared by every surface that writes
+// a generated manifest, and empty when there were no instructions.
+func InstructionsHeaderLines(instructions string) []string {
+	instructions = strings.TrimSpace(instructions)
+	if instructions == "" {
+		return nil
+	}
+	out := []string{"Operator instructions:"}
+	for _, line := range strings.Split(instructions, "\n") {
+		out = append(out, "  "+strings.TrimRight(line, " \t\r"))
+	}
+	return out
 }
 
 // ShortfallAcceptance records an operator's decision to continue past a shortfall.
@@ -70,6 +89,9 @@ func manifestHeader(m *chat.BatchManifest, p Provenance) string {
 		time.Now().UTC().Format("2006-01-02 15:04:05 UTC"))
 	if p.Model != "" {
 		fmt.Fprintf(&b, "# Analysis model: %s\n", p.Model)
+	}
+	for _, line := range InstructionsHeaderLines(p.Instructions) {
+		fmt.Fprintf(&b, "# %s\n", line)
 	}
 	for _, d := range p.Documents {
 		fmt.Fprintf(&b, "# Source: %s (%s, %s)\n", d.Filename, d.Format, d.Path)
