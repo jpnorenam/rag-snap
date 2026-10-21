@@ -181,6 +181,29 @@ type analysisGenerateRequest struct {
 	// OpenStack is "sunbeam" or "charmed", and is meaningful only when the triage
 	// reported OpenStack in scope. Empty otherwise.
 	OpenStack string `json:"openstack,omitempty"`
+	// AcceptShortfall continues a session whose last generation fell short, using the
+	// questions it produced rather than extracting them again. Rejected when the session
+	// holds no shortfall.
+	AcceptShortfall bool `json:"accept_shortfall,omitempty"`
+	// RetryQuestions re-runs only the question extraction, one reasoning-effort level
+	// above the one that fell short. Rejected when the session holds no shortfall, and
+	// mutually exclusive with AcceptShortfall.
+	RetryQuestions bool `json:"retry_questions,omitempty"`
+}
+
+// shortfallMetadata is the structured detail a client reads from a generation that
+// failed on a shortfall. Clients must read this, never parse the error string.
+func shortfallMetadata(sf *analysis.ShortfallError) map[string]any {
+	return map[string]any{
+		"expected":      sf.Expected,
+		"produced":      sf.Produced,
+		"finish_reason": sf.FinishReason,
+		"answer_tokens": sf.AnswerTokens,
+		"ceiling":       sf.Ceiling,
+		"effort":        string(sf.Effort),
+		"next_effort":   string(analysis.NextEffort(sf.Effort)),
+		"sections":      sf.Sections,
+	}
 }
 
 // swagger:route POST /1.0/answer/analyze/generate answer answerAnalyzeGenerate
@@ -195,9 +218,19 @@ type analysisGenerateRequest struct {
 // generated "manifest" in the same JSON shape POST /1.0/answer/batch accepts, its
 // "check" findings, and the generating "model". An unknown or expired token is a 400
 // stating that the session expired and the documents must be uploaded again. A
-// truncated response, an empty response at the model's output ceiling, or a question
-// count materially short of the triage estimate fails the operation naming both counts
-// rather than completing with a short manifest.
+// truncated response, or an empty response at the model's output ceiling, fails the
+// operation rather than completing with a short manifest, and cannot be accepted.
+//
+// A question count materially short of the triage estimate, from an extraction that
+// finished normally, also fails the operation, with a structured "shortfall" object in
+// its metadata: "expected", "produced", "finish_reason", "answer_tokens", "ceiling",
+// "effort", "next_effort" (empty at the top of the ladder) and per-section "sections"
+// counts. The produced questions are retained on the session. Posting the same token and
+// interview answers again with "accept_shortfall": true continues from those questions
+// without another extraction, and the completed metadata carries "shortfall_accepted"
+// with both counts; with "retry_questions": true, only the extraction is re-run, at
+// "next_effort". Either flag on a session holding no shortfall, or both together, is a
+// 400.
 //
 //	Responses:
 //	  202: asyncResponse
@@ -238,6 +271,36 @@ func (s *Server) handleAnswerAnalyzeGenerate(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Resolve the operator's decision on a previous shortfall, if there is one.
+	var (
+		opts     analysis.GenerateOptions
+		accepted *analysis.ShortfallAcceptance
+	)
+	if req.AcceptShortfall && req.RetryQuestions {
+		respondError(w, http.StatusBadRequest, "accept_shortfall and retry_questions are alternatives; send one")
+		return
+	}
+	if req.AcceptShortfall || req.RetryQuestions {
+		sf, held := s.analyses.shortfallFor(req.AnalysisToken)
+		if !held {
+			respondError(w, http.StatusBadRequest,
+				"there is no shortfall to accept or re-run for this analysis session")
+			return
+		}
+		if req.AcceptShortfall {
+			opts.AcceptedQuestions = sf.questions
+			accepted = &analysis.ShortfallAcceptance{Expected: sf.expected, Produced: sf.produced}
+		} else {
+			next := analysis.NextEffort(sf.effort)
+			if next == analysis.EffortUnset {
+				respondError(w, http.StatusBadRequest,
+					"the extraction already ran at the highest reasoning effort; accept the questions or start again")
+				return
+			}
+			opts.QuestionsEffort = next
+		}
+	}
+
 	client, _, err := s.analysisClient()
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
@@ -249,7 +312,14 @@ func (s *Server) handleAnswerAnalyzeGenerate(w http.ResponseWriter, r *http.Requ
 		"Generating manifest",
 		nil, true,
 		func(ctx context.Context, op *Operation) error {
-			manifest, err := client.Generate(ctx, entry.conveyance, entry.catalogue, entry.triage, interview)
+			manifest, err := client.GenerateWith(ctx, entry.conveyance, entry.catalogue, entry.triage, interview, opts)
+			if sf, isShortfall := analysis.AsShortfall(err); isShortfall {
+				// Kept on the session for the operator's decision, and described in the
+				// metadata so a client never has to parse the error text.
+				s.analyses.retainShortfall(token, sf)
+				op.UpdateMetadata(map[string]any{"shortfall": shortfallMetadata(sf), "model": client.Model()})
+				return err
+			}
 			if err != nil {
 				return err
 			}
@@ -258,11 +328,15 @@ func (s *Server) handleAnswerAnalyzeGenerate(w http.ResponseWriter, r *http.Requ
 			s.analyses.consume(token)
 
 			result := chat.CheckManifest(manifest, s.checkRefs())
-			op.UpdateMetadata(map[string]any{
+			meta := map[string]any{
 				"manifest": manifestToJSON(manifest),
 				"check":    result,
 				"model":    client.Model(),
-			})
+			}
+			if accepted != nil {
+				meta["shortfall_accepted"] = accepted
+			}
+			op.UpdateMetadata(meta)
 			return nil
 		},
 	)

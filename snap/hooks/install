@@ -64,7 +64,10 @@ snapctl set config.package.kapa.project.id=""
 # registers the same keys on an already-installed snap.
 snapctl set config.package.analysis.enabled="false"
 snapctl set config.package.analysis.model=""
-snapctl set config.package.analysis.reasoning.questions="low"
+# Question extraction defaults to medium reasoning: at low, a 36-row compliance matrix
+# whose cells pack several requirements came back nearly unsplit (53 questions where a
+# person wrote 164), and medium cleared it for a few thousand reasoning tokens.
+snapctl set config.package.analysis.reasoning.questions="medium"
 snapctl set config.package.analysis.reasoning.strategy="high"
 snapctl set config.package.analysis.answer.words="100"
 snapctl set config.package.analysis.answer.limit="soft"

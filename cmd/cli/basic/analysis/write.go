@@ -15,6 +15,23 @@ import (
 type Provenance struct {
 	Model     string
 	Documents []DocumentReport
+
+	// ShortfallAccepted is set when the operator accepted fewer questions than triage
+	// estimated. It is written into the header so the decision travels with the file.
+	ShortfallAccepted *ShortfallAcceptance
+}
+
+// ShortfallAcceptance records an operator's decision to continue past a shortfall.
+type ShortfallAcceptance struct {
+	Expected int `json:"expected"`
+	Produced int `json:"produced"`
+}
+
+// HeaderLine is the provenance line recording the acceptance, shared by every surface
+// that writes a generated manifest so the CLI file and a UI download say the same thing.
+func (a ShortfallAcceptance) HeaderLine() string {
+	return fmt.Sprintf("Question count accepted by the operator below the triage estimate: %d produced, about %d estimated",
+		a.Produced, a.Expected)
 }
 
 // WriteManifest writes a generated manifest to path.
@@ -58,6 +75,9 @@ func manifestHeader(m *chat.BatchManifest, p Provenance) string {
 		fmt.Fprintf(&b, "# Source: %s (%s, %s)\n", d.Filename, d.Format, d.Path)
 	}
 	fmt.Fprintf(&b, "# %d questions, %d domains\n", len(m.Questions), len(m.Domains))
+	if p.ShortfallAccepted != nil {
+		fmt.Fprintf(&b, "# %s\n", p.ShortfallAccepted.HeaderLine())
+	}
 	b.WriteString("#\n")
 	b.WriteString("# Review before running. The prompt and the domain contexts are the model's work\n")
 	b.WriteString("# and are worth reading; the answer-length and gap-reporting rules at the end of\n")

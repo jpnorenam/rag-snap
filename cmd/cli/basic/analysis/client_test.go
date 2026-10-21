@@ -306,7 +306,7 @@ func TestSchemasArriveVerbatim(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			fs := newFakeServer(t, fakeCompletion{content: `{}`})
 			c := testClient(t, fs)
-			if _, err := c.complete(context.Background(), name, "system", []part{textPart("x")}, name, schema, EffortLow, maxOutputTokens); err != nil {
+			if _, _, err := c.complete(context.Background(), name, "system", []part{textPart("x")}, name, schema, EffortLow, maxOutputTokens); err != nil {
 				t.Fatalf("complete: %v", err)
 			}
 			want, _ := json.Marshal(schema)

@@ -101,10 +101,43 @@ func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputP
 		return err
 	}
 
-	// Phase two, over the documents already conveyed.
-	stop = common.StartProgressSpinner("Generating manifest")
-	manifest, err := client.Generate(context.Background(), conveyance, catalogue, triage, interview)
-	stop()
+	// Phase two, over the documents already conveyed. A shortfall is the operator's
+	// decision rather than a dead end, so it loops: accept the produced questions,
+	// re-run the extraction one effort level higher, or abandon.
+	var (
+		manifest *chat.BatchManifest
+		opts     analysis.GenerateOptions
+		accepted *analysis.ShortfallAcceptance
+	)
+	for {
+		stop = common.StartProgressSpinner("Generating manifest")
+		manifest, err = client.GenerateWith(context.Background(), conveyance, catalogue, triage, interview, opts)
+		stop()
+		sf, isShortfall := analysis.AsShortfall(err)
+		if !isShortfall {
+			break
+		}
+		// Acceptance must be an explicit choice, so without a terminal to ask on, the
+		// shortfall stays an error.
+		if !common.Interactive() {
+			return err
+		}
+		fmt.Printf("\n%s\n\n", sf.Error())
+		choice, choiceErr := shortfallDecision(sf)
+		if choiceErr != nil {
+			return choiceErr
+		}
+		switch choice {
+		case shortfallAccept:
+			opts = analysis.GenerateOptions{AcceptedQuestions: sf.Questions}
+			accepted = &analysis.ShortfallAcceptance{Expected: sf.Expected, Produced: sf.Produced}
+		case shortfallRerun:
+			opts = analysis.GenerateOptions{QuestionsEffort: analysis.NextEffort(sf.Effort)}
+			accepted = nil
+		default:
+			return fmt.Errorf("abandoned after a question-count shortfall; no manifest was written")
+		}
+	}
 	if err != nil {
 		return err
 	}
@@ -130,7 +163,7 @@ func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputP
 	// Written only after validation, and never over a previously valid file on failure:
 	// Generate already validated, and WriteManifest creates the file only once it is
 	// ready to encode.
-	provenance := analysis.Provenance{Model: client.Model(), Documents: conveyance.Report}
+	provenance := analysis.Provenance{Model: client.Model(), Documents: conveyance.Report, ShortfallAccepted: accepted}
 	if err := analysis.WriteManifest(outputPath, manifest, provenance); err != nil {
 		return fmt.Errorf("writing manifest: %w", err)
 	}
@@ -138,6 +171,38 @@ func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputP
 	fmt.Printf("\nManifest saved to %s\n", outputPath)
 	fmt.Printf("Review the prompt and domain contexts, then run: %s answer batch %s\n", cliCommand(), outputPath)
 	return nil
+}
+
+const (
+	shortfallAbandon = "abandon"
+	shortfallRerun   = "rerun"
+	shortfallAccept  = "accept"
+)
+
+// shortfallDecision asks what to do about a shortfall. Abandoning is listed first, so the
+// preselected answer costs nothing and accepts nothing: accepting fewer questions than
+// estimated must be chosen, never defaulted into.
+func shortfallDecision(sf *analysis.ShortfallError) (string, error) {
+	options := []huh.Option[string]{
+		huh.NewOption("Abandon — write no manifest", shortfallAbandon),
+	}
+	if next := analysis.NextEffort(sf.Effort); next != analysis.EffortUnset {
+		options = append(options, huh.NewOption(
+			fmt.Sprintf("Re-run the question extraction at reasoning %q (one more questions call)", next), shortfallRerun))
+	}
+	options = append(options, huh.NewOption(
+		fmt.Sprintf("Continue with the %d questions produced", sf.Produced), shortfallAccept))
+
+	choice := shortfallAbandon
+	if err := huh.NewForm(huh.NewGroup(
+		huh.NewSelect[string]().
+			Title("Fewer questions than triage estimated. What now?").
+			Options(options...).
+			Value(&choice),
+	)).Run(); err != nil {
+		return "", fmt.Errorf("shortfall decision: %w", err)
+	}
+	return choice, nil
 }
 
 // runInterview asks the questions whose answers shape the manifest. The OpenStack
@@ -301,6 +366,14 @@ func printCheckResult(r chat.CheckResult) {
 				note = "  <- matches nothing"
 			}
 			fmt.Printf("    %-24s %4d question(s)%s\n", dm.Match, dm.Count, note)
+			// A single-question entry is shown with its question and the start of its
+			// context, so a context attached to the wrong question is visible here.
+			if q := dm.OnlyQuestion; q != nil {
+				fmt.Printf("    %-24s      ↳ %s: %s\n", "", q.ID, q.Text)
+				if dm.ContextPreview != "" {
+					fmt.Printf("    %-24s        context: %s\n", "", dm.ContextPreview)
+				}
+			}
 		}
 	}
 

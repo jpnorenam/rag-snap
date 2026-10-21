@@ -3,6 +3,7 @@ package analysis
 import (
 	"context"
 	"errors"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -130,6 +131,127 @@ func TestGenerateHandsQuestionIDsToTheStrategyCall(t *testing.T) {
 	if !strings.Contains(body, "C. Section") {
 		t.Error("the strategy call was not told the question sources")
 	}
+	// Ids alone let the strategy call route by the document's own clause numbering and
+	// attach a context to the wrong question, so each id must arrive with its text.
+	for _, line := range []string{"- C1: Requirement 1", "- C3: Requirement 3"} {
+		if !strings.Contains(body, line) {
+			t.Errorf("the strategy call was not given %q", line)
+		}
+	}
+}
+
+func TestTrimAtWordKeepsWordsWholeAndMarksTheCut(t *testing.T) {
+	long := strings.Repeat("requirement ", 40) // 480 bytes
+	got := trimAtWord(long, 50)
+	if !strings.HasSuffix(got, " …") || len(got) > 50+len(" …") {
+		t.Errorf("trimAtWord = %q, want at most 50 bytes plus a cut marker", got)
+	}
+	if strings.Contains(strings.TrimSuffix(got, " …"), "requirem ") || strings.HasSuffix(strings.TrimSuffix(got, " …"), "requir") {
+		t.Errorf("trimAtWord split a word: %q", got)
+	}
+	if got := trimAtWord("Does the\n  provider   support it?", 300); got != "Does the provider support it?" {
+		t.Errorf("whitespace should collapse to single spaces, got %q", got)
+	}
+}
+
+func TestExtractionInstructionsCoverEveryDemandColumn(t *testing.T) {
+	// Both passes must count on the same basis, or a missed evidence column is missed
+	// by both and the shortfall check has nothing to compare.
+	if !strings.Contains(questionsInstruction, "EVERY COLUMN THAT MAKES A DEMAND") {
+		t.Error("the questions instruction lost the every-demand-column rule")
+	}
+	if !strings.Contains(triageInstruction, "evidence, validation-proof, acceptance-criteria or deliverables column") {
+		t.Error("the triage instruction does not count demands in secondary columns")
+	}
+
+	fs := newFakeServer(t, fakeCompletion{content: questionsJSON(3)}, fakeCompletion{content: strategyJSON})
+	c := testClient(t, fs)
+	if _, err := c.Generate(context.Background(), testConveyance(t), testCatalogue(), testTriage(3),
+		Interview{AnswerWords: 100, AnswerLimit: LengthSoft}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !strings.Contains(requestText(t, fs.requests[0]), "EVERY COLUMN THAT MAKES A DEMAND") {
+		t.Error("the questions request did not carry the every-demand-column rule")
+	}
+}
+
+func TestExtractionNeverSplitsByAnswerFieldOrInventsRangedIDs(t *testing.T) {
+	// The live MASCOM regression: with the every-column rule alone, a high-effort
+	// extraction emitted one question per answer field (compliance, product, licence,
+	// cross-reference, comment) and gave individual ids to numbers inside ranged rows.
+	for _, want := range []string{"ANSWER FIELDS ARE NOT QUESTIONS", "RANGED ROWS KEEP THEIR RANGE", `"FR_11-15-a"`} {
+		if !strings.Contains(questionsInstruction, want) {
+			t.Errorf("the questions instruction is missing %q", want)
+		}
+	}
+	if !strings.Contains(triageInstruction, "answer-field columns the respondent fills in") {
+		t.Error("triage must not count answer-field columns as questions, or the estimate inflates to match the regression")
+	}
+}
+
+func TestShortfallSectionColumnFitsTheLongestName(t *testing.T) {
+	err := &ShortfallError{Expected: 220, Produced: 77, FinishReason: "STOP", Effort: EffortMedium, Sections: []SectionCount{
+		{Name: "A.1 Functional Requirements Compliance Matrix", Estimated: 100, Produced: 62},
+		{Name: "A.2 Non-Functional Requirements Compliance Matrix", Estimated: 120, Produced: 15},
+	}}
+	var cols []int
+	for _, line := range strings.Split(err.Error(), "\n") {
+		if i := strings.Index(line, "produced "); i >= 0 && strings.HasPrefix(line, "  A.") {
+			cols = append(cols, i)
+		}
+	}
+	if len(cols) != 2 || cols[0] != cols[1] {
+		t.Errorf("the produced column should align across sections, got offsets %v:\n%s", cols, err.Error())
+	}
+}
+
+func TestStrategyIsToldContextsDirectAndNeverAssert(t *testing.T) {
+	if !strings.Contains(strategyInstruction, "A context DIRECTS and never ASSERTS") {
+		t.Error("the strategy instruction lost the directs-not-asserts rule")
+	}
+	if !strings.Contains(ManifestContract(), "### What a domain `context` may say") {
+		t.Error("the contract lost its section on what a domain context may say")
+	}
+}
+
+func TestWorkedExampleNamesAreAllPlaceholders(t *testing.T) {
+	// A realistic example name was copied into a live generation ("vendor-rfp-answers").
+	// Every retrieval target the example names must be visibly a placeholder.
+	ex := ManifestExample()
+	re := regexp.MustCompile(`"(knowledge_bases|kapa_source_groups)":\s*\[([^\]]*)\]`)
+	lists := re.FindAllStringSubmatch(ex, -1)
+	if len(lists) == 0 {
+		t.Fatal("the worked example names no knowledge bases at all; this test no longer guards anything")
+	}
+	for _, l := range lists {
+		for _, name := range regexp.MustCompile(`"([^"]+)"`).FindAllStringSubmatch(l[2], -1) {
+			if !IsExampleName(name[1]) {
+				t.Errorf("%s entry %q in the worked example is not an example- placeholder", l[1], name[1])
+			}
+		}
+	}
+	if !strings.Contains(testCatalogue().Prompt(), exampleNamePrefix) {
+		t.Error("the catalogue prompt should say example names are never selectable")
+	}
+}
+
+func TestCopiedExampleNameIsDiagnosedAsCopied(t *testing.T) {
+	strategy := `{
+	  "prompt": "A prompt.",
+	  "knowledge_bases": ["vendor-rfp", "example-kb-past-answers"],
+	  "domains": [{"match": "C*", "context": "Section C."}]
+	}`
+	fs := newFakeServer(t, fakeCompletion{content: questionsJSON(5)}, fakeCompletion{content: strategy})
+	c := testClient(t, fs)
+
+	_, err := c.Generate(context.Background(), testConveyance(t), testCatalogue(), testTriage(5),
+		Interview{AnswerWords: 100, AnswerLimit: LengthSoft})
+	if err == nil {
+		t.Fatal("a knowledge base copied from the example must fail generation")
+	}
+	if !strings.Contains(err.Error(), "example-kb-past-answers (copied from the worked example") {
+		t.Errorf("the error should say the name was copied from the example, got: %v", err)
+	}
 }
 
 func TestGenerateFailsOnAMaterialShortfall(t *testing.T) {
@@ -154,6 +276,110 @@ func TestGenerateFailsOnAMaterialShortfall(t *testing.T) {
 	// The strategy call must not have run: there is nothing to write a strategy for.
 	if fs.calls != 1 {
 		t.Errorf("expected generation to stop after the questions call, got %d calls", fs.calls)
+	}
+	// The call finished normally, so the message says so and does not send the
+	// operator after the reasoning budget — the advice that was backwards for MASCOM.
+	msg := err.Error()
+	for _, want := range []string{"finished normally", `"STOP"`, "By section:", "C. Section", "re-run the extraction at reasoning \"medium\""} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("shortfall message should contain %q, got:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "lower "+ConfReasoningQuestions) {
+		t.Errorf("a clean-finish shortfall must not prescribe lowering reasoning effort:\n%s", msg)
+	}
+	if len(shortfall.Questions) != 40 || shortfall.Effort != EffortLow {
+		t.Errorf("the error must carry the 40 produced questions and the effort used, got %d and %q",
+			len(shortfall.Questions), shortfall.Effort)
+	}
+}
+
+func TestAcceptingAShortfallSkipsTheQuestionsCall(t *testing.T) {
+	// Only a strategy response is queued: a second questions call would consume it and
+	// fail the strategy parse, so this proves the accepted questions were used as-is.
+	fs := newFakeServer(t, fakeCompletion{content: strategyJSON})
+	c := testClient(t, fs)
+
+	accepted := []chat.BatchQuestion{{ID: "C1", Question: "SR-IOV", Source: "C. Section"}, {ID: "C2", Question: "NUMA", Source: "C. Section"}}
+	m, err := c.GenerateWith(context.Background(), testConveyance(t), testCatalogue(), testTriage(150),
+		Interview{AnswerWords: 100, AnswerLimit: LengthSoft}, GenerateOptions{AcceptedQuestions: accepted})
+	if err != nil {
+		t.Fatalf("GenerateWith: %v", err)
+	}
+	if fs.calls != 1 {
+		t.Errorf("expected only the strategy call, got %d calls", fs.calls)
+	}
+	if !strings.Contains(requestText(t, fs.requests[0]), "Design the answering strategy") {
+		t.Error("the one call made should be the strategy call")
+	}
+	if len(m.Questions) != 2 || m.Questions[1].ID != "C2" {
+		t.Errorf("the manifest should carry exactly the accepted questions, got %+v", m.Questions)
+	}
+}
+
+func TestRerunOverridesTheQuestionsEffortOnly(t *testing.T) {
+	fs := newFakeServer(t, fakeCompletion{content: questionsJSON(3)}, fakeCompletion{content: strategyJSON})
+	c := testClient(t, fs) // questions effort low, strategy high
+
+	if _, err := c.GenerateWith(context.Background(), testConveyance(t), testCatalogue(), testTriage(3),
+		Interview{AnswerWords: 100, AnswerLimit: LengthSoft}, GenerateOptions{QuestionsEffort: EffortMedium}); err != nil {
+		t.Fatalf("GenerateWith: %v", err)
+	}
+	if got := thinkingLevel(t, fs.requests[0]); got != "MEDIUM" {
+		t.Errorf("re-run questions call thinkingLevel = %v, want MEDIUM", got)
+	}
+	if got := thinkingLevel(t, fs.requests[1]); got != "HIGH" {
+		t.Errorf("strategy call thinkingLevel = %v, want its own HIGH, unaffected by the override", got)
+	}
+}
+
+func TestAttributeSectionsByLongestPrefix(t *testing.T) {
+	tr := &Triage{Sections: []TriageSection{
+		{Name: "Functional", IDPrefix: "FR_*", EstimatedQuestions: 95},
+		{Name: "Non-functional", IDPrefix: "NFR_", EstimatedQuestions: 115},
+		{Name: "Narrative", EstimatedQuestions: 10}, // no prefix: unknown, not guessed
+	}}
+	qs := []chat.BatchQuestion{{ID: "FR_01-a"}, {ID: "fr_02"}, {ID: "NFR_01-a"}, {ID: "NFR_02-b"}, {ID: "NFR_03"}, {ID: "X1"}}
+	got := attributeSections(tr, qs)
+
+	want := []SectionCount{
+		{Name: "Functional", IDPrefix: "FR_", Estimated: 95, Produced: 2},
+		{Name: "Non-functional", IDPrefix: "NFR_", Estimated: 115, Produced: 3},
+		{Name: "Narrative", Estimated: 10, Produced: -1},
+		{Name: "(matching no section's id prefix)", Produced: 1},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("attributeSections = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("section %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+	if attributeSections(nil, qs) != nil {
+		t.Error("no triage means no breakdown")
+	}
+}
+
+func TestNextEffortLadder(t *testing.T) {
+	for from, want := range map[Effort]Effort{
+		EffortMinimal: EffortLow, EffortLow: EffortMedium, EffortMedium: EffortHigh,
+		EffortUnset: EffortHigh, EffortHigh: EffortUnset,
+	} {
+		if got := NextEffort(from); got != want {
+			t.Errorf("NextEffort(%q) = %q, want %q", from, got, want)
+		}
+	}
+}
+
+func TestTruncationIsNeverAShortfall(t *testing.T) {
+	// Only a clean finish can be accepted; a cut-off response must never be.
+	fs := newFakeServer(t, fakeCompletion{content: `{"questions":[`, finishReason: "MAX_TOKENS", thoughtTokens: 60000, answerTokens: 100})
+	c := testClient(t, fs)
+	_, err := c.Generate(context.Background(), testConveyance(t), testCatalogue(), testTriage(150),
+		Interview{AnswerWords: 100, AnswerLimit: LengthSoft})
+	if !IsTruncated(err) || IsShortfall(err) {
+		t.Errorf("a truncated questions call must be a TruncatedError and never a ShortfallError, got %T: %v", err, err)
 	}
 }
 

@@ -111,6 +111,7 @@ export default function CheckFindings({ result, className }: Props) {
                 <tr>
                   <th>Pattern</th>
                   <th className="u-align--right">Questions</th>
+                  <th>Single question routed</th>
                 </tr>
               </thead>
               <tbody>
@@ -120,6 +121,20 @@ export default function CheckFindings({ result, className }: Props) {
                       <code>{dm.match}</code>
                     </td>
                     <td className="u-align--right">{dm.count}</td>
+                    {/* Shown only for an entry routing exactly one question, so a context
+                        attached to the wrong question can be seen at a glance. */}
+                    <td>
+                      {dm.only_question && (
+                        <>
+                          <code>{dm.only_question.id}</code> {dm.only_question.text}
+                          {dm.context_preview && (
+                            <span className="p-text--small u-text--muted check-findings__context">
+                              Context: {dm.context_preview}
+                            </span>
+                          )}
+                        </>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

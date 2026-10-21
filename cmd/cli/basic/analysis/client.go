@@ -153,6 +153,15 @@ var blockingFinishReasons = map[genai.FinishReason]bool{
 	genai.FinishReasonImageSafety:       true,
 }
 
+// callResult is how one call ended, for callers that report on it — a shortfall needs
+// it to show the call finished normally rather than running out of budget.
+type callResult struct {
+	FinishReason  string
+	ThoughtTokens int32
+	AnswerTokens  int32
+	Ceiling       int32
+}
+
 // complete sends one schema-constrained call and returns its raw JSON content.
 //
 // Every response is checked for the failures a schema cannot prevent: stopping at the
@@ -169,7 +178,8 @@ func (c *Client) complete(
 	schema map[string]any,
 	effort Effort,
 	ceiling int32,
-) ([]byte, error) {
+) ([]byte, callResult, error) {
+	res := callResult{Ceiling: ceiling}
 	contents := []*genai.Content{genai.NewContentFromParts(toGenaiParts(parts), genai.RoleUser)}
 	cfg := &genai.GenerateContentConfig{
 		SystemInstruction: genai.NewContentFromText(system, genai.RoleUser),
@@ -190,22 +200,22 @@ func (c *Client) complete(
 	resp, err := c.api.Models.GenerateContent(ctx, c.settings.Model, contents, cfg)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, ctxErr
+			return nil, res, ctxErr
 		}
-		return nil, classifyRequestError(err, c.settings, call)
+		return nil, res, classifyRequestError(err, c.settings, call)
 	}
 
 	if len(resp.Candidates) == 0 {
 		if resp.PromptFeedback != nil && resp.PromptFeedback.BlockReason != "" {
-			return nil, &BlockedError{Call: call, Reason: string(resp.PromptFeedback.BlockReason), Prompt: true}
+			return nil, res, &BlockedError{Call: call, Reason: string(resp.PromptFeedback.BlockReason), Prompt: true}
 		}
-		return nil, &TruncatedError{Call: call, Empty: true, Ceiling: ceiling}
+		return nil, res, &TruncatedError{Call: call, Empty: true, Ceiling: ceiling}
 	}
 
 	candidate := resp.Candidates[0]
 	finish := candidate.FinishReason
 	if blockingFinishReasons[finish] {
-		return nil, &BlockedError{Call: call, Reason: string(finish)}
+		return nil, res, &BlockedError{Call: call, Reason: string(finish)}
 	}
 
 	// Text skips thought parts, so reasoning never reaches the parser. The untrimmed
@@ -218,6 +228,7 @@ func (c *Client) complete(
 	if u := resp.UsageMetadata; u != nil {
 		thoughts, answer = u.ThoughtsTokenCount, u.CandidatesTokenCount
 	}
+	res.FinishReason, res.ThoughtTokens, res.AnswerTokens = string(finish), thoughts, answer
 	if c.verbose {
 		fmt.Printf("analysis: %s response %d bytes (finish reason %q, %d thought + %d answer tokens of %d)\n",
 			call, len(raw), finish, thoughts, answer, ceiling)
@@ -227,15 +238,15 @@ func (c *Client) complete(
 		// Empty with any finish reason is a failure. When the reason is the ceiling
 		// it is reasoning exhaustion; otherwise it is a provider fault. Neither is an
 		// answer, so neither may produce a manifest.
-		return nil, &TruncatedError{Call: call, Empty: true, ThoughtTokens: thoughts, AnswerTokens: answer, Ceiling: ceiling}
+		return nil, res, &TruncatedError{Call: call, Empty: true, ThoughtTokens: thoughts, AnswerTokens: answer, Ceiling: ceiling}
 	}
 	if finish == genai.FinishReasonMaxTokens {
-		return nil, &TruncatedError{Call: call, ThoughtTokens: thoughts, AnswerTokens: answer, Ceiling: ceiling, Content: raw}
+		return nil, res, &TruncatedError{Call: call, ThoughtTokens: thoughts, AnswerTokens: answer, Ceiling: ceiling, Content: raw}
 	}
 
 	block, err := extractJSONBlock(content)
 	if err != nil {
-		return nil, &MalformedResponseError{
+		return nil, res, &MalformedResponseError{
 			Call: call, FinishReason: string(finish), Content: content, Reason: err.Error(),
 		}
 	}
@@ -247,12 +258,12 @@ func (c *Client) complete(
 	// complaint ("found unexpected end of stream") cannot tell those apart, which
 	// makes the failure undiagnosable from the message alone.
 	if !json.Valid([]byte(block)) {
-		return nil, &MalformedResponseError{
+		return nil, res, &MalformedResponseError{
 			Call: call, FinishReason: string(finish), Content: block,
 			Reason: "the response is not valid JSON",
 		}
 	}
-	return []byte(block), nil
+	return []byte(block), res, nil
 }
 
 // toGenaiParts renders request parts in the SDK's shape. A PDF travels inline as its

@@ -323,6 +323,13 @@ const ragChatSystemPrompt = "You are a Canonical technical assistant. Apply thes
 	"4. FORMAT: Be concise and direct. Use bullet points when listing multiple items. You may ask a clarifying question if the query is ambiguous.\n" +
 	"5. NO ANSWER: If the context does not contain enough information, say so plainly and do not speculate."
 
+// RequirementDomainLabel introduces a question's domain context in the answering turn.
+//
+// It is exported because generated prompts name it: the analysis package appends a rule
+// telling the answering model that text under this label is guidance, not a source. A
+// rename here must be a rename there, or that rule would point at nothing.
+const RequirementDomainLabel = "Requirement domain"
+
 // buildRAGPrompt wraps the user's original prompt with the retrieved context so
 // the LLM can ground its answer.
 //
@@ -342,7 +349,7 @@ func buildRAGPrompt(ragContext, domainContext, id, prompt string) string {
 		if !strings.HasSuffix(domain, ".") && !strings.HasSuffix(domain, "!") && !strings.HasSuffix(domain, "?") {
 			domain += "."
 		}
-		fmt.Fprintf(&b, "\n\nRequirement domain: %s Answer within this domain.", domain)
+		fmt.Fprintf(&b, "\n\n%s: %s Answer within this domain.", RequirementDomainLabel, domain)
 	}
 
 	b.WriteString("\n\nQuestion")

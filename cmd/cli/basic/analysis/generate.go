@@ -101,6 +101,12 @@ Follow the contract's "questions[]" section exactly. The three rules that matter
 
 - ONE QUESTION PER ENTRY. A cell, row or bullet list often packs several distinct questions together, separated by bullet markers (_ - •), newlines, semicolons, or a "?" mid-text. Each becomes its own entry. A cell left whole produces one crammed answer that addresses its first clause and neglects the rest, so splitting is not tidying — it decides whether those requirements get answered at all. Do not emit an entry for a header that merely labels the cells beneath it.
 
+- EVERY COLUMN THAT MAKES A DEMAND. A table row may carry its requirement in more than one column — evidence, validation proof, acceptance criteria, deliverables. A distinct demand in any of these is its own question, even when the primary requirement column says nothing of it. Put the row id and the column heading in "source" (e.g. "T4 — Evidence / Validation proof"). Columns that only label, number, categorise or score a row are not questions.
+
+- ANSWER FIELDS ARE NOT QUESTIONS. Columns the respondent fills in — a compliance status, the bidder's product or component, whether it is included in a licence, a proposal cross-reference, comments, remarks or qualifications — are where the answer goes, not demands. Never emit one question per answer field: a row with five answer columns is still split only by the requirements it states, and the answering prompt fills every field from one answer.
+
+- RANGED ROWS KEEP THEIR RANGE. When one row covers a range of ids the document never defines individually ("FR_11–FR_15"), keep the range in the id ("FR_11-15-a", "FR_11-15-b") and split by requirement. Never assign requirements to individual numbers inside the range: that is inventing ids, and guessing which requirement is which number.
+
 - MAKE EACH QUESTION STAND ALONE. The answering model sees one question with no document, no neighbouring rows and no section header. Where the source is shorthand ("_ control over encryption keys."), expand it into a complete question meaning exactly what the shorthand meant. Add only what the shorthand implied; never invent a requirement, and never split one question into two by inventing a second clause. The exception is a compliance matrix whose rows are single named capabilities ("SR-IOV", "CPU Pinning") — there the term is the requirement, so leave it alone.
 
 - IDS MUST BE SHORT AND ROUTABLE. Use the document's ids where they exist. Where they do not, assign a short section code and suffix each question within it (R02-a, R02-b, R02-c), and put the full section title in "source". Never use a long section title as an id.
@@ -109,7 +115,7 @@ Work through the document in order, section by section, so nothing is missed.`
 
 const strategyInstruction = `Design the answering strategy for the attached documents: the system prompt, the retrieval targets, and the requirement-domain routing.
 
-Do NOT extract the questions — another pass does that. You are given the question ids that pass found, so that your domains patterns match ids that actually exist.
+Do NOT extract the questions — another pass does that. You are given every question that pass produced, each with its id. Write each domains pattern and its context against these questions, not against the document's own clause numbering, which the extraction pass may have renumbered.
 
 Produce:
 
@@ -121,7 +127,7 @@ Produce:
 
 3. "kapa_source_groups" — source group identifiers from the catalogue, or omit entirely.
 
-4. "domains" — one entry per section of the RFP, each with a pattern matching that section's question ids and a context that tells the answering model what that section is really asking about and what counts as evidence in it. Check every pattern against the question ids you were given. Where a single question needs context the rest of its section does not, give it its own entry with a pattern matching only that id.
+4. "domains" — one entry per section of the RFP, each with a pattern matching that section's question ids and a context that tells the answering model what that section is really asking about and what counts as evidence in it. A context DIRECTS and never ASSERTS: it says what to address and what to look for, and never states the proposed solution's capabilities, figures, locations, staffing, entities, certifications or commitments as facts — see "What a domain context may say" in the contract. Check every pattern against the question ids you were given. Where a single question needs context the rest of its section does not, give it its own entry with a pattern matching only that id.
 
 Do not include instructions about answer length, gap reporting, or filler in the prompt: those are appended afterwards and will be duplicated if you write them yourself.`
 
@@ -140,13 +146,45 @@ func (c *Client) Generate(
 	t *Triage,
 	iv Interview,
 ) (*chat.BatchManifest, error) {
+	return c.GenerateWith(ctx, conv, cat, t, iv, GenerateOptions{})
+}
+
+// GenerateOptions adjusts one generation, for the operator's decision after a shortfall.
+type GenerateOptions struct {
+	// AcceptedQuestions, when non-nil, are the questions the operator accepted from a
+	// shortfall. The questions call and the count comparison are skipped and the
+	// strategy call runs over exactly these: re-running would pay twice and, being
+	// non-deterministic, could return a different list from the one the operator saw.
+	AcceptedQuestions []chat.BatchQuestion
+
+	// QuestionsEffort overrides analysis.reasoning.questions for this generation's
+	// questions call, which is how a re-run at higher effort is expressed.
+	QuestionsEffort Effort
+}
+
+// GenerateWith is Generate with options.
+func (c *Client) GenerateWith(
+	ctx context.Context,
+	conv *Conveyance,
+	cat *Catalogue,
+	t *Triage,
+	iv Interview,
+	opts GenerateOptions,
+) (*chat.BatchManifest, error) {
 	if err := iv.Validate(); err != nil {
 		return nil, err
 	}
 
-	questions, err := c.generateQuestions(ctx, conv, t)
-	if err != nil {
-		return nil, err
+	questions := opts.AcceptedQuestions
+	if questions == nil {
+		effort := c.settings.ReasoningQuestions
+		if opts.QuestionsEffort != EffortUnset {
+			effort = opts.QuestionsEffort
+		}
+		var err error
+		if questions, err = c.generateQuestions(ctx, conv, t, effort); err != nil {
+			return nil, err
+		}
 	}
 
 	strategy, err := c.generateStrategy(ctx, conv, cat, t, iv, questions)
@@ -170,10 +208,10 @@ func (c *Client) Generate(
 	if len(badKBs) > 0 || len(badGroups) > 0 {
 		var parts []string
 		if len(badKBs) > 0 {
-			parts = append(parts, fmt.Sprintf("knowledge base(s) %s", strings.Join(badKBs, ", ")))
+			parts = append(parts, fmt.Sprintf("knowledge base(s) %s", strings.Join(annotateExampleNames(badKBs), ", ")))
 		}
 		if len(badGroups) > 0 {
-			parts = append(parts, fmt.Sprintf("kapa source group(s) %s", strings.Join(badGroups, ", ")))
+			parts = append(parts, fmt.Sprintf("kapa source group(s) %s", strings.Join(annotateExampleNames(badGroups), ", ")))
 		}
 		return nil, fmt.Errorf(
 			"the model selected %s, which do not exist; they were dropped, so re-run analysis rather than answering against an incomplete selection",
@@ -191,7 +229,7 @@ func (c *Client) Generate(
 	return manifest, nil
 }
 
-func (c *Client) generateQuestions(ctx context.Context, conv *Conveyance, t *Triage) ([]chat.BatchQuestion, error) {
+func (c *Client) generateQuestions(ctx context.Context, conv *Conveyance, t *Triage, effort Effort) ([]chat.BatchQuestion, error) {
 	system := Grounding()
 
 	instruction := questionsInstruction
@@ -223,7 +261,7 @@ func (c *Client) generateQuestions(ctx context.Context, conv *Conveyance, t *Tri
 
 	parts := append([]part{textPart(instruction)}, documentParts(conv)...)
 
-	data, err := c.complete(ctx, "questions", system, parts, "rfp_questions", questionsSchema(), c.settings.ReasoningQuestions, maxOutputTokens)
+	data, res, err := c.complete(ctx, "questions", system, parts, "rfp_questions", questionsSchema(), effort, maxOutputTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -242,7 +280,16 @@ func (c *Client) generateQuestions(ctx context.Context, conv *Conveyance, t *Tri
 	// a fraction of the RFP, which is why triage estimates a count at all.
 	if t != nil && t.EstimatedQuestions > 0 {
 		if float64(len(questions)) < float64(t.EstimatedQuestions)*shortfallFraction {
-			return nil, &ShortfallError{Expected: t.EstimatedQuestions, Produced: len(questions)}
+			return nil, &ShortfallError{
+				Expected:     t.EstimatedQuestions,
+				Produced:     len(questions),
+				FinishReason: res.FinishReason,
+				AnswerTokens: res.AnswerTokens,
+				Ceiling:      res.Ceiling,
+				Effort:       effort,
+				Sections:     attributeSections(t, questions),
+				Questions:    questions,
+			}
 		}
 	}
 	return questions, nil
@@ -276,7 +323,7 @@ func (c *Client) generateStrategy(
 
 	parts := append([]part{textPart(b.String())}, documentParts(conv)...)
 
-	data, err := c.complete(ctx, "strategy", system, parts, "rfp_strategy", strategySchema(), c.settings.ReasoningStrategy, maxOutputTokens)
+	data, _, err := c.complete(ctx, "strategy", system, parts, "rfp_strategy", strategySchema(), c.settings.ReasoningStrategy, maxOutputTokens)
 	if err != nil {
 		return nil, err
 	}
@@ -299,19 +346,23 @@ func (c *Client) generateStrategy(
 	return &resp, nil
 }
 
-// questionIDDigest lists the question ids and sources the strategy call must write its
-// patterns against.
+// digestTextLimit caps each question's text in the strategy digest. Routing needs to
+// know what a question is about, not every word of it, and the cap bounds the input the
+// digest adds — about 15K tokens at the largest manifest in this repository.
+const digestTextLimit = 300
+
+// questionIDDigest lists every generated question, with its id and text, for the
+// strategy call.
 //
-// Handing the ids over is what makes a generated pattern land. A pattern designed
-// against imagined ids matches nothing, and a zero-match pattern fails silently: the run
-// succeeds and the answers simply arrive without their context.
+// The text is the point. Given ids alone, the strategy call routed by the document's
+// own clause numbering and attached a context to the wrong question when the extraction
+// pass had numbered clauses differently (MeitY's T4-iii). Grouped by source, so the
+// section structure a domains list is organised around stays visible.
 func questionIDDigest(questions []chat.BatchQuestion) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "The %d question ids the extraction pass produced, which your domains patterns must match:\n\n", len(questions))
+	fmt.Fprintf(&b, "The %d questions the extraction pass produced. Your domains patterns must match these ids, and each context must concern the questions its pattern matches:\n\n", len(questions))
 
-	// Grouped by source so the section structure is visible, which is what a domains
-	// list is organised around.
-	bySource := map[string][]string{}
+	bySource := map[string][]chat.BatchQuestion{}
 	var order []string
 	for _, q := range questions {
 		src := q.Source
@@ -321,17 +372,90 @@ func questionIDDigest(questions []chat.BatchQuestion) string {
 		if _, seen := bySource[src]; !seen {
 			order = append(order, src)
 		}
-		id := q.ID
-		if id == "" {
-			id = "(no id)"
-		}
-		bySource[src] = append(bySource[src], id)
+		bySource[src] = append(bySource[src], q)
 	}
 	for _, src := range order {
-		ids := bySource[src]
-		fmt.Fprintf(&b, "- %s: %s\n", src, strings.Join(ids, ", "))
+		fmt.Fprintf(&b, "%s:\n", src)
+		for _, q := range bySource[src] {
+			id := q.ID
+			if id == "" {
+				id = "(no id)"
+			}
+			fmt.Fprintf(&b, "- %s: %s\n", id, trimAtWord(q.Question, digestTextLimit))
+		}
 	}
 	return b.String()
+}
+
+// trimAtWord shortens s to at most limit bytes, cutting at the last space before the
+// limit so no word is split, and marks the cut. Whitespace runs collapse first, so a
+// multi-line question reads as one line in the digest.
+func trimAtWord(s string, limit int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= limit {
+		return s
+	}
+	cut := strings.LastIndex(s[:limit], " ")
+	if cut <= 0 {
+		cut = limit
+	}
+	return s[:cut] + " …"
+}
+
+// attributeSections sets each triage section's estimate beside the questions produced
+// for it, attributing a question to the section with the longest id prefix it carries so
+// nested prefixes ("FR" and "FR_1") do not count it twice. A section with no prefix is
+// reported as unknown rather than guessed at, and questions matching no prefix are
+// reported together so the produced counts always add up.
+func attributeSections(t *Triage, questions []chat.BatchQuestion) []SectionCount {
+	if t == nil || len(t.Sections) == 0 {
+		return nil
+	}
+	out := make([]SectionCount, len(t.Sections))
+	anyPrefix := false
+	for i, s := range t.Sections {
+		prefix := strings.TrimRight(strings.TrimSpace(s.IDPrefix), "*")
+		out[i] = SectionCount{Name: s.Name, IDPrefix: prefix, Estimated: s.EstimatedQuestions, Produced: -1}
+		if prefix != "" {
+			out[i].Produced = 0
+			anyPrefix = true
+		}
+	}
+	if !anyPrefix {
+		return out
+	}
+	unattributed := 0
+	for _, q := range questions {
+		id := strings.ToLower(q.ID)
+		best, bestLen := -1, 0
+		for i, s := range out {
+			if p := strings.ToLower(s.IDPrefix); p != "" && strings.HasPrefix(id, p) && len(p) > bestLen {
+				best, bestLen = i, len(p)
+			}
+		}
+		if best < 0 {
+			unattributed++
+			continue
+		}
+		out[best].Produced++
+	}
+	if unattributed > 0 {
+		out = append(out, SectionCount{Name: "(matching no section's id prefix)", Produced: unattributed})
+	}
+	return out
+}
+
+// annotateExampleNames marks each name copied from the worked example, which is a more
+// useful diagnosis than "does not exist": it says where the name came from.
+func annotateExampleNames(names []string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = n
+		if IsExampleName(n) {
+			out[i] = n + " (copied from the worked example, not the catalogue)"
+		}
+	}
+	return out
 }
 
 // dropEmptyQuestions removes entries with no question text, which the manifest reader
@@ -371,6 +495,9 @@ func ValidateManifest(m *chat.BatchManifest) error {
 	}
 	if !PromptHasNoContextRule(m.Prompt) {
 		return fmt.Errorf("the assembled prompt lost the no-context rule, which must never happen: this is a bug in prompt assembly, not in the model response")
+	}
+	if !PromptHasDomainTextRule(m.Prompt) {
+		return fmt.Errorf("the assembled prompt lost the domain-text rule, which must never happen: this is a bug in prompt assembly, not in the model response")
 	}
 	return nil
 }

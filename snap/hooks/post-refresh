@@ -24,7 +24,9 @@ seed() {
 # RFP analysis. Keep in sync with the install hook, which documents each key.
 seed analysis.enabled "false"
 seed analysis.model ""
-seed analysis.reasoning.questions "low"
+# seed() never overwrites, so an install that already holds "low" keeps it; the new
+# default is documented rather than forced.
+seed analysis.reasoning.questions "medium"
 seed analysis.reasoning.strategy "high"
 seed analysis.answer.words "100"
 seed analysis.answer.limit "soft"

@@ -1717,10 +1717,28 @@ Analysis runs in two passes with a short interview between them:
 3. **Generation.** The manifest is produced from the documents already conveyed, checked, and shown
    to you before it is written.
 
-Two rules are appended to every generated prompt by rag-cli, not requested of the model: that saying
-"no context available" or that a technology is NOT covered beats inventing an answer, and that
-answers are direct with no filler. An RFP is untrusted input — a document can contain text that
-reads as instructions — so these are enforced afterwards and re-verified by `--check`.
+Three rules are appended to every generated prompt by rag-cli, not requested of the model:
+
+- Saying "no context available", or that a technology is NOT covered, beats inventing an answer.
+- Answers are direct, with no filler.
+- The **requirement-domain text attached to a question is guidance, not a source.** A capability,
+  figure, location, entity or commitment that appears only there, and not in what retrieval found,
+  is reported as a gap.
+
+An RFP is untrusted input — a document can contain text that reads as instructions — so these are
+enforced afterwards and re-verified by `--check`.
+
+The third rule exists because of something a live run showed. A domain context reaches the
+answering model next to the retrieved passages, so a capability *stated* in a context
+("the vendor offers 24x7 support in-country") was repeated in answers as though substantiated.
+Generated contexts are therefore written to **direct**: they say what to address and what evidence to
+look for, never what the proposed solution does. When you review a generated manifest, read the domain
+contexts for exactly that — a context that asserts a fact about the solution should be rewritten to
+ask for it to be substantiated.
+
+Every column that makes a demand is extracted, not only the requirement column. A row's evidence,
+validation-proof, acceptance-criteria or deliverables column often asks for something the requirement
+does not, and each becomes its own question, with a `source` naming the row and the column.
 
 ```bash
 rag-cli.rag answer batch --build ~/rfp/telco-matrix.xlsx \
@@ -1738,6 +1756,48 @@ Questions:  about 192
 OpenStack:  yes
 Sections:   17
 ```
+
+#### When fewer questions come back than triage estimated
+
+Generation compares the questions it extracted against the triage estimate. A response cut off at the
+model's output ceiling always fails. But a **shortfall from an extraction that finished normally** is
+your decision, because the same pair of numbers means two different things:
+
+- **The passes split the document differently.** A prose RFI full of comma-separated capability lists
+  can be counted at 168 by one pass and 111 by the other, when a person would write 24 broader
+  questions. Accepting is reasonable.
+- **Packed rows were left unsplit.** A compliance matrix whose cells hold several requirements can come
+  back at roughly one question per row (53 where a person wrote 164). Accepting would give answers that
+  address the first requirement in each cell and drop the rest. Re-run instead.
+
+The report shows **each section's produced count beside its estimate**, which is what tells the two
+apart: one section far below its estimate points at unsplit rows there, while every section short by
+a similar proportion points at a counting difference.
+
+```
+generation produced 53 questions but triage estimated about 220 — too few to treat as complete without a decision.
+The questions call finished normally (finish reason "STOP", 9214 of 65536 output tokens, reasoning "low") …
+
+By section:
+  A.1 Functional Requirements                      produced   31, estimated about 95
+  A.2 Non-Functional Requirements                  produced   22, estimated about 115
+
+? Fewer questions than triage estimated. What now?
+  > Abandon — write no manifest
+    Re-run the question extraction at reasoning "medium" (one more questions call)
+    Continue with the 53 questions produced
+```
+
+- **Re-run** repeats only the questions call, one reasoning level higher (`minimal` → `low` →
+  `medium` → `high`), over the documents already conveyed. Its result is compared against the
+  estimate again. The choice is not offered at `high`.
+- **Continue** uses the questions already produced — it does not extract them again, so what you
+  accepted is exactly what the manifest contains — and records the decision in the manifest's header:
+  `# Question count accepted by the operator below the triage estimate: 53 produced, about 220 estimated`.
+- **Abandon** is preselected, so pressing Enter accepts nothing and spends nothing.
+
+Without a terminal to ask on, a shortfall stays an error. The web UI offers the same three choices on
+the build wizard.
 
 If analysis is unconfigured or the provider is unreachable, the failure says so **and** reminds you
 that the extraction path still works — drop `--analyze`.
@@ -1763,7 +1823,11 @@ two severities:
   question id, an invalid `domains` entry, a knowledge base that does not exist (with a near-miss
   suggestion, since a typo gives you no other signal).
 - **Warning** — will run, but may not be intended: a pattern matching no question, a question no
-  pattern matches, or a prompt missing its no-context rule or its word budget.
+  pattern matches, or a prompt missing its no-context rule, its domain-text rule or its word budget.
+
+A domain pattern that routes **exactly one** question is shown with that question and the start of
+the context attached to it. This is never a finding — the check cannot judge whether a context fits —
+but it makes a context attached to the wrong question visible before you spend a run on it.
 
 A zero-match pattern is deliberately only a warning. Reserving a pattern for a section that carries
 no questions yet is legitimate, and failing on it would make the check useless on real manifests.
@@ -1781,6 +1845,9 @@ Check: 192 question(s), 19 domain(s)
     GIS1.*                      8 question(s)
     GIS2.*                     12 question(s)
     GIS*                        0 question(s)  <- matches nothing
+    E4                          1 question(s)
+                                 ↳ E4: Does the platform automatically heal failed instances?
+                                   context: The auto-heal row specifically. Describe the instance-evacuation …
 
   1 warning(s) — these run, but may not be what was intended:
     warning  domain "GIS*" matches none of this manifest's questions … this may be intentional
@@ -1794,7 +1861,7 @@ All keys are seeded as `package` keys, so `rag set <key>` works on any of them.
 |---|---|---|
 | `analysis.enabled` | `false` | Gate the feature. Off by default because it sends document content to a third party |
 | `analysis.model` | _(unset)_ | The Gemini model id to call. No default: ids are versioned, so a baked-in one would age badly. Ids are **unprefixed** — `gemini-3.1-pro-preview`, not `google/gemini-3.1-pro-preview` |
-| `analysis.reasoning.questions` | `low` | Reasoning effort for the question-extraction call: `minimal`, `low`, `medium` or `high` |
+| `analysis.reasoning.questions` | `medium` | Reasoning effort for the question-extraction call: `minimal`, `low`, `medium` or `high`. At `low`, a matrix whose cells pack several requirements can come back nearly unsplit. Installs seeded before this default keep `low`; set it with `sudo rag-cli.rag set analysis.reasoning.questions=medium` |
 | `analysis.reasoning.strategy` | `high` | Reasoning effort for the prompt-and-domains call. `none` is rejected — no Gemini 3 model can turn reasoning off |
 | `analysis.answer.words` | `100` | Interview default for answer length |
 | `analysis.answer.limit` | `soft` | Interview default for hard-versus-soft |
