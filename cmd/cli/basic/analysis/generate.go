@@ -160,6 +160,9 @@ type GenerateOptions struct {
 	// QuestionsEffort overrides analysis.reasoning.questions for this generation's
 	// questions call, which is how a re-run at higher effort is expressed.
 	QuestionsEffort Effort
+
+	// Instructions are the operator's instructions, the same ones triage was given.
+	Instructions string
 }
 
 // GenerateWith is Generate with options.
@@ -174,6 +177,9 @@ func (c *Client) GenerateWith(
 	if err := iv.Validate(); err != nil {
 		return nil, err
 	}
+	if err := ValidateInstructions(opts.Instructions); err != nil {
+		return nil, err
+	}
 
 	questions := opts.AcceptedQuestions
 	if questions == nil {
@@ -182,12 +188,12 @@ func (c *Client) GenerateWith(
 			effort = opts.QuestionsEffort
 		}
 		var err error
-		if questions, err = c.generateQuestions(ctx, conv, t, effort); err != nil {
+		if questions, err = c.generateQuestions(ctx, conv, t, effort, opts.Instructions); err != nil {
 			return nil, err
 		}
 	}
 
-	strategy, err := c.generateStrategy(ctx, conv, cat, t, iv, questions)
+	strategy, err := c.generateStrategy(ctx, conv, cat, t, iv, questions, opts.Instructions)
 	if err != nil {
 		return nil, err
 	}
@@ -229,8 +235,8 @@ func (c *Client) GenerateWith(
 	return manifest, nil
 }
 
-func (c *Client) generateQuestions(ctx context.Context, conv *Conveyance, t *Triage, effort Effort) ([]chat.BatchQuestion, error) {
-	system := Grounding()
+func (c *Client) generateQuestions(ctx context.Context, conv *Conveyance, t *Triage, effort Effort, instructions string) ([]chat.BatchQuestion, error) {
+	system := Grounding() + operatorSection(instructions)
 
 	instruction := questionsInstruction
 	if t != nil && t.CompoundCells {
@@ -302,8 +308,9 @@ func (c *Client) generateStrategy(
 	t *Triage,
 	iv Interview,
 	questions []chat.BatchQuestion,
+	instructions string,
 ) (*strategyResponse, error) {
-	system := Grounding() + "\n\n" + cat.Prompt()
+	system := Grounding() + "\n\n" + cat.Prompt() + operatorSection(instructions)
 
 	var b strings.Builder
 	b.WriteString(strategyInstruction)
@@ -404,45 +411,69 @@ func trimAtWord(s string, limit int) string {
 
 // attributeSections sets each triage section's estimate beside the questions produced
 // for it, attributing a question to the section with the longest id prefix it carries so
-// nested prefixes ("FR" and "FR_1") do not count it twice. A section with no prefix is
-// reported as unknown rather than guessed at, and questions matching no prefix are
-// reported together so the produced counts always add up.
+// nested prefixes ("FR" and "FR_1") do not count it twice. Where no prefix matches, a
+// question whose source names a section is attributed to that section — extraction
+// writes the section title into "source", so this recovers the breakdown when triage
+// gave no prefixes. Only when neither attributes a question to any section is a section
+// reported as unknown, and questions matching nothing are reported together so the
+// produced counts always add up.
 func attributeSections(t *Triage, questions []chat.BatchQuestion) []SectionCount {
 	if t == nil || len(t.Sections) == 0 {
 		return nil
 	}
 	out := make([]SectionCount, len(t.Sections))
-	anyPrefix := false
 	for i, s := range t.Sections {
 		prefix := strings.TrimRight(strings.TrimSpace(s.IDPrefix), "*")
-		out[i] = SectionCount{Name: s.Name, IDPrefix: prefix, Estimated: s.EstimatedQuestions, Produced: -1}
-		if prefix != "" {
-			out[i].Produced = 0
-			anyPrefix = true
-		}
-	}
-	if !anyPrefix {
-		return out
+		out[i] = SectionCount{Name: s.Name, IDPrefix: prefix, Estimated: s.EstimatedQuestions}
 	}
 	unattributed := 0
 	for _, q := range questions {
-		id := strings.ToLower(q.ID)
-		best, bestLen := -1, 0
-		for i, s := range out {
-			if p := strings.ToLower(s.IDPrefix); p != "" && strings.HasPrefix(id, p) && len(p) > bestLen {
-				best, bestLen = i, len(p)
-			}
-		}
-		if best < 0 {
-			unattributed++
+		if best := attributeOne(out, q); best >= 0 {
+			out[best].Produced++
 			continue
 		}
-		out[best].Produced++
+		unattributed++
+	}
+	for i := range out {
+		// A section with no prefix that no question's source named cannot be told apart
+		// from "extraction found nothing there", so it is reported as unknown, not 0.
+		if out[i].IDPrefix == "" && out[i].Produced == 0 {
+			out[i].Produced = -1
+		}
+	}
+	if unattributed == len(questions) {
+		// Nothing could be attributed, so per-section counts would be invented.
+		for i := range out {
+			out[i].Produced = -1
+		}
+		return out
 	}
 	if unattributed > 0 {
 		out = append(out, SectionCount{Name: "(matching no section's id prefix)", Produced: unattributed})
 	}
 	return out
+}
+
+// attributeOne picks the section a question belongs to: the longest id prefix it carries,
+// or failing that the longest section name its source contains. -1 when neither matches.
+func attributeOne(sections []SectionCount, q chat.BatchQuestion) int {
+	id := strings.ToLower(q.ID)
+	best, bestLen := -1, 0
+	for i, s := range sections {
+		if p := strings.ToLower(s.IDPrefix); p != "" && strings.HasPrefix(id, p) && len(p) > bestLen {
+			best, bestLen = i, len(p)
+		}
+	}
+	if best >= 0 {
+		return best
+	}
+	source := strings.ToLower(q.Source)
+	for i, s := range sections {
+		if n := strings.ToLower(strings.TrimSpace(s.Name)); n != "" && strings.Contains(source, n) && len(n) > bestLen {
+			best, bestLen = i, len(n)
+		}
+	}
+	return best
 }
 
 // annotateExampleNames marks each name copied from the worked example, which is a more

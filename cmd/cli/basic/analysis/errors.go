@@ -204,8 +204,12 @@ func (e *ShortfallError) Error() string {
 			}
 			fmt.Fprintf(&b, "\n  %-*s  produced %4s, estimated %s", width, s.Name, produced, estimate)
 		}
-		b.WriteString("\nOne section far below its estimate points at unsplit rows there; every section short by a " +
-			"similar proportion points at a counting difference.")
+		if anySectionEstimate(e.Sections) {
+			b.WriteString("\nOne section far below its estimate points at unsplit rows there; every section short by a " +
+				"similar proportion points at a counting difference.")
+		} else {
+			b.WriteString("\nTriage gave no per-section estimates, so only the produced counts can be compared.")
+		}
 	}
 
 	if next := NextEffort(e.Effort); next != EffortUnset {
@@ -214,6 +218,15 @@ func (e *ShortfallError) Error() string {
 		b.WriteString("\n\nAccept the produced questions, or re-run.")
 	}
 	return b.String()
+}
+
+func anySectionEstimate(sections []SectionCount) bool {
+	for _, s := range sections {
+		if s.Estimated > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // IsShortfall reports whether err is a ShortfallError.

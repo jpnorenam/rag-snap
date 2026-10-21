@@ -46,6 +46,10 @@ type stagedAnalysis struct {
 	created    time.Time
 	expires    time.Time
 
+	// instructions are the operator's analysis instructions, kept so generation applies
+	// the same ones triage did without the client sending them again.
+	instructions string
+
 	// shortfall is the most recent generation's shortfall, retained so the operator can
 	// accept the questions it produced — or re-run the extraction — without re-uploading.
 	// It is nil until a generation falls short.
@@ -102,7 +106,13 @@ func checkAnalysisRequestSize(size int64) error {
 // total-bytes cap are satisfied, then rejects the request if it still does not fit —
 // which can only happen for a request larger than the whole budget.
 func (s *analysisStore) stage(conv *analysis.Conveyance, triage *analysis.Triage, cat *analysis.Catalogue) (string, error) {
-	size := conv.TotalBytes()
+	return s.stageWith(conv, triage, cat, "")
+}
+
+// stageWith is stage with the operator's instructions, which count against the store's
+// byte bound like the documents.
+func (s *analysisStore) stageWith(conv *analysis.Conveyance, triage *analysis.Triage, cat *analysis.Catalogue, instructions string) (string, error) {
+	size := conv.TotalBytes() + int64(len(instructions))
 	if err := checkAnalysisRequestSize(size); err != nil {
 		return "", err
 	}
@@ -126,12 +136,13 @@ func (s *analysisStore) stage(conv *analysis.Conveyance, triage *analysis.Triage
 	}
 
 	s.entries[token] = &stagedAnalysis{
-		conveyance: conv,
-		triage:     triage,
-		catalogue:  cat,
-		size:       size,
-		created:    now,
-		expires:    now.Add(analysisStageTTL),
+		conveyance:   conv,
+		triage:       triage,
+		catalogue:    cat,
+		instructions: instructions,
+		size:         size,
+		created:      now,
+		expires:      now.Add(analysisStageTTL),
 	}
 	s.total += size
 	return token, nil

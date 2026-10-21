@@ -242,3 +242,47 @@ func TestGapRuleSaysRetrievedNotProvidedContext(t *testing.T) {
 		t.Errorf("the gap rule should refer to the retrieved context:\n%s", gap)
 	}
 }
+
+func TestPromptPartsJoinToTheAssembledPrompt(t *testing.T) {
+	// The UI edits the model-written part and re-joins it; that is only safe if the
+	// parts reproduce the assembled prompt exactly, for every interview shape.
+	model := "  You are a solutions engineer.\n\nANSWER LENGTH is something this prose mentions too.\n  "
+	triages := map[string]*Triage{
+		"no triage":   nil,
+		"multi-field": {MultiFieldAnswers: true, MultiFieldDetail: "Compliance, Comment"},
+	}
+	interviews := map[string]Interview{
+		"soft":            {AnswerWords: 100, AnswerLimit: LengthSoft},
+		"hard":            {AnswerWords: 80, AnswerLimit: LengthHard},
+		"openstack scope": {AnswerWords: 100, AnswerLimit: LengthSoft, OpenStack: OpenStackSunbeam},
+	}
+	for tn, tr := range triages {
+		for in, iv := range interviews {
+			got, appended := PromptParts(model, iv, tr)
+			if JoinPrompt(got, appended) != AssembleGeneratedPrompt(model, iv, tr) {
+				t.Errorf("%s/%s: the parts do not re-join to the assembled prompt", tn, in)
+			}
+			// A model prompt that itself mentions a rag-cli heading stays wholly in the
+			// editable part: the boundary is never found by searching for headings.
+			if !strings.Contains(got, "ANSWER LENGTH is something this prose mentions too.") || strings.Contains(appended, "this prose") {
+				t.Errorf("%s/%s: model prose leaked across the boundary", tn, in)
+			}
+			if !strings.HasPrefix(appended, "ANSWER LENGTH\n") || !strings.HasSuffix(appended, "stop. Every sentence must carry information the evaluator did not already have.\n") {
+				t.Errorf("%s/%s: the appended block should run from ANSWER LENGTH to the end of BE DIRECT", tn, in)
+			}
+		}
+	}
+}
+
+func TestSplitAssembledPromptRecoversTheParts(t *testing.T) {
+	iv := Interview{AnswerWords: 100, AnswerLimit: LengthSoft}
+	assembled := AssembleGeneratedPrompt("You are a solutions engineer.", iv, nil)
+	model, appended, ok := SplitAssembledPrompt(assembled, iv, nil)
+	if !ok || model != "You are a solutions engineer." || JoinPrompt(model, appended) != assembled {
+		t.Errorf("split = (%q, ok=%v), want the model prompt back and an exact re-join", model, ok)
+	}
+	// A prompt whose rules were edited no longer ends with the exact block.
+	if _, _, ok := SplitAssembledPrompt(strings.Replace(assembled, "BE DIRECT", "BE BRIEF", 1), iv, nil); ok {
+		t.Error("a prompt with edited rules must not split as though they were intact")
+	}
+}

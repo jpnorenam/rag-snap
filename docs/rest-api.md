@@ -512,8 +512,12 @@ run.
 ### `POST /1.0/answer/analyze`
 
 First of the two RFP-analysis passes. `multipart/form-data`: `file` is the RFP, and any
-number of repeated `context` fields are supporting documents. Runs as an async operation
-and publishes `analysis_token`, `expires_at`, `model`, `triage` and `report`.
+number of repeated `context` fields are supporting documents. An optional `instructions`
+field carries the operator's free-text instructions (granularity, scope, which questions to
+include). They are applied to every analysis call for the session, including generation,
+without being sent again. Over 4,000 characters is a `400` before any operation starts.
+Runs as an async operation and publishes `analysis_token`, `expires_at`, `model`, `triage`,
+`report` and `instructions` (the instructions the session is working to, empty when none).
 
 `triage` is what the model found without generating anything: the RFP's identity, its
 section structure with the id prefix each section uses, an estimated question count,
@@ -542,6 +546,13 @@ Publishes `manifest` (in the shape `POST /1.0/answer/batch` accepts, so a client
 it back unchanged), `check` (see below) and `model`. An unknown or expired token returns
 `400` stating that the session expired and the documents must be uploaded again — a
 recoverable error, so a client should return to its upload step rather than dead-ending.
+
+The metadata also carries the prompt's two halves: `prompt_generated`, the part the model
+wrote, and `prompt_appended`, the rules rag-cli adds. `prompt_generated` (trimmed) +
+`"\n\n"` + `prompt_appended` is exactly `manifest.prompt`, so a client can let the first be
+edited and re-join it without being able to touch the rules. Both are omitted together when
+the prompt does not end with the exact rules block; show the prompt whole and read-only
+then.
 
 A truncated response, or an **empty** response at the model's output ceiling, fails the
 operation rather than completing with a short manifest, and **cannot be accepted**. On a

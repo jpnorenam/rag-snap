@@ -278,6 +278,28 @@ export interface AnalyzeMetadata {
   expiresAt: string;
   model: string;
   triage: Triage;
+  // The operator's instructions the session is working to, echoed by the daemon.
+  instructions: string;
+}
+
+// ANALYSIS_INSTRUCTIONS_MAX is analysis.MaxInstructionsLength: the daemon rejects
+// longer instructions, so the form stops them at the field first.
+export const ANALYSIS_INSTRUCTIONS_MAX = 4000;
+
+// joinPrompt is analysis.JoinPrompt: the one way the model-written part of a
+// generated prompt and the rules rag-cli appends are combined. Pinned against the
+// Go source by a test, because an edited prompt is only safe if it re-joins exactly
+// as the daemon assembled it.
+export function joinPrompt(model: string, appended: string): string {
+  return model.trim() + "\n\n" + appended;
+}
+
+// instructionsHeaderLines is analysis.InstructionsHeaderLines: the provenance lines
+// recording the operator's instructions, one per instruction line.
+export function instructionsHeaderLines(instructions: string): string[] {
+  const text = instructions.trim();
+  if (!text) return [];
+  return ["Operator instructions:", ...text.split("\n").map((line) => "  " + line.replace(/[ \t\r]+$/, ""))];
 }
 
 // CheckSeverity distinguishes a manifest that will not run, or names a retrieval
@@ -345,6 +367,11 @@ export interface GenerateMetadata {
   check: CheckResult;
   model: string;
   shortfallAccepted: ShortfallAcceptance | null;
+  // The prompt's two halves: the model-written part, editable, and the rules rag-cli
+  // appends, which are not. Null when the daemon did not send them (an older daemon),
+  // in which case the prompt is shown whole and read-only.
+  promptGenerated: string | null;
+  promptAppended: string | null;
 }
 
 // ShortfallSection is one triage section's estimate beside what extraction produced
@@ -418,11 +445,13 @@ export interface InterviewAnswers {
 // published on the operation metadata once it completes.
 export async function analyzeDocuments(
   file: File,
-  contextFiles: File[] = []
+  contextFiles: File[] = [],
+  instructions = ""
 ): Promise<TrackedOperation> {
   const form = new FormData();
   form.append("file", file);
   for (const f of contextFiles) form.append("context", f);
+  if (instructions.trim()) form.append("instructions", instructions.trim());
   const { operation, metadata } = await postAsyncForm<OperationView>("/1.0/answer/analyze", form);
   return { operation, view: metadata };
 }
@@ -463,6 +492,7 @@ export function parseAnalyzeMetadata(meta: Record<string, unknown>): AnalyzeMeta
     analysisToken: token,
     expiresAt: typeof meta.expires_at === "string" ? meta.expires_at : "",
     model: typeof meta.model === "string" ? meta.model : "",
+    instructions: typeof meta.instructions === "string" ? meta.instructions : "",
     triage: {
       title: raw.title,
       issuer: raw.issuer,
@@ -497,7 +527,22 @@ export function parseGenerateMetadata(meta: Record<string, unknown>): GenerateMe
     check: normaliseCheck(meta.check as Partial<CheckResult> | undefined),
     model: typeof meta.model === "string" ? meta.model : "",
     shortfallAccepted: parseAcceptance(meta.shortfall_accepted),
+    ...parsePromptParts(meta),
   };
+}
+
+// parsePromptParts accepts the two halves only together, so a client never edits
+// one without the other to re-join it to.
+function parsePromptParts(meta: Record<string, unknown>): {
+  promptGenerated: string | null;
+  promptAppended: string | null;
+} {
+  const g = meta.prompt_generated;
+  const a = meta.prompt_appended;
+  if (typeof g === "string" && typeof a === "string" && a) {
+    return { promptGenerated: g, promptAppended: a };
+  }
+  return { promptGenerated: null, promptAppended: null };
 }
 
 function parseAcceptance(raw: unknown): ShortfallAcceptance | null {

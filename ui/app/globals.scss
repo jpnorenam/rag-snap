@@ -2105,6 +2105,19 @@ $sidebar-accent: #e95420; // Ubuntu orange
   overflow-x: auto;
 }
 
+// The editable part of a generated prompt. Monospace and full width, like the read-only
+// rules block beneath it, so the two read as one prompt in two parts.
+.analysis-prompt__editor {
+  font-family: unquote(vanilla-framework.$font-monospace);
+  font-size: 0.875rem;
+  width: 100%;
+}
+
+// The operator's instructions on the triage step, kept as written.
+.analysis-instructions {
+  white-space: pre-wrap;
+}
+
 // Triage facts as a two-column definition list, collapsing to stacked rows when
 // there is no room for two columns.
 .analysis-triage {

@@ -369,8 +369,11 @@ paths:
                 question count, whether OpenStack is in scope, whether questions carry several answer
                 fields, suggested knowledge bases), a per-document conveyance report saying which
                 documents were read natively and which were converted, and an opaque
-                "analysis_token" with its "expires_at" for the follow-up generation call. Generates
-                no manifest and answers no question. Rejected with 400 when analysis is not
+                "analysis_token" with its "expires_at" for the follow-up generation call. An optional
+                "instructions" field carries the operator's free-text instructions (granularity,
+                scope, which questions to include), applied to every analysis call for this session
+                and echoed as "instructions" in the metadata; over 4000 characters is a 400 before any
+                operation starts. Generates no manifest and answers no question. Rejected with 400 when analysis is not
                 configured or no API key is present in the environment; the API key never appears in
                 any response.
             operationId: answerAnalyze
@@ -395,7 +398,11 @@ paths:
                 and runs the second analysis phase as an asynchronous operation. The documents are
                 not re-uploaded: generation runs against the set the token refers to. Publishes the
                 generated "manifest" in the same JSON shape POST /1.0/answer/batch accepts, its
-                "check" findings, and the generating "model". An unknown or expired token is a 400
+                "check" findings, and the generating "model". It also publishes the prompt's two
+                halves: "prompt_generated", the model-written part, and "prompt_appended", the rules
+                rag-cli adds; joined with a blank line between them they are the manifest's prompt,
+                so a client can let the first be edited without touching the second. The session's
+                instructions are applied without being sent again. An unknown or expired token is a 400
                 stating that the session expired and the documents must be uploaded again. A
                 truncated response, or an empty response at the model's output ceiling, fails the
                 operation rather than completing with a short manifest, and cannot be accepted.
