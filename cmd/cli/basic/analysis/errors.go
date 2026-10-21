@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"google.golang.org/genai"
 )
 
@@ -143,18 +144,99 @@ func (e *IncompleteError) Error() string {
 }
 
 // ShortfallError says generation produced materially fewer questions than triage
-// estimated. It names both counts, because the whole point is to let a human judge
-// whether the shortfall is real.
+// estimated, from a questions call that finished normally.
+//
+// A cut-off or empty response never reaches the count comparison — complete turns those
+// into a TruncatedError first — so a shortfall is always one of two things: the passes
+// disagreeing about how finely to split (Lafika: 111 against 168, where a human wrote
+// 24), or an extraction that left packed rows unsplit (MASCOM at low effort: 53 against
+// 220, where a human wrote 164). The totals look the same; only the per-section
+// breakdown tells them apart, so the error carries it. It also carries the produced
+// questions, unrendered, so a caller can let the operator accept them without paying for
+// the questions call again.
 type ShortfallError struct {
 	Expected int
 	Produced int
+
+	// How the questions call ended, which is what rules out an exhausted budget.
+	FinishReason string
+	AnswerTokens int32
+	Ceiling      int32
+	Effort       Effort
+
+	Sections  []SectionCount
+	Questions []chat.BatchQuestion
+}
+
+// SectionCount is one triage section's estimate beside what extraction produced for it.
+// Produced is -1 when the section has no id prefix to attribute questions by.
+type SectionCount struct {
+	Name      string `json:"name"`
+	IDPrefix  string `json:"id_prefix,omitempty"`
+	Estimated int    `json:"estimated"`
+	Produced  int    `json:"produced"`
 }
 
 func (e *ShortfallError) Error() string {
-	return fmt.Sprintf(
-		"generation produced %d questions but triage estimated about %d — too few to treat as complete; "+
-			"re-run, or lower %s so more of the budget goes to the answer",
-		e.Produced, e.Expected, ConfReasoningQuestions)
+	var b strings.Builder
+	fmt.Fprintf(&b, "generation produced %d questions but triage estimated about %d — too few to treat as complete without a decision.",
+		e.Produced, e.Expected)
+	fmt.Fprintf(&b, "\nThe questions call finished normally (finish reason %q, %d of %d output tokens, reasoning %s), "+
+		"so this is not an exhausted budget: either the two passes disagree about how finely to split the document, "+
+		"or the extraction left packed rows unsplit.", e.FinishReason, e.AnswerTokens, e.Ceiling, effortLabel(e.Effort))
+
+	if len(e.Sections) > 0 {
+		// The name column is as wide as the longest name, so a long section title does
+		// not push its counts out of line with the others.
+		width := 0
+		for _, s := range e.Sections {
+			width = max(width, len([]rune(s.Name)))
+		}
+		b.WriteString("\n\nBy section:")
+		for _, s := range e.Sections {
+			produced := "?"
+			if s.Produced >= 0 {
+				produced = fmt.Sprint(s.Produced)
+			}
+			estimate := "—"
+			if s.Estimated > 0 {
+				estimate = fmt.Sprintf("about %d", s.Estimated)
+			}
+			fmt.Fprintf(&b, "\n  %-*s  produced %4s, estimated %s", width, s.Name, produced, estimate)
+		}
+		b.WriteString("\nOne section far below its estimate points at unsplit rows there; every section short by a " +
+			"similar proportion points at a counting difference.")
+	}
+
+	if next := NextEffort(e.Effort); next != EffortUnset {
+		fmt.Fprintf(&b, "\n\nAccept the produced questions, or re-run the extraction at reasoning %q.", next)
+	} else {
+		b.WriteString("\n\nAccept the produced questions, or re-run.")
+	}
+	return b.String()
+}
+
+// IsShortfall reports whether err is a ShortfallError.
+func IsShortfall(err error) bool {
+	var target *ShortfallError
+	return errors.As(err, &target)
+}
+
+// AsShortfall returns err as a ShortfallError, if it is one.
+func AsShortfall(err error) (*ShortfallError, bool) {
+	var target *ShortfallError
+	if errors.As(err, &target) {
+		return target, true
+	}
+	return nil, false
+}
+
+// effortLabel names an effort for a message, including the unset case.
+func effortLabel(e Effort) string {
+	if e == EffortUnset {
+		return "at the model's default"
+	}
+	return fmt.Sprintf("%q", e)
 }
 
 // NotDocumentCapableError says the configured model rejected the conveyed document.

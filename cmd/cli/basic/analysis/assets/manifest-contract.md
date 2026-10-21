@@ -140,6 +140,26 @@ gives you both a routable id and the readable provenance.
 An entry **must** carry `context`, `keywords`, or both. An entry with neither is a
 validation error that fails the whole run.
 
+### What a domain `context` may say
+
+A `context` reaches the answering model in the same turn as the retrieved passages, and it
+is operator-authored text, so the model trusts it. Anything it *states* is therefore
+repeated as though it were substantiated. A context must only **direct**: say what the
+matching questions are asking about, what an answer must address, and what evidence to
+look for. It must **never assert** the proposed solution's capabilities, figures,
+locations, staffing, legal entities, certifications or commitments. Where such a claim
+matters, the context tells the answer to substantiate it from the retrieved context, or
+to report it as not covered.
+
+| Asserts (wrong) | Directs (right) |
+|---|---|
+| "Canonical offers localized 24x7 enterprise support within India." | "In-country enterprise support: address the support model, coverage hours and escalation path. Any claim about an in-country entity, office or staff must come from the retrieved context, or be reported as not covered." |
+| "The platform is certified on the customer's server hardware." | "The customer's existing servers: state the support position and the interface it rests on. Do not present the hardware as certified unless the retrieved context says so." |
+
+Write each context against the questions its pattern actually matches. You are given every
+question's text with its id; the document's own clause numbering is not a guide to which
+generated question an id refers to.
+
 ## Domain routing — read this carefully
 
 Domains are how a section of the RFP gets extra context attached to it. This is the
@@ -207,8 +227,14 @@ the one lever that matters.
 ## Rules
 
 - Choose `knowledge_bases` and `kapa_source_groups` **only** from the supplied catalogue.
-  A name that is not in it retrieves nothing, silently.
+  A name that is not in it retrieves nothing, silently. Every name in the worked example
+  begins with `example-` and is an illustration, not a real target: never select one.
 - Extract **every** question. Do not sample, summarise, or merge questions.
-- Never invent an id. Use the document's own.
+- Never invent an id. Use the document's own. When one row covers a range of ids the
+  document never defines individually ("FR_11–FR_15"), keep the range in the id
+  ("FR_11-15-a") rather than guessing which requirement is which number.
+- Columns the respondent fills in (compliance status, product, licence inclusion,
+  cross-reference, comments) are answer fields, not questions. Never emit a question per
+  answer field.
 - Do not emit a `domains` entry whose pattern matches none of your questions.
 - Return only the JSON object.

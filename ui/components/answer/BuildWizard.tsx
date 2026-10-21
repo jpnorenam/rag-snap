@@ -17,6 +17,8 @@ import {
   generateManifest,
   parseAnalyzeMetadata,
   parseGenerateMetadata,
+  parseShortfall,
+  acceptanceHeaderLine,
   ANALYSIS_EXTENSION,
   type AnswerLengthMode,
   type BatchManifest,
@@ -24,10 +26,17 @@ import {
   type BuildTable,
   type CheckResult,
   type OpenStackFlavour,
+  type Shortfall,
+  type ShortfallAcceptance,
   type Triage,
 } from "@/lib/api/answer";
 import { getServerInfo } from "@/lib/api/server";
-import { TriageStep, InterviewStep, GeneratedReviewStep } from "@/components/answer/AnalysisSteps";
+import {
+  TriageStep,
+  InterviewStep,
+  GeneratedReviewStep,
+  ShortfallStep,
+} from "@/components/answer/AnalysisSteps";
 import { serializeManifest } from "@/lib/manifest";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
 
@@ -54,6 +63,8 @@ type WizardStep =
   | "triage"
   | "interview"
   | "generating"
+  // A question-count shortfall from a clean extraction: a decision, not an error.
+  | "shortfall"
   | "generated";
 
 // BuildMode is how an uploaded document becomes a manifest. Extraction is the
@@ -131,6 +142,14 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
   const [generated, setGenerated] = useState<BatchManifest | null>(null);
   const [check, setCheck] = useState<CheckResult | null>(null);
   const [generatedModel, setGeneratedModel] = useState("");
+  // The last interview answers, re-sent with the operator's decision after a shortfall.
+  const [lastAnswers, setLastAnswers] = useState<{
+    words: number;
+    limit: AnswerLengthMode;
+    flavour?: OpenStackFlavour;
+  } | null>(null);
+  const [shortfall, setShortfall] = useState<Shortfall | null>(null);
+  const [shortfallAccepted, setShortfallAccepted] = useState<ShortfallAcceptance | null>(null);
 
   const buildOp = useMemo<OperationView | null>(
     () => (buildOpId ? ops.operations.find((o) => o.id === buildOpId) ?? null : null),
@@ -207,6 +226,17 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
       setStep(next);
     };
 
+    // A shortfall from a clean extraction is the operator's decision, presented as its
+    // own step. Anything else — a truncation, an expired session — stays an error.
+    if (status !== "succeeded" && step === "generating") {
+      const sf = parseShortfall(buildOp.metadata);
+      if (sf) {
+        setShortfall(sf);
+        finish("shortfall");
+        return;
+      }
+    }
+
     if (status !== "succeeded") {
       const what =
         step === "inspecting" ? "document read" : step === "generating" ? "generation" : "extraction";
@@ -229,6 +259,8 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
       setGenerated(meta.manifest);
       setCheck(meta.check);
       setGeneratedModel(meta.model);
+      setShortfallAccepted(meta.shortfallAccepted);
+      setShortfall(null);
       // The generated questions become the editable list, so an edit before running is
       // the same interaction as it is for extracted candidates.
       setQuestions(
@@ -365,9 +397,18 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
     }
   }, [primaryFile, refine, mode, contextFiles, ops, onError]);
 
-  // submitInterview runs the second analysis pass against the staged documents.
+  // submitInterview runs the second analysis pass against the staged documents. After a
+  // shortfall it re-sends the same answers with the operator's decision: continue with the
+  // produced questions, or re-run only the extraction at higher reasoning effort.
   const submitInterview = useCallback(
-    async (words: number, limit: AnswerLengthMode, flavour?: OpenStackFlavour) => {
+    async (
+      words: number,
+      limit: AnswerLengthMode,
+      flavour?: OpenStackFlavour,
+      decision?: "accept" | "retry"
+    ) => {
+      setLastAnswers({ words, limit, flavour });
+      const returnStep: WizardStep = decision ? "shortfall" : "interview";
       setStep("generating");
       try {
         const { view } = await generateManifest({
@@ -375,15 +416,25 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
           answerWords: words,
           answerLimit: limit,
           openstack: flavour,
+          acceptShortfall: decision === "accept",
+          retryQuestions: decision === "retry",
         });
         ops.track(view, "/answer/");
         setBuildOpId(view.id);
       } catch (e) {
         onError(errorMessage(e));
-        setStep("interview");
+        setStep(returnStep);
       }
     },
     [analysisToken, ops, onError]
+  );
+
+  const decideShortfall = useCallback(
+    (decision: "accept" | "retry") => {
+      if (!lastAnswers) return;
+      void submitInterview(lastAnswers.words, lastAnswers.limit, lastAnswers.flavour, decision);
+    },
+    [lastAnswers, submitInterview]
   );
 
   const selectedCount = questions.filter((q) => q.selected).length;
@@ -436,7 +487,12 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
   const downloadGenerated = useCallback(() => {
     const manifest = generatedWithEdits();
     if (!manifest) return;
-    const yaml = serializeManifest(manifest, { domainsStub: false });
+    // Provenance, as the CLI writes it: where the manifest came from and, when the
+    // operator accepted a shortfall, that decision with both counts.
+    const headerComments = ["Generated by rag-cli analysis in the web UI"];
+    if (generatedModel) headerComments.push(`Analysis model: ${generatedModel}`);
+    if (shortfallAccepted) headerComments.push(acceptanceHeaderLine(shortfallAccepted));
+    const yaml = serializeManifest(manifest, { domainsStub: false, headerComments });
     const blob = new Blob([yaml], { type: "application/x-yaml" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -445,7 +501,7 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
     a.click();
     URL.revokeObjectURL(url);
     setSaved(true);
-  }, [generatedWithEdits, manifestName]);
+  }, [generatedWithEdits, manifestName, generatedModel, shortfallAccepted]);
 
   const runGenerated = useCallback(async () => {
     const manifest = generatedWithEdits();
@@ -682,12 +738,28 @@ export default function BuildWizard({ onRun, onCancel, onError }: Props) {
         </div>
       )}
 
+      {step === "shortfall" && shortfall && (
+        <ShortfallStep
+          shortfall={shortfall}
+          busy={false}
+          onContinue={() => decideShortfall("accept")}
+          onRerun={() => decideShortfall("retry")}
+          onStartAgain={() => {
+            setShortfall(null);
+            setTriage(null);
+            setAnalysisToken("");
+            setStep("upload");
+          }}
+        />
+      )}
+
       {step === "generated" && generated && check && (
         <GeneratedReviewStep
           manifest={{ ...generated, questions: buildManifest().questions }}
           check={check}
           model={generatedModel}
           estimated={triage?.estimated_questions ?? 0}
+          shortfallAccepted={shortfallAccepted}
           running={running}
           onBack={() => setStep("interview")}
           onDownload={() => downloadGenerated()}

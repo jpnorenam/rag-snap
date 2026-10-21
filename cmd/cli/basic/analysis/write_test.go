@@ -68,6 +68,22 @@ func TestWriteManifestProducesALoadableFileWithProvenance(t *testing.T) {
 	}
 }
 
+func TestWriteManifestRecordsAnAcceptedShortfall(t *testing.T) {
+	_, text := writeAndRead(t, sampleManifest(), Provenance{
+		Model:             "gemini-3.1-pro-preview",
+		ShortfallAccepted: &ShortfallAcceptance{Expected: 168, Produced: 111},
+	})
+	want := "# Question count accepted by the operator below the triage estimate: 111 produced, about 168 estimated"
+	if !strings.Contains(text, want) {
+		t.Errorf("header is missing the acceptance line:\n%s", firstLines(text, 12))
+	}
+
+	_, plain := writeAndRead(t, sampleManifest(), Provenance{Model: "gemini-3.1-pro-preview"})
+	if strings.Contains(plain, "accepted by the operator") {
+		t.Error("a manifest generated without a shortfall must not claim one was accepted")
+	}
+}
+
 func TestWriteManifestKeepsThePromptAsAReadableLiteralBlock(t *testing.T) {
 	// The whole point: a two-thousand-word prompt has to stay legible and editable in
 	// the file. A quoted scalar with escaped newlines would be neither.

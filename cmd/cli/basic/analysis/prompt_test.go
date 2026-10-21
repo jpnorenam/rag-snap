@@ -3,6 +3,8 @@ package analysis
 import (
 	"strings"
 	"testing"
+
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 )
 
 func TestAssembleStatesLengthWithItsMode(t *testing.T) {
@@ -63,6 +65,9 @@ func TestAssembleAlwaysAppendsTheMandatoryRules(t *testing.T) {
 	}
 	if !PromptHasDirectnessRule(out) {
 		t.Errorf("the directness rule is missing from the assembled prompt:\n%s", out)
+	}
+	if !PromptHasDomainTextRule(out) {
+		t.Errorf("the domain-text rule is missing from the assembled prompt:\n%s", out)
 	}
 	// Last word: the mandatory block must sit after the model's prose, so anything it
 	// contradicted is overridden rather than overriding.
@@ -214,5 +219,26 @@ func TestDefaultInterviewComesFromConfig(t *testing.T) {
 	}
 	if iv.OpenStack != OpenStackNotApplicable {
 		t.Error("the flavour must start unset; it is only asked when triage finds OpenStack in scope")
+	}
+}
+
+func TestDomainTextRuleNamesTheLabelTheAnsweringTurnUses(t *testing.T) {
+	// The rule binds to the turn's structure only if it names the label the answering
+	// model actually sees. chat.RequirementDomainLabel is what buildRAGPrompt renders.
+	if !strings.Contains(mandatoryRules, `"`+chat.RequirementDomainLabel+`"`) {
+		t.Errorf("the mandatory rules must name the %q label the answering turn uses", chat.RequirementDomainLabel)
+	}
+}
+
+func TestGapRuleSaysRetrievedNotProvidedContext(t *testing.T) {
+	// "Provided context" also covers the domain text, which is exactly the loophole the
+	// domain-text rule closes; the gap rule must speak of what was retrieved.
+	end := strings.Index(mandatoryRules, "REQUIREMENT DOMAIN TEXT")
+	if end < 0 {
+		t.Fatal("the domain-text rule is missing from the mandatory rules")
+	}
+	gap := mandatoryRules[:end]
+	if strings.Contains(gap, "provided context") || !strings.Contains(gap, "retrieved context") {
+		t.Errorf("the gap rule should refer to the retrieved context:\n%s", gap)
 	}
 }

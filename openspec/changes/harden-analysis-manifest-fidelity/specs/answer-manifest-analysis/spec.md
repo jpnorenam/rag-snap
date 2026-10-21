@@ -214,6 +214,16 @@ respondent as a source of questions. In a table that includes evidence, validati
 criteria or deliverable columns as well as the primary requirement column, a distinct demand in any of
 them SHALL become a question. A column that only describes, labels, numbers or scores a row SHALL NOT.
 
+A column the respondent fills in — a compliance status, the product or component offered, whether it is
+included in a licence, a cross-reference, comments or qualifications — is an answer field, not a demand.
+Extraction SHALL NOT emit a question per answer field, and triage SHALL NOT count answer fields as
+questions. A row with several answer fields is split only by the requirements it states, and the
+answering prompt fills every field from one answer.
+
+When one row covers a range of ids that the document does not define individually, the extracted
+questions SHALL keep the range in their ids and SHALL NOT assign requirements to individual ids inside
+the range.
+
 The triage question-count estimate SHALL be made on the same basis as extraction, so that a demand
 missed by extraction shows up as a shortfall against the estimate rather than being missed by both.
 
@@ -224,6 +234,16 @@ from, so an operator reviewing the manifest can see why it exists.
 
 - **WHEN** a requirement row's evidence column asks the respondent to describe their image hardening process, a demand the requirement column does not make
 - **THEN** that demand is extracted as its own question, with a source naming the row and the evidence column
+
+#### Scenario: Answer-field columns are not questions
+
+- **WHEN** a compliance matrix row carries Compliance, Product, Included in Base Licence, Cross-Reference and Comment columns for the bidder to fill
+- **THEN** no question is extracted per answer field, and the row's questions are its requirements
+
+#### Scenario: Ranged row keeps its range
+
+- **WHEN** one row covers ids FR_16 to FR_20 without defining each individually
+- **THEN** its questions carry the range in their ids, such as `FR_16-20-a`, and no requirement is assigned to `FR_17` alone
 
 #### Scenario: Descriptive column is not a question
 

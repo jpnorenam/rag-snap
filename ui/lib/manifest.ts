@@ -194,6 +194,10 @@ export interface SerializeOptions {
   // there is nothing to suggest, and a stub above a live block reads as if the
   // two were alternatives.
   domainsStub?: boolean;
+  // headerComments are written as `# ` lines above the manifest — the provenance a
+  // generated manifest carries, so a UI download records its origin (and an
+  // accepted question-count shortfall) as the CLI's file does.
+  headerComments?: string[];
 }
 
 // serializeManifest renders a BatchManifest as YAML the CLI's `answer batch`
@@ -242,7 +246,8 @@ export function serializeManifest(manifest: BatchManifest, opts: SerializeOption
     opts.domainsStub && !(manifest.domains && manifest.domains.length > 0)
       ? domainsStub(manifest.questions)
       : "";
-  return stub + body;
+  const header = (opts.headerComments ?? []).map((line) => `# ${line}\n`).join("");
+  return header + stub + body;
 }
 
 // DOMAINS_STUB_PREAMBLE is rfp.domainsStubPreamble verbatim. The CLI's built

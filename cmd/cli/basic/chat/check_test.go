@@ -33,10 +33,11 @@ func findingFor(t *testing.T, r CheckResult, code string) CheckFinding {
 	return CheckFinding{}
 }
 
-// goodPrompt carries all three assertions, so a test targeting something else is not
+// goodPrompt carries every assertion, so a test targeting something else is not
 // tripped up by prompt warnings.
 const goodPrompt = "Answer directly with no filler. Answers are at most 100 words; " +
-	"this is a hard limit and must never be exceeded. Where no context is available, say so."
+	"this is a hard limit and must never be exceeded. Where no context is available, say so. " +
+	"Requirement domain text is guidance, not a source."
 
 func TestCheckCleanManifest(t *testing.T) {
 	m := &BatchManifest{
@@ -348,7 +349,7 @@ func TestCheckPromptAssertions(t *testing.T) {
 
 	t.Run("all present", func(t *testing.T) {
 		r := CheckManifest(base(goodPrompt), nil)
-		if !r.Prompt.Applicable || !r.Prompt.NoContextRule || !r.Prompt.DirectnessRule || !r.Prompt.LengthStated {
+		if !r.Prompt.Applicable || !r.Prompt.NoContextRule || !r.Prompt.DirectnessRule || !r.Prompt.LengthStated || !r.Prompt.DomainTextRule {
 			t.Errorf("expected every assertion found, got %+v", r.Prompt)
 		}
 		if !r.Prompt.LengthHard {
@@ -359,6 +360,14 @@ func TestCheckPromptAssertions(t *testing.T) {
 	t.Run("missing no-context rule is a warning", func(t *testing.T) {
 		r := CheckManifest(base("Be direct, no filler. Target about 100 words."), nil)
 		f := findingFor(t, r, CheckPromptNoContext)
+		if f.Severity != CheckWarning {
+			t.Errorf("severity = %q, want a warning: a hand-written prompt may word this differently", f.Severity)
+		}
+	})
+
+	t.Run("missing domain-text rule is a warning", func(t *testing.T) {
+		r := CheckManifest(base("Where no context is available say so. Be direct, no filler. Target about 100 words."), nil)
+		f := findingFor(t, r, CheckPromptDomainText)
 		if f.Severity != CheckWarning {
 			t.Errorf("severity = %q, want a warning: a hand-written prompt may word this differently", f.Severity)
 		}
@@ -513,5 +522,62 @@ func TestEditDistanceAndNearestName(t *testing.T) {
 	}
 	if _, ok := nearestName("zzz", []string{"ubuntu-pro"}); ok {
 		t.Error("an unrelated name should get no suggestion")
+	}
+}
+
+func TestSingleQuestionDomainsArePreviewed(t *testing.T) {
+	// The MeitY case: a T4-iii entry whose context was written for a different clause.
+	// The check cannot judge the fit, but it must put the question beside the context.
+	m := &BatchManifest{
+		Version:        "1.0",
+		KnowledgeBases: []string{"vendor-rfp"},
+		Prompt:         goodPrompt,
+		Domains: []Domain{
+			{Match: "T4-iii", Context: "CIS image management process specifically."},
+			{Match: "T4-*", Context: "Indigenous and open-source cloud stack."},
+			{Match: "T9-*", Context: "Reserved."},
+		},
+		Questions: []BatchQuestion{
+			{ID: "T4-i", Question: "Are the core cloud components open source?"},
+			{ID: "T4-ii", Question: "Is there in-country enterprise support?"},
+			{ID: "T4-iii", Question: "Can the provider operate the technology without   foreign dependency?"},
+		},
+	}
+	r := CheckManifest(m, &CheckRefs{KnowledgeBases: []string{"vendor-rfp"}})
+
+	byMatch := map[string]DomainMatchCount{}
+	for _, dm := range r.DomainMatches {
+		byMatch[dm.Match] = dm
+	}
+	single := byMatch["T4-iii"]
+	if single.OnlyQuestion == nil {
+		t.Fatalf("a single-question entry should carry its question, got %+v", single)
+	}
+	if single.OnlyQuestion.ID != "T4-iii" || single.OnlyQuestion.Text != "Can the provider operate the technology without foreign dependency?" {
+		t.Errorf("preview = %+v, want the T4-iii question with whitespace collapsed", single.OnlyQuestion)
+	}
+	if single.ContextPreview != "CIS image management process specifically." {
+		t.Errorf("context preview = %q", single.ContextPreview)
+	}
+
+	// A section entry and an empty one carry no preview: there is no single question
+	// to show, and a preview there would only add noise.
+	for _, match := range []string{"T4-*", "T9-*"} {
+		if dm := byMatch[match]; dm.OnlyQuestion != nil || dm.ContextPreview != "" {
+			t.Errorf("%s routes %d question(s) and must carry no preview, got %+v", match, dm.Count, dm)
+		}
+	}
+	// Informational only: previews add no finding.
+	for _, code := range findingCodes(r) {
+		if code != CheckDomainZeroMatch {
+			t.Errorf("previews must not add findings, got %q", code)
+		}
+	}
+}
+
+func TestPreviewTextIsBounded(t *testing.T) {
+	got := previewText(strings.Repeat("word ", 100))
+	if len(got) > previewLimit+len(" …") || !strings.HasSuffix(got, " …") {
+		t.Errorf("previewText = %q (%d bytes), want at most %d plus a cut marker", got, len(got), previewLimit)
 	}
 }

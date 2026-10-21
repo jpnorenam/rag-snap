@@ -94,6 +94,22 @@ const (
 	EffortHigh    Effort = "high"
 )
 
+// NextEffort is the next level up the reasoning ladder, used to re-run an extraction that
+// fell short. It returns EffortUnset at the top, where there is nowhere higher to go. An
+// unset effort leaves the model at a default rag-cli does not know, so its next step is
+// high: the one level guaranteed not to be below that default.
+func NextEffort(e Effort) Effort {
+	switch e {
+	case EffortNone, EffortMinimal:
+		return EffortLow
+	case EffortLow:
+		return EffortMedium
+	case EffortMedium, EffortUnset:
+		return EffortHigh
+	}
+	return EffortUnset
+}
+
 // ParseEffort accepts the documented spellings, case-insensitively. An empty value
 // yields EffortUnset rather than an error, so an operator can leave thinking at the
 // model's default.

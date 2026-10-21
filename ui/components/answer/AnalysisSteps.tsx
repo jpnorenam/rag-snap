@@ -7,6 +7,8 @@ import type {
   BatchManifest,
   CheckResult,
   OpenStackFlavour,
+  Shortfall,
+  ShortfallAcceptance,
   Triage,
 } from "@/lib/api/answer";
 
@@ -266,11 +268,94 @@ export function InterviewStep({
 //
 // The prompt is shown in full rather than truncated: it is the field most likely to
 // need an edit, and a preview would hide the part worth reading.
+// ShortfallStep presents a question-count shortfall as a decision rather than a dead
+// end. The same pair of counts arises from two passes splitting differently and from an
+// extraction that left packed rows unsplit, so the per-section breakdown is shown: one
+// section far below its estimate points at unsplit rows there. Caution, not negative,
+// because nothing failed — and labelled in words, so it never relies on colour alone.
+export function ShortfallStep({
+  shortfall,
+  busy,
+  onContinue,
+  onRerun,
+  onStartAgain,
+}: {
+  shortfall: Shortfall;
+  busy: boolean;
+  onContinue: () => void;
+  onRerun: () => void;
+  onStartAgain: () => void;
+}) {
+  return (
+    <div className="analysis-step">
+      <div className="p-notification--caution" role="status">
+        <div className="p-notification__content">
+          <h5 className="p-notification__title">Fewer questions than estimated</h5>
+          <p className="p-notification__message">
+            Extraction produced {shortfall.produced} questions, but triage estimated about{" "}
+            {shortfall.expected}. The extraction finished normally
+            {shortfall.finish_reason ? ` (${shortfall.finish_reason})` : ""}, so this is not a budget
+            problem: either the two passes split the document differently, or packed rows were left
+            unsplit. Compare the sections below before deciding.
+          </p>
+          {shortfall.sections.length > 0 && (
+            <div className="analysis-step__scroll">
+              <table aria-label="Questions produced against the triage estimate, by section">
+                <thead>
+                  <tr>
+                    <th>Section</th>
+                    <th className="u-align--right">Produced</th>
+                    <th className="u-align--right">Estimated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {shortfall.sections.map((s) => (
+                    <tr key={s.name}>
+                      <td>
+                        {s.name}
+                        {s.id_prefix ? <code className="u-text--muted"> {s.id_prefix}*</code> : null}
+                      </td>
+                      <td className="u-align--right">{s.produced >= 0 ? s.produced : "unknown"}</td>
+                      <td className="u-align--right">{s.estimated > 0 ? `about ${s.estimated}` : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+        <div className="p-notification__meta">
+          <div className="p-notification__actions">
+            <button
+              type="button"
+              className="p-button--positive u-no-margin--bottom"
+              onClick={onContinue}
+              disabled={busy}
+            >
+              Continue with {shortfall.produced} questions
+            </button>
+            {/* At the top of the effort ladder there is nowhere higher to re-run. */}
+            {shortfall.next_effort && (
+              <button type="button" className="p-button u-no-margin--bottom" onClick={onRerun} disabled={busy}>
+                Re-run with more reasoning ({shortfall.next_effort})
+              </button>
+            )}
+            <button type="button" className="p-button u-no-margin--bottom" onClick={onStartAgain} disabled={busy}>
+              Start again
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function GeneratedReviewStep({
   manifest,
   check,
   model,
   estimated,
+  shortfallAccepted,
   onBack,
   onDownload,
   onRun,
@@ -280,6 +365,7 @@ export function GeneratedReviewStep({
   check: CheckResult;
   model: string;
   estimated: number;
+  shortfallAccepted: ShortfallAcceptance | null;
   onBack: () => void;
   onDownload: () => void;
   onRun: () => void;
@@ -295,6 +381,12 @@ export function GeneratedReviewStep({
           {manifest.questions.length}
           {estimated > 0 && (
             <span className="u-text--muted"> (triage estimated about {estimated})</span>
+          )}
+          {shortfallAccepted && (
+            <span className="u-text--muted">
+              {" "}
+              — accepted below the estimate; the downloaded manifest records it
+            </span>
           )}
         </dd>
         <dt>Knowledge bases</dt>

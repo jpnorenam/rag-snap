@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/analysis"
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 )
 
 // analysisStageTTL is how long a conveyed document set stays available for a follow-up
@@ -44,6 +45,32 @@ type stagedAnalysis struct {
 	size       int64
 	created    time.Time
 	expires    time.Time
+
+	// shortfall is the most recent generation's shortfall, retained so the operator can
+	// accept the questions it produced — or re-run the extraction — without re-uploading.
+	// It is nil until a generation falls short.
+	shortfall *stagedShortfall
+}
+
+// stagedShortfall is what a shortfall left behind for the operator's decision.
+type stagedShortfall struct {
+	questions []chat.BatchQuestion
+	expected  int
+	produced  int
+	effort    analysis.Effort
+	size      int64
+}
+
+// questionsSize approximates the bytes a question list holds, for the store's bound.
+func questionsSize(qs []chat.BatchQuestion) int64 {
+	var n int64
+	for _, q := range qs {
+		n += int64(len(q.ID) + len(q.Question) + len(q.Source))
+		for _, k := range q.Keywords {
+			n += int64(len(k))
+		}
+	}
+	return n
 }
 
 // analysisStore is the in-memory registry of staged analyses keyed by an opaque token.
@@ -124,6 +151,45 @@ func (s *analysisStore) get(token string) (*stagedAnalysis, bool) {
 		return nil, false
 	}
 	return e, true
+}
+
+// retainShortfall records a shortfall on a live session, replacing any earlier one. The
+// produced questions are counted against the store's byte bound like the documents.
+// It reports false when the session has expired meanwhile, in which case there is
+// nothing to decide and the client will be told the session expired.
+func (s *analysisStore) retainShortfall(token string, sf *analysis.ShortfallError) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[token]
+	if !ok || !s.now().Before(e.expires) {
+		return false
+	}
+	retained := &stagedShortfall{
+		questions: sf.Questions,
+		expected:  sf.Expected,
+		produced:  sf.Produced,
+		effort:    sf.Effort,
+		size:      questionsSize(sf.Questions),
+	}
+	delta := retained.size
+	if e.shortfall != nil {
+		delta -= e.shortfall.size
+	}
+	e.shortfall = retained
+	e.size += delta
+	s.total += delta
+	return true
+}
+
+// shortfallFor returns the shortfall retained on a session, if any.
+func (s *analysisStore) shortfallFor(token string) (*stagedShortfall, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e, ok := s.entries[token]
+	if !ok || e.shortfall == nil {
+		return nil, false
+	}
+	return e.shortfall, true
 }
 
 // consume releases a token and the memory it held. Generation is the end of the

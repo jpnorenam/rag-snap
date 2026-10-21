@@ -291,9 +291,21 @@ export interface CheckFinding {
   subject?: string;
 }
 
+// QuestionPreview is a question's id and the start of its text.
+export interface QuestionPreview {
+  id: string;
+  text: string;
+}
+
+// DomainMatchCount is how many questions one domains entry routes. For an entry
+// routing exactly one question, `only_question` and `context_preview` put that
+// question beside the start of its context, so a context attached to the wrong
+// question is visible. Informational only — never a finding.
 export interface DomainMatchCount {
   match: string;
   count: number;
+  only_question?: QuestionPreview;
+  context_preview?: string;
 }
 
 // PromptAssertions records what a manifest's inline prompt still carries.
@@ -302,6 +314,7 @@ export interface PromptAssertions {
   applicable: boolean;
   no_context_rule: boolean;
   directness_rule: boolean;
+  domain_text_rule: boolean;
   length_stated: boolean;
   length_hard: boolean;
 }
@@ -319,11 +332,65 @@ export interface CheckResult {
   prompt: PromptAssertions;
 }
 
+// ShortfallAcceptance records that the operator accepted fewer questions than
+// triage estimated. It travels with the manifest's provenance.
+export interface ShortfallAcceptance {
+  expected: number;
+  produced: number;
+}
+
 // GenerateMetadata is published on the generation operation once it completes.
 export interface GenerateMetadata {
   manifest: BatchManifest;
   check: CheckResult;
   model: string;
+  shortfallAccepted: ShortfallAcceptance | null;
+}
+
+// ShortfallSection is one triage section's estimate beside what extraction produced
+// for it. `produced` is -1 when the section has no id prefix to attribute by.
+export interface ShortfallSection {
+  name: string;
+  id_prefix?: string;
+  estimated: number;
+  produced: number;
+}
+
+// Shortfall is the structured detail of a generation that produced materially
+// fewer questions than triage estimated, from an extraction that finished normally.
+// It is a decision for the operator, not an error: accept the produced questions,
+// re-run the extraction at `next_effort` (empty when already at the top), or start
+// again. Read from the failed operation's metadata, never from its error text.
+export interface Shortfall {
+  expected: number;
+  produced: number;
+  finish_reason: string;
+  effort: string;
+  next_effort: string;
+  sections: ShortfallSection[];
+}
+
+// parseShortfall returns the shortfall a failed generation reported, or null when
+// the failure was something else — a truncation, an expired session — which must
+// stay an error with no way to continue.
+export function parseShortfall(meta: Record<string, unknown> | undefined): Shortfall | null {
+  const raw = meta?.shortfall as Partial<Shortfall> | undefined;
+  if (!raw || typeof raw.expected !== "number" || typeof raw.produced !== "number") return null;
+  return {
+    expected: raw.expected,
+    produced: raw.produced,
+    finish_reason: typeof raw.finish_reason === "string" ? raw.finish_reason : "",
+    effort: typeof raw.effort === "string" ? raw.effort : "",
+    next_effort: typeof raw.next_effort === "string" ? raw.next_effort : "",
+    sections: Array.isArray(raw.sections) ? raw.sections : [],
+  };
+}
+
+// acceptanceHeaderLine is the provenance line for an accepted shortfall. It is
+// analysis.ShortfallAcceptance.HeaderLine verbatim, so a manifest downloaded from
+// the UI and one written by the CLI record the decision in the same words.
+export function acceptanceHeaderLine(a: ShortfallAcceptance): string {
+  return `Question count accepted by the operator below the triage estimate: ${a.produced} produced, about ${a.expected} estimated`;
 }
 
 // AnswerLengthMode says whether the target answer length may be exceeded.
@@ -339,6 +406,10 @@ export interface InterviewAnswers {
   answerWords: number;
   answerLimit: AnswerLengthMode;
   openstack?: OpenStackFlavour;
+  // After a shortfall, exactly one of these resolves it: continue with the
+  // produced questions, or re-run only the extraction at higher reasoning effort.
+  acceptShortfall?: boolean;
+  retryQuestions?: boolean;
 }
 
 // analyzeDocuments uploads the primary RFP plus any number of supporting context
@@ -365,6 +436,8 @@ export async function generateManifest(answers: InterviewAnswers): Promise<Track
     answer_limit: answers.answerLimit,
   };
   if (answers.openstack) body.openstack = answers.openstack;
+  if (answers.acceptShortfall) body.accept_shortfall = true;
+  if (answers.retryQuestions) body.retry_questions = true;
   const { operation, metadata } = await postAsync<OperationView>(
     "/1.0/answer/analyze/generate",
     body
@@ -423,7 +496,14 @@ export function parseGenerateMetadata(meta: Record<string, unknown>): GenerateMe
     },
     check: normaliseCheck(meta.check as Partial<CheckResult> | undefined),
     model: typeof meta.model === "string" ? meta.model : "",
+    shortfallAccepted: parseAcceptance(meta.shortfall_accepted),
   };
+}
+
+function parseAcceptance(raw: unknown): ShortfallAcceptance | null {
+  const a = raw as Partial<ShortfallAcceptance> | undefined;
+  if (!a || typeof a.expected !== "number" || typeof a.produced !== "number") return null;
+  return { expected: a.expected, produced: a.produced };
 }
 
 // normaliseCheck fills in the arrays the daemon omits when empty.
@@ -439,6 +519,7 @@ export function normaliseCheck(raw: Partial<CheckResult> | undefined): CheckResu
       applicable: false,
       no_context_rule: false,
       directness_rule: false,
+      domain_text_rule: false,
       length_stated: false,
       length_hard: false,
     },

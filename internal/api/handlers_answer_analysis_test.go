@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -349,5 +350,148 @@ func TestAnalysisStoreEvictsOldestWhenFull(t *testing.T) {
 	}
 	if len(store.entries) > maxStagedAnalyses {
 		t.Errorf("held %d entries, above the cap of %d", len(store.entries), maxStagedAnalyses)
+	}
+}
+
+func TestCheckEndpointCarriesSingleQuestionPreviewAndDomainTextRule(t *testing.T) {
+	sock, _ := startTestServer(t, map[string]string{backendOpenSearch: "http://127.0.0.1:1"})
+	client := dialSocket(sock)
+
+	body := `{
+	  "version": "1.0",
+	  "knowledge_bases": ["vendor-rfp"],
+	  "prompt": "Be direct, no filler. At most 100 words. Say when no context is available. Requirement domain text is guidance, not a source.",
+	  "domains": [{"match": "T4-iii", "context": "CIS image management."}],
+	  "questions": [{"id": "T4-iii", "question": "Can it run without foreign dependency?"}]
+	}`
+	resp, err := client.Post("http://unix/1.0/answer/check", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /1.0/answer/check: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, raw)
+	}
+	// Asserted on the wire, not only through the Go type, because the UI reads these
+	// names directly.
+	for _, want := range []string{
+		`"only_question":{"id":"T4-iii","text":"Can it run without foreign dependency?"}`,
+		`"context_preview":"CIS image management."`,
+		`"domain_text_rule":true`,
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("check response is missing %s: %s", want, raw)
+		}
+	}
+}
+
+// stageForTest puts a minimal analysis session in the server's store and returns its token.
+func stageForTest(t *testing.T, srv *Server) string {
+	t.Helper()
+	token, err := srv.analyses.stage(&analysis.Conveyance{}, &analysis.Triage{EstimatedQuestions: 10}, &analysis.Catalogue{})
+	if err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	return token
+}
+
+func postGenerate(t *testing.T, client *http.Client, body string) (int, string) {
+	t.Helper()
+	resp, err := client.Post("http://unix/1.0/answer/analyze/generate", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST generate: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(raw)
+}
+
+func TestGenerateDecisionRequiresARetainedShortfall(t *testing.T) {
+	sock, srv := startTestServer(t, map[string]string{})
+	client := dialSocket(sock)
+	token := stageForTest(t, srv)
+
+	for _, flag := range []string{"accept_shortfall", "retry_questions"} {
+		status, body := postGenerate(t, client, fmt.Sprintf(
+			`{"analysis_token":%q,"answer_words":100,"answer_limit":"soft",%q:true}`, token, flag))
+		if status != http.StatusBadRequest || !strings.Contains(body, "no shortfall") {
+			t.Errorf("%s without a shortfall: status %d, body %s — want a 400 saying there is no shortfall", flag, status, body)
+		}
+	}
+
+	status, body := postGenerate(t, client, fmt.Sprintf(
+		`{"analysis_token":%q,"answer_words":100,"answer_limit":"soft","accept_shortfall":true,"retry_questions":true}`, token))
+	if status != http.StatusBadRequest || !strings.Contains(body, "alternatives") {
+		t.Errorf("both decisions at once: status %d, body %s — want a 400", status, body)
+	}
+}
+
+func TestRetryIsRefusedAtTheTopOfTheEffortLadder(t *testing.T) {
+	sock, srv := startTestServer(t, map[string]string{})
+	client := dialSocket(sock)
+	token := stageForTest(t, srv)
+	srv.analyses.retainShortfall(token, &analysis.ShortfallError{
+		Expected: 10, Produced: 3, Effort: analysis.EffortHigh,
+		Questions: []chat.BatchQuestion{{ID: "C1", Question: "SR-IOV"}},
+	})
+
+	status, body := postGenerate(t, client, fmt.Sprintf(
+		`{"analysis_token":%q,"answer_words":100,"answer_limit":"soft","retry_questions":true}`, token))
+	if status != http.StatusBadRequest || !strings.Contains(body, "highest reasoning effort") {
+		t.Errorf("retry at high: status %d, body %s — want a 400 naming the top of the ladder", status, body)
+	}
+}
+
+func TestRetainedShortfallCountsAgainstTheStoreBound(t *testing.T) {
+	store := newAnalysisStore()
+	token, err := store.stage(&analysis.Conveyance{}, &analysis.Triage{}, &analysis.Catalogue{})
+	if err != nil {
+		t.Fatalf("stage: %v", err)
+	}
+	before := store.total
+
+	qs := []chat.BatchQuestion{{ID: "C1", Question: "SR-IOV", Source: "C"}, {ID: "C2", Question: "NUMA", Source: "C"}}
+	if !store.retainShortfall(token, &analysis.ShortfallError{Expected: 9, Produced: 2, Effort: analysis.EffortLow, Questions: qs}) {
+		t.Fatal("retainShortfall should succeed on a live session")
+	}
+	if got, want := store.total-before, questionsSize(qs); got != want {
+		t.Errorf("store grew by %d bytes, want %d for the retained questions", got, want)
+	}
+
+	// A second shortfall replaces the first rather than adding to it.
+	qs2 := qs[:1]
+	store.retainShortfall(token, &analysis.ShortfallError{Expected: 9, Produced: 1, Questions: qs2})
+	if got, want := store.total-before, questionsSize(qs2); got != want {
+		t.Errorf("after replacing, store holds %d extra bytes, want %d", got, want)
+	}
+	sf, ok := store.shortfallFor(token)
+	if !ok || sf.produced != 1 || len(sf.questions) != 1 {
+		t.Errorf("shortfallFor = %+v, %v; want the replacing shortfall", sf, ok)
+	}
+
+	if store.retainShortfall("no-such-token", &analysis.ShortfallError{}) {
+		t.Error("retainShortfall must report false for an unknown session")
+	}
+}
+
+func TestShortfallMetadataCarriesTheDecisionEvidence(t *testing.T) {
+	meta := shortfallMetadata(&analysis.ShortfallError{
+		Expected: 220, Produced: 53, FinishReason: "STOP", AnswerTokens: 9000, Ceiling: 65536,
+		Effort:   analysis.EffortLow,
+		Sections: []analysis.SectionCount{{Name: "NFR", IDPrefix: "NFR_", Estimated: 115, Produced: 22}},
+	})
+	raw, _ := json.Marshal(meta)
+	for _, want := range []string{
+		`"expected":220`, `"produced":53`, `"finish_reason":"STOP"`, `"effort":"low"`, `"next_effort":"medium"`,
+		`"sections":[{"name":"NFR","id_prefix":"NFR_","estimated":115,"produced":22}]`,
+	} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("shortfall metadata is missing %s: %s", want, raw)
+		}
+	}
+	// The produced questions stay on the server; they are not shipped to the client.
+	if strings.Contains(string(raw), "questions") {
+		t.Errorf("shortfall metadata must not carry the question list: %s", raw)
 	}
 }

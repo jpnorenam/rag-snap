@@ -533,7 +533,7 @@ operator their session has a lifetime.
 
 ### `POST /1.0/answer/analyze/generate`
 
-Second pass. JSON body: `{analysis_token, answer_words, answer_limit, openstack?}` —
+Second pass. JSON body: `{analysis_token, answer_words, answer_limit, openstack?, accept_shortfall?, retry_questions?}` —
 `answer_limit` is `"hard"` or `"soft"`, and `openstack` (`"sunbeam"` or `"charmed"`) is
 meaningful only when the triage reported OpenStack in scope. The documents are **not**
 re-uploaded; generation runs against the set the token refers to.
@@ -543,11 +543,40 @@ it back unchanged), `check` (see below) and `model`. An unknown or expired token
 `400` stating that the session expired and the documents must be uploaded again — a
 recoverable error, so a client should return to its upload step rather than dead-ending.
 
-A truncated response, an **empty** response at the model's output ceiling, or a question
-count materially short of the triage estimate fails the operation naming both counts,
-rather than completing with a short manifest. On a reasoning model the output ceiling
-covers the model's own reasoning, so an empty response is a budget failure and must never
-be read as "the model found nothing".
+A truncated response, or an **empty** response at the model's output ceiling, fails the
+operation rather than completing with a short manifest, and **cannot be accepted**. On a
+reasoning model the output ceiling covers the model's own reasoning, so an empty response is
+a budget failure and must never be read as "the model found nothing".
+
+A question count materially short of the triage estimate, from an extraction that finished
+normally, also fails the operation — but as a decision for the operator, not a dead end. The
+failed operation's metadata carries a `shortfall` object; read it rather than parsing the
+error text:
+
+```json
+{
+  "expected": 220, "produced": 53,
+  "finish_reason": "STOP", "answer_tokens": 9214, "ceiling": 65536,
+  "effort": "low", "next_effort": "medium",
+  "sections": [
+    {"name": "A.1 Functional Requirements", "id_prefix": "FR_", "estimated": 95, "produced": 31},
+    {"name": "A.2 Non-Functional Requirements", "id_prefix": "NFR_", "estimated": 115, "produced": 22}
+  ]
+}
+```
+
+A section's `produced` is `-1` when it has no id prefix to attribute questions by. The
+produced questions stay on the session (they are not sent to the client). Post the same token
+and interview answers again with **one** of:
+
+- `"accept_shortfall": true` — continue from the retained questions without extracting them
+  again. The completed metadata carries `shortfall_accepted: {expected, produced}`, which a
+  client should record with the manifest.
+- `"retry_questions": true` — re-run only the extraction, at `next_effort`. Refused when
+  `next_effort` is empty (already at the highest effort).
+
+Either flag on a session holding no shortfall, or both together, is a `400`. The session's
+lifetime is unchanged, so an expired token is still the expired-session `400`.
 
 ### `POST /1.0/answer/check`
 
@@ -557,7 +586,11 @@ Synchronous.
 
 Returns the question and domain counts, `domain_matches` (how many questions each pattern
 would route, resolved with the run's own routing so the check cannot disagree with a run),
-`prompt` assertions, and `findings` at two severities:
+`prompt` assertions (`no_context_rule`, `directness_rule`, `domain_text_rule`,
+`length_stated`, `length_hard`), and `findings` at two severities. An entry in
+`domain_matches` routing exactly one question also carries `only_question: {id, text}` and
+`context_preview`, so a client can show the question beside the context attached to it —
+informational only, never a finding:
 
 - `defect` — would fail a run, or names a retrieval target that contributes nothing.
 - `warning` — will run, but may not be intended. A pattern reserved for a section with no

@@ -2173,6 +2173,13 @@ $sidebar-accent: #e95420; // Ubuntu orange
   margin: 1rem 0 0.5rem;
 }
 
+// The context under a single-question routing preview, on its own line so the question
+// and the context it carries read as a pair.
+.check-findings__context {
+  display: block;
+  margin-bottom: 0;
+}
+
 // A pattern that routes nothing. Muted rather than coloured red: it may be a
 // deliberate reservation, and the finding list below says so in words.
 .check-findings__row--empty td {

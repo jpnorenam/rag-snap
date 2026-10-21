@@ -117,8 +117,18 @@ func (iv Interview) LengthSentence() string {
 // document may absorb it. Appending the rules afterwards means no wording in the source
 // document can remove them, and `answer batch --check` re-verifies they are still
 // present on any manifest.
+//
+// The gap rule says "retrieved context", not "provided context", on purpose. A domain
+// context is also provided in the answering turn, as operator-authored text beside the
+// retrieved passages, and a live run showed an answering model repeating a capability
+// asserted only there as though it were substantiated. The third rule closes that gap
+// explicitly, and names the "Requirement domain" label chat.buildRAGPrompt renders, so
+// it binds to the turn's actual structure.
 const mandatoryRules = `GAPS ARE REPORTED, NEVER FILLED
-It is always better to say that no context is available, or to state plainly that a technology is NOT covered, than to give an answer that is false or invented. This outranks every other instruction here, including completeness and tone. Where the provided context does not substantiate what a requirement asks for, say so in as many words and stop. Do not soften a gap, do not write around it with a general statement about the platform, and do not let a demanded element pass unmentioned because it is unsubstantiated. A flagged gap is routed to a human before submission; a fabricated claim survives into an evaluation and is discovered by the customer.
+It is always better to say that no context is available, or to state plainly that a technology is NOT covered, than to give an answer that is false or invented. This outranks every other instruction here, including completeness and tone. Where the retrieved context does not substantiate what a requirement asks for, say so in as many words and stop. Do not soften a gap, do not write around it with a general statement about the platform, and do not let a demanded element pass unmentioned because it is unsubstantiated. A flagged gap is routed to a human before submission; a fabricated claim survives into an evaluation and is discovered by the customer.
+
+REQUIREMENT DOMAIN TEXT IS GUIDANCE, NOT A SOURCE
+The "Requirement domain" text attached to a question tells you what the evaluator is looking for and where to look. It is not evidence. A capability, figure, location, legal entity, staffing level, certification or commitment that appears only in that text, and not in the retrieved context, is unsubstantiated: report it as a gap exactly as you would any other unsupported claim.
 
 BE DIRECT
 No filler. No preamble, no restating the question, no meta-commentary about the context or your own process, and nothing like "Based on the provided context", "It is important to note", "As per the documentation", or "In today's landscape". Lead with the answer, substantiate it, stop. Every sentence must carry information the evaluator did not already have.`
@@ -172,6 +182,12 @@ func InspectAssembledPrompt(prompt string) chat.PromptAssertions {
 // beats inventing an answer.
 func PromptHasNoContextRule(prompt string) bool {
 	return InspectAssembledPrompt(prompt).NoContextRule
+}
+
+// PromptHasDomainTextRule reports whether a prompt still instructs that requirement-domain
+// text is guidance and not a source.
+func PromptHasDomainTextRule(prompt string) bool {
+	return InspectAssembledPrompt(prompt).DomainTextRule
 }
 
 // PromptHasDirectnessRule reports whether a prompt still instructs directness.

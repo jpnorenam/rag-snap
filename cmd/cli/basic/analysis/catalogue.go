@@ -87,7 +87,8 @@ func (c *Catalogue) Prompt() string {
 	var b strings.Builder
 	b.WriteString("# Available retrieval targets\n\n")
 	b.WriteString("Select `knowledge_bases` and `kapa_source_groups` ONLY from the lists below. ")
-	b.WriteString("A value that is not listed retrieves nothing and reports no error, so an invented name silently degrades every answer that relied on it.\n\n")
+	b.WriteString("A value that is not listed retrieves nothing and reports no error, so an invented name silently degrades every answer that relied on it. ")
+	b.WriteString("Names in the worked example begin with `" + exampleNamePrefix + "` and are illustrations: they are never in this list and are never selectable.\n\n")
 
 	b.WriteString("## knowledge_bases — use the name exactly as written\n\n")
 	for _, kb := range c.KnowledgeBases {
@@ -166,6 +167,17 @@ func (c *Catalogue) FilterKapaGroups(ids []string) []string {
 		}
 	}
 	return out
+}
+
+// exampleNamePrefix marks every retrieval-target name in the bundled worked example. A
+// realistic-looking example name was copied into a live generation once
+// ("vendor-rfp-answers"), so example names are visibly placeholders, and a selection
+// carrying the prefix is diagnosed as copied rather than merely missing.
+const exampleNamePrefix = "example-"
+
+// IsExampleName reports whether name carries the worked example's placeholder prefix.
+func IsExampleName(name string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(name)), exampleNamePrefix)
 }
 
 // ValidateSelections checks a generated manifest's retrieval targets against the

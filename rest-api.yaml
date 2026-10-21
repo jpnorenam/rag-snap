@@ -397,9 +397,19 @@ paths:
                 generated "manifest" in the same JSON shape POST /1.0/answer/batch accepts, its
                 "check" findings, and the generating "model". An unknown or expired token is a 400
                 stating that the session expired and the documents must be uploaded again. A
-                truncated response, an empty response at the model's output ceiling, or a question
-                count materially short of the triage estimate fails the operation naming both counts
-                rather than completing with a short manifest.
+                truncated response, or an empty response at the model's output ceiling, fails the
+                operation rather than completing with a short manifest, and cannot be accepted.
+
+                A question count materially short of the triage estimate, from an extraction that
+                finished normally, also fails the operation, with a structured "shortfall" object in
+                its metadata: "expected", "produced", "finish_reason", "answer_tokens", "ceiling",
+                "effort", "next_effort" (empty at the top of the ladder) and per-section "sections"
+                counts. The produced questions are retained on the session. Posting the same token and
+                interview answers again with "accept_shortfall": true continues from those questions
+                without another extraction, and the completed metadata carries "shortfall_accepted"
+                with both counts; with "retry_questions": true, only the extraction is re-run, at
+                "next_effort". Either flag on a session holding no shortfall, or both together, is a
+                400.
             operationId: answerAnalyzeGenerate
             responses:
                 "202":

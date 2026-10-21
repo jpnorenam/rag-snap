@@ -33,6 +33,7 @@ const (
 	CheckUnknownKapaGroup = "unknown-kapa-source-group"
 	CheckPromptNoContext  = "prompt-missing-no-context-rule"
 	CheckPromptDirectness = "prompt-missing-directness-rule"
+	CheckPromptDomainText = "prompt-missing-domain-text-rule"
 	CheckPromptNoLength   = "prompt-missing-length-statement"
 )
 
@@ -47,9 +48,39 @@ type CheckFinding struct {
 }
 
 // DomainMatchCount is how many questions one domains entry would route.
+//
+// For an entry routing exactly one question, OnlyQuestion and ContextPreview put that
+// question beside the start of the context attached to it. This is informational, never a
+// finding: the check cannot judge whether a context fits a question, but a reader can see
+// at a glance when it plainly does not — which is how a context written for one clause
+// and attached to another (MeitY's T4-iii) would have been caught before a run.
 type DomainMatchCount struct {
-	Match string `json:"match"`
-	Count int    `json:"count"`
+	Match          string           `json:"match"`
+	Count          int              `json:"count"`
+	OnlyQuestion   *QuestionPreview `json:"only_question,omitempty"`
+	ContextPreview string           `json:"context_preview,omitempty"`
+}
+
+// QuestionPreview is a question's id and the start of its text.
+type QuestionPreview struct {
+	ID   string `json:"id"`
+	Text string `json:"text"`
+}
+
+// previewLimit is how much of a question or a context a routing preview shows.
+const previewLimit = 120
+
+// previewText collapses whitespace and shortens s to previewLimit at a word boundary.
+func previewText(s string) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) <= previewLimit {
+		return s
+	}
+	cut := strings.LastIndex(s[:previewLimit], " ")
+	if cut <= 0 {
+		cut = previewLimit
+	}
+	return s[:cut] + " …"
 }
 
 // PromptAssertions records what a manifest's inline prompt still carries.
@@ -61,6 +92,10 @@ type PromptAssertions struct {
 	Applicable     bool `json:"applicable"`
 	NoContextRule  bool `json:"no_context_rule"`
 	DirectnessRule bool `json:"directness_rule"`
+	// DomainTextRule records the instruction that requirement-domain text is guidance
+	// and not a source, without which a capability asserted in a domain context reads
+	// to the answering model as substantiated.
+	DomainTextRule bool `json:"domain_text_rule"`
 	LengthStated   bool `json:"length_stated"`
 	// LengthHard is meaningful only when LengthStated: true for a hard limit, false
 	// for a soft target.
@@ -211,9 +246,13 @@ func (r *CheckResult) checkRouting(m *BatchManifest) {
 	}
 
 	counts := map[string]int{}
+	firstMatch := map[string]BatchQuestion{}
 	var unrouted []string
 	for _, q := range m.Questions {
 		if d := set.Resolve(q.ID, q.Source); d != nil {
+			if counts[d.Match] == 0 {
+				firstMatch[d.Match] = q
+			}
 			counts[d.Match]++
 			continue
 		}
@@ -228,7 +267,13 @@ func (r *CheckResult) checkRouting(m *BatchManifest) {
 	}
 
 	for _, d := range m.Domains {
-		r.DomainMatches = append(r.DomainMatches, DomainMatchCount{Match: d.Match, Count: counts[d.Match]})
+		dm := DomainMatchCount{Match: d.Match, Count: counts[d.Match]}
+		if dm.Count == 1 {
+			q := firstMatch[d.Match]
+			dm.OnlyQuestion = &QuestionPreview{ID: q.ID, Text: previewText(q.Question)}
+			dm.ContextPreview = previewText(d.Context)
+		}
+		r.DomainMatches = append(r.DomainMatches, dm)
 		if counts[d.Match] == 0 {
 			r.add(CheckWarning, CheckDomainZeroMatch, d.Match,
 				"domain %q matches none of this manifest's questions, so it contributes nothing; "+
@@ -297,6 +342,11 @@ func (r *CheckResult) checkPrompt() {
 		r.add(CheckWarning, CheckPromptDirectness, "",
 			"the prompt carries no instruction to be direct and avoid filler")
 	}
+	if !r.Prompt.DomainTextRule {
+		r.add(CheckWarning, CheckPromptDomainText, "",
+			"the prompt carries no instruction that requirement-domain text is guidance, not a source — "+
+				"without it, a capability stated in a domain context can be repeated as though substantiated")
+	}
 	if !r.Prompt.LengthStated {
 		r.add(CheckWarning, CheckPromptNoLength, "",
 			"the prompt states no answer length, or states one without saying whether it is a hard limit or a soft target")
@@ -314,6 +364,10 @@ var (
 		"no context is available", "no context available", "not covered",
 		"does not contain enough information", "not enough information",
 		"flag it as a gap", "state the gap",
+	}
+	domainTextPhrasings = []string{
+		"guidance, not a source", "domain text is not evidence", "domain context is not evidence",
+		"domain text is not a source", "domain context is not a source",
 	}
 	directnessPhrasings = []string{
 		"no filler", "be direct", "avoid filler",
@@ -351,6 +405,7 @@ func InspectPrompt(m *BatchManifest) PromptAssertions {
 		Applicable:     true,
 		NoContextRule:  containsAny(lower, noContextPhrasings...),
 		DirectnessRule: containsAny(lower, directnessPhrasings...),
+		DomainTextRule: containsAny(lower, domainTextPhrasings...),
 	}
 
 	// A budget counts only when its enforcement is stated too. "100 words" alone tells
