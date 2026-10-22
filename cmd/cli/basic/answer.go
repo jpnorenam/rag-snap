@@ -136,7 +136,11 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 				return fmt.Errorf("embedding model ID is not configured (%s); run 'knowledge init' and set it", knowledge.ConfEmbeddingModelID)
 			}
 			kapaClient := buildKapaClient(cmd.Context)
-			return chat.ProcessBatchChat(apiUrls[openAi], knowledgeClient, kapaClient, embeddingModelID, manifest, chat.LoadPrompts(), temperature, cmd.Verbose)
+			backend, err := chatBackend(cmd.Context, apiUrls)
+			if err != nil {
+				return err
+			}
+			return chat.ProcessBatchChat(backend, knowledgeClient, kapaClient, embeddingModelID, manifest, chat.LoadPrompts(), temperature, cmd.Verbose)
 		},
 	}
 
@@ -150,7 +154,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 	c.Flags().StringVar(&instructionsFile, "instructions-file", "", "Read the analysis instructions from a file under your home directory — used with --build --analyze")
 	c.MarkFlagsMutuallyExclusive("instructions", "instructions-file")
 	c.Flags().StringVar(&checkPath, "check", "", "Validate a manifest without running it, and exit non-zero if it carries defects")
-	c.Flags().Float64Var(&temperature, "temperature", 0.1, "Sampling temperature (0.0–1.0); lower = more deterministic")
+	c.Flags().Float64Var(&temperature, "temperature", 0.1, "Sampling temperature (0.0–1.0); lower = more deterministic. Ignored with chat.api=anthropic")
 
 	return c
 }

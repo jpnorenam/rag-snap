@@ -9,13 +9,12 @@ import (
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
-	"github.com/openai/openai-go/v3"
 )
 
 const (
 	defaultRAGTopK     = 15
 	maxRewriteTurns    = 3
-	maxRewriteTokens   = 256
+	maxRewriteTokens   = 256 // OpenAI backend; the Anthropic backend sizes its own ceiling
 	maxAssistantLength = 400
 )
 
@@ -118,13 +117,13 @@ func retrieveContext(session *Session, query, lexicalQuery string, verbose bool)
 // "VMware vSphere storage vSAN". Falls back to the original query on
 // first turn or on error.
 func rewriteSearchQuery(
-	client openai.Client,
+	backend Backend,
 	model string,
-	messages []openai.ChatCompletionMessageParamUnion,
+	history []Message,
 	query string,
 	verbose bool,
 ) string {
-	conversationCtx := formatConversationForRewrite(messages, maxRewriteTurns)
+	conversationCtx := formatConversationForRewrite(history, maxRewriteTurns)
 
 	if verbose {
 		fmt.Printf("Extracting search keywords from conversation context\n")
@@ -132,20 +131,15 @@ func rewriteSearchQuery(
 
 	stopProgress := common.StartProgressSpinner("Extracting lexical keywords")
 
-	resp, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
-		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(
-				"You are a RAG query optimizer. Given a conversation and a follow-up question, output a JSON object with two fields:\n" +
-					"- \"anchors\": verbatim technical terms, product names, and proper nouns from the text\n" +
-					"- \"expansion\": closely related terms implied by context (abbreviations, synonyms, parent concepts)\n" +
-					"Rules: expansion must be inferable from the conversation domain, not generic.\n" +
-					"Output only valid JSON, no explanation.",
-			),
-			openai.UserMessage(conversationCtx + "Question: " + query),
-		},
-		Model:               model,
-		MaxCompletionTokens: openai.Int(int64(maxRewriteTokens)),
-		MaxTokens:           openai.Int(int64(maxRewriteTokens)),
+	content, err := backend.Complete(context.Background(), Request{
+		Model: model,
+		System: "You are a RAG query optimizer. Given a conversation and a follow-up question, output a JSON object with two fields:\n" +
+			"- \"anchors\": verbatim technical terms, product names, and proper nouns from the text\n" +
+			"- \"expansion\": closely related terms implied by context (abbreviations, synonyms, parent concepts)\n" +
+			"Rules: expansion must be inferable from the conversation domain, not generic.\n" +
+			"Output only valid JSON, no explanation.",
+		Messages: []Message{{Role: RoleUser, Content: conversationCtx + "Question: " + query}},
+		Purpose:  PurposeRewrite,
 	})
 	// Stop spinner before any further output to avoid interleaving with verbose prints.
 	stopProgress()
@@ -156,11 +150,7 @@ func rewriteSearchQuery(
 		return query
 	}
 
-	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-		return query
-	}
-
-	raw := strings.TrimSpace(StripThinkTags(resp.Choices[0].Message.Content))
+	raw := strings.TrimSpace(StripThinkTags(content))
 	if raw == "" {
 		return query
 	}
@@ -214,41 +204,25 @@ func StripThinkTags(s string) string {
 	}
 }
 
-// conversationMessage is used to extract role and content from the
-// ChatCompletionMessageParamUnion discriminated union via JSON round-tripping.
-type conversationMessage struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-}
-
 // formatConversationForRewrite extracts the last maxTurns user-assistant
 // pairs from the message history and formats a compact context string.
 // Think-tag reasoning is stripped from assistant responses and long
 // responses are truncated to keep the prompt small.
 // Returns an empty string when there are no prior user messages.
-func formatConversationForRewrite(messages []openai.ChatCompletionMessageParamUnion, maxTurns int) string {
-	var turns []conversationMessage
-	for _, msg := range messages {
-		data, err := json.Marshal(msg)
-		if err != nil {
-			continue
-		}
-		var cm conversationMessage
-		if err := json.Unmarshal(data, &cm); err != nil {
-			continue
-		}
-		if cm.Role != "user" && cm.Role != "assistant" {
+func formatConversationForRewrite(messages []Message, maxTurns int) string {
+	var turns []Message
+	for _, m := range messages {
+		if m.Role != RoleUser && m.Role != RoleAssistant {
 			continue
 		}
 		// Strip reasoning blocks from assistant responses.
-		if cm.Role == "assistant" {
-			cm.Content = StripThinkTags(cm.Content)
-			cm.Content = strings.TrimSpace(cm.Content)
+		if m.Role == RoleAssistant {
+			m.Content = strings.TrimSpace(StripThinkTags(m.Content))
 		}
-		if cm.Content == "" {
+		if m.Content == "" {
 			continue
 		}
-		turns = append(turns, cm)
+		turns = append(turns, m)
 	}
 
 	if len(turns) == 0 {
@@ -267,7 +241,7 @@ func formatConversationForRewrite(messages []openai.ChatCompletionMessageParamUn
 		age := totalTurns - i // 1 = most recent
 		label := fmt.Sprintf("[turn-%d, age=%d]", i+1, age)
 		content := t.Content
-		if t.Role == "assistant" && len(content) > maxAssistantLength {
+		if t.Role == RoleAssistant && len(content) > maxAssistantLength {
 			content = content[:maxAssistantLength] + "..."
 		}
 		fmt.Fprintf(&b, "%s %s: %s\n", label, t.Role, content)
