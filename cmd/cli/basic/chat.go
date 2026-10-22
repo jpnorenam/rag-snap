@@ -30,7 +30,7 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 		RunE:              cmd.run,
 	}
 
-	cobraCmd.Flags().Float64Var(&cmd.temperature, "temperature", 0.3, "Sampling temperature (0.0–1.0); lower = more deterministic")
+	cobraCmd.Flags().Float64Var(&cmd.temperature, "temperature", 0.3, "Sampling temperature (0.0–1.0); lower = more deterministic. Ignored with chat.api=anthropic")
 	cobraCmd.Flags().StringVar(&cmd.prompt, "prompt", "", "Name of a chat_system_prompt variant to use for this session (requires the ragd daemon)")
 	addDebugFlags(cobraCmd, ctx)
 
@@ -74,5 +74,10 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 
 	kapaClient := buildKapaClient(cmd.Context)
 
-	return chat.Client(apiUrls[openAi], knowledgeClient, kapaClient, embeddingModelID, llmModelName, chat.LoadPrompts(), cmd.temperature, cmd.Verbose)
+	backend, err := chatBackend(cmd.Context, apiUrls)
+	if err != nil {
+		return err
+	}
+
+	return chat.Client(backend, knowledgeClient, kapaClient, embeddingModelID, llmModelName, chat.LoadPrompts(), cmd.temperature, cmd.Verbose)
 }

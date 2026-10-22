@@ -144,7 +144,7 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 		initialBases, droppedBases = filterExistingBases(r.Context(), knowledgeClient, resumed.Bases)
 	}
 
-	live, err := chat.NewLiveSession(baseURL, model, knowledgeClient, embeddingModelID, initialBases, systemPrompt, temperature, s.ctx.Verbose)
+	live, err := chat.NewLiveSession(s.clients.chatBackend(), model, knowledgeClient, embeddingModelID, initialBases, systemPrompt, temperature, s.ctx.Verbose)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "starting chat session: "+err.Error())
 		return

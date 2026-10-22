@@ -2,6 +2,7 @@ package basic
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -128,9 +129,20 @@ func (cmd *statusCommand) statusStruct() (*Status, error) {
 	// Populate model information
 	statusStr.Models = make(map[string]string)
 
-	// LLM model name from the inference server (best-effort)
-	if llmName, err := chat.FindModelName(endpoints[openAi]); err == nil {
-		statusStr.Models["llm"] = llmName
+	// LLM model name (best-effort): listed by the inference server, or the
+	// configured chat.model when the backend cannot list models (Bedrock's
+	// OpenAI-compatible route, or chat.api=anthropic, which never lists).
+	if backend, err := chatBackend(cmd.Context, endpoints); err == nil {
+		configured, _ := getConfigString(cmd.Context, confChatModel)
+		if backend.API == chat.APIAnthropic {
+			if configured != "" {
+				statusStr.Models["llm"] = configured
+			}
+		} else if llmName, err := chat.FindModelName(backend); err == nil {
+			statusStr.Models["llm"] = llmName
+		} else if errors.Is(err, chat.ErrModelListingUnsupported) && configured != "" {
+			statusStr.Models["llm"] = configured
+		}
 	}
 
 	// Embedding model name and OpenSearch model ID

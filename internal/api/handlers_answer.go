@@ -228,7 +228,7 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 			}
 			// kapa.ai retrieval is not yet wired into the daemon backend/client
 			// config, so batch answers served over the REST API run without it.
-			out, err := chat.RunBatch(ctx, baseURL, knowledgeClient, nil, embeddingModelID, manifest, prompts, temperature, hooks, s.ctx.Verbose)
+			out, err := chat.RunBatch(ctx, s.clients.chatBackend(), knowledgeClient, nil, embeddingModelID, manifest, prompts, temperature, hooks, s.ctx.Verbose)
 			if err != nil {
 				return err
 			}
