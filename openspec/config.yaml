@@ -18,8 +18,11 @@ context: |
   Architecture: the CLI is a thin orchestrator over three external services.
     - OpenSearch (the `knowledge` store) via opensearch-go/v4 — embeddings,
       ingest/search pipelines, indexes, ML models.
-    - An OpenAI-compatible inference server (the `chat` backend) via openai-go/v3 —
-      either a local Inference snap or a third party such as AWS Bedrock.
+    - An inference server (the `chat` backend), selected by `chat.api`: OpenAI Chat Completions
+      via openai-go/v3 (`openai`, default — a local Inference snap or a third party such as
+      Bedrock's OpenAI-compatible route) or the Anthropic Messages API via anthropic-sdk-go
+      (`anthropic` — e.g. Claude on Bedrock's bedrock-runtime …/anthropic route). All LLM calls go through
+      the Backend interface in cmd/cli/basic/chat/backend.go.
     - Apache Tika (the `tika` service) — text extraction, bundled and run as the
       `tika-server` snap daemon.
 
