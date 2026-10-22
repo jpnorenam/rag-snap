@@ -106,9 +106,39 @@ Set these with `sudo rag-cli.rag set --package <key>=<value>`. Substitute your r
 `127.0.0.1` below is just the common case; a remote/external OpenSearch cluster works the same
 way, just use its real host/port.
 
-**Chat via Bedrock:**
+`chat.api` selects the wire protocol the chat backend speaks: `openai` (OpenAI Chat
+Completions, the default) or `anthropic` (the Anthropic Messages API).
+
+**Chat via Bedrock: Claude Sonnet 5.5 (Anthropic Messages API):**
 
 ```bash
+sudo rag-cli.rag set --package chat.api="anthropic"
+sudo rag-cli.rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
+sudo rag-cli.rag set --package chat.http.port="443"
+sudo rag-cli.rag set --package chat.http.tls="true"
+sudo rag-cli.rag set --package chat.http.path="anthropic"
+sudo rag-cli.rag set --package chat.model="global.anthropic.claude-sonnet-5-5"
+```
+
+This is the same `bedrock-runtime` host as Mistral, but a different API. Claude Sonnet 5.5
+supports the Anthropic Messages API there (path `anthropic`), not Chat Completions
+(`openai/v1`), so changing `chat.model` alone does not work. The model must be an inference
+profile: `global.anthropic.claude-sonnet-5-5` (routes worldwide, no regional premium) or
+`us.anthropic.claude-sonnet-5-5` (stays in US regions). The bare `anthropic.claude-sonnet-5-5`
+is not callable in `us-east-2`. With `chat.api=anthropic`:
+
+- `chat.model` is **required**. The Messages endpoint has no model listing.
+- `--temperature`, and the `temperature` field of REST requests, are **ignored**. Current Claude
+  models reject sampling parameters.
+- The AWS account must have model access to Claude Sonnet 5.5, and your Bedrock API key
+  (`CHAT_API_KEY`) must be allowed to invoke it (`bedrock:InvokeModel` on the inference
+  profile). See
+  [docs/bedrock_guide.md](docs/bedrock_guide.md).
+
+**Chat via Bedrock: OpenAI-compatible models (e.g. Mistral Large 3):**
+
+```bash
+sudo rag-cli.rag set --package chat.api="openai"
 sudo rag-cli.rag set --package chat.http.host="bedrock-runtime.us-east-2.amazonaws.com"
 sudo rag-cli.rag set --package chat.http.port="443"
 sudo rag-cli.rag set --package chat.http.tls="true"
@@ -119,6 +149,7 @@ sudo rag-cli.rag set --package chat.model="mistral.mistral-large-3-675b-instruct
 **Chat via a local Inference snap (instead of Bedrock):**
 
 ```bash
+sudo rag-cli.rag set --package chat.api="openai"
 sudo rag-cli.rag set --package chat.http.host="127.0.0.1"
 sudo rag-cli.rag set --package chat.http.port="8324"
 sudo rag-cli.rag set --package chat.http.path="v1"

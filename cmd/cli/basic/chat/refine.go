@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/rfp"
-	"github.com/openai/openai-go/v3"
 )
 
 const refineSystemPrompt = `You are an RFP question refinement assistant. Your task is to improve a batch of extracted RFP questions for downstream LLM-based answer generation.
@@ -52,7 +51,7 @@ type RefinedQuestion struct {
 // clarification). Returns the refined []rfp.Question and raw []RefinedQuestion
 // for summary reporting. Returns an error on LLM or JSON parse failure —
 // callers must fall back to the original questions.
-func RefineQuestions(baseURL, model string, questions []rfp.Question) ([]rfp.Question, []RefinedQuestion, error) {
+func RefineQuestions(backend BackendConfig, model string, questions []rfp.Question) ([]rfp.Question, []RefinedQuestion, error) {
 	input := make([]refineInput, len(questions))
 	for i, q := range questions {
 		input[i] = refineInput{ID: q.ID, Text: q.Question, OriginalOrder: i}
@@ -63,24 +62,26 @@ func RefineQuestions(baseURL, model string, questions []rfp.Question) ([]rfp.Que
 		return nil, nil, fmt.Errorf("marshaling input: %w", err)
 	}
 
-	client := openai.NewClient(clientOptions(baseURL)...)
+	client, err := NewBackend(backend)
+	if err != nil {
+		return nil, nil, err
+	}
 
-	resp, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
-		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(refineSystemPrompt),
-			openai.UserMessage(string(inputJSON)),
-		},
-		Model: model,
+	content, err := client.Complete(context.Background(), Request{
+		Model:    model,
+		System:   refineSystemPrompt,
+		Messages: []Message{{Role: RoleUser, Content: string(inputJSON)}},
+		Purpose:  PurposeRefine,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("LLM call failed: %w", err)
 	}
 
-	if len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
+	if content == "" {
 		return nil, nil, fmt.Errorf("empty response from LLM")
 	}
 
-	raw := strings.TrimSpace(StripThinkTags(resp.Choices[0].Message.Content))
+	raw := strings.TrimSpace(StripThinkTags(content))
 	raw = strings.TrimPrefix(raw, "```json")
 	raw = strings.TrimPrefix(raw, "```")
 	raw = strings.TrimSuffix(raw, "```")

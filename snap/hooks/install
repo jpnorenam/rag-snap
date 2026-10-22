@@ -26,6 +26,16 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 # is one-shot and does not persist into the ragd daemon's runtime environment. See the
 # `ragd` app's environment comment in snapcraft.yaml for how operators inject them.
 
+# Register the chat backend's wire protocol so users can switch it with:
+#   sudo rag set chat.api=anthropic
+# openai    — OpenAI Chat Completions: a local Inference snap, or a third party's
+#             OpenAI-compatible route (e.g. Bedrock bedrock-runtime …/openai/v1). Default.
+# anthropic — Anthropic Messages API, e.g. Claude on Bedrock: chat.http.host=
+#             bedrock-runtime.<region>.amazonaws.com, chat.http.path=anthropic,
+#             chat.model=global.anthropic.claude-sonnet-5-5. chat.model is required (no model
+#             listing) and sampling temperature is not sent. CHAT_API_KEY is the bearer.
+snapctl set config.package.chat.api="openai"
+
 # Register Google Drive OAuth2 credential keys so users can configure them with:
 #   sudo rag set gdrive.client.id=<client-id>
 #   sudo rag set gdrive.client.secret=<client-secret>

@@ -8,10 +8,9 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"net/url"
-	"os"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -19,55 +18,41 @@ import (
 	"github.com/fatih/color"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/packages/ssestream"
 )
 
-func clientOptions(baseURL string) []option.RequestOption {
-	opts := []option.RequestOption{option.WithBaseURL(baseURL)}
-	if key := os.Getenv("CHAT_API_KEY"); key != "" {
-		opts = append(opts, option.WithAPIKey(key))
-	}
-	return opts
-}
-
-// ModelListingUnsupported reports whether err is the inference server rejecting
-// the GET /models probe because it does not implement model listing (HTTP 404 or
-// 405) — as opposed to being unreachable, refusing auth, or erroring internally.
-// AWS Bedrock's OpenAI-compatible endpoint is the motivating case: it serves
-// /openai/v1/chat/completions but has no /openai/v1/models route, so its health
-// cannot be derived from the model listing and a model name must be configured
-// explicitly (chat.model). A 401/403/5xx is a real fault and returns false.
-func ModelListingUnsupported(err error) bool {
-	var apiErr *openai.Error
-	if errors.As(err, &apiErr) {
-		return apiErr.StatusCode == http.StatusNotFound ||
-			apiErr.StatusCode == http.StatusMethodNotAllowed
-	}
-	return false
-}
-
-// FindModelName queries the OpenAI-compatible API for available models
-// and returns the first model name. Returns an error if the server is
-// unreachable or returns no models.
-func FindModelName(baseURL string) (string, error) {
-	modelService := openai.NewModelService(clientOptions(baseURL)...)
-	modelPage, err := modelService.List(context.Background())
+// FindModelName asks the inference server for its models and returns the first
+// one. A server that cannot list models (AWS Bedrock, or chat.api=anthropic)
+// yields an error wrapping ErrModelListingUnsupported that tells the operator to
+// set chat.model; an unreachable server or one returning no models is an error.
+func FindModelName(backend BackendConfig) (string, error) {
+	b, err := NewBackend(backend)
 	if err != nil {
 		return "", err
 	}
-	if len(modelPage.Data) == 0 {
+	models, err := b.ListModels(context.Background())
+	if errors.Is(err, ErrModelListingUnsupported) {
+		return "", ModelRequiredError()
+	} else if err != nil {
+		return "", err
+	}
+	if len(models) == 0 {
 		return "", fmt.Errorf("server returned no models")
 	}
-	return modelPage.Data[0].ID, nil
+	return models[0], nil
 }
 
-func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaClient *knowledge.KapaClient, embeddingModelID string, llmModelName string, prompts PromptConfig, temperature float64, verbose bool) error {
-	fmt.Printf("Using inference server at %v\n", baseURL)
+// Client runs the interactive chat REPL against the inference server addressed by
+// backend, with RAG retrieval when a knowledge client is given.
+func Client(backend BackendConfig, knowledgeClient *knowledge.OpenSearchClient, kapaClient *knowledge.KapaClient, embeddingModelID string, llmModelName string, prompts PromptConfig, temperature float64, verbose bool) error {
+	fmt.Printf("Using inference server at %v\n", backend.BaseURL)
+
+	llm, err := NewBackend(backend)
+	if err != nil {
+		return err
+	}
 
 	// Check if server is reachable
-	if err := handshake(baseURL); err != nil {
+	if err := handshake(backend.BaseURL); err != nil {
 		return err
 	}
 
@@ -87,20 +72,19 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 	fmt.Println()
 
 	if llmModelName == "" {
-		var err error
-		llmModelName, err = findModelName(baseURL, verbose)
+		llmModelName, err = findModelName(llm, verbose)
 		if err != nil {
 			return err
 		}
 	}
 	if verbose {
 		fmt.Printf("Using model %v\n", llmModelName)
+		if notice := temperatureNotice(backend.API, temperature); notice != "" {
+			fmt.Println(notice)
+		}
 	}
 
-	// OpenAI API Client
-	client := openai.NewClient(clientOptions(baseURL)...)
-
-	if err := checkServer(client, llmModelName); err != nil {
+	if err := checkServer(llm, llmModelName); err != nil {
 		return err
 	}
 
@@ -135,14 +119,10 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 	// The configured prompt is sent unconditionally — retrieval availability
 	// never swaps in a hidden substitute, so what `prompt init` shows is what
 	// runs.
-	initialSystemPrompt := prompts.ChatSystemPrompt
-
-	params := openai.ChatCompletionNewParams{
-		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage(initialSystemPrompt),
-		},
-		Model:       llmModelName,
-		Temperature: openai.Float(temperature),
+	conv := &conversation{
+		model:       llmModelName,
+		system:      prompts.ChatSystemPrompt,
+		temperature: &temperature,
 	}
 
 	session := &Session{
@@ -181,12 +161,12 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 			verb, args, _ := strings.Cut(strings.TrimSpace(prompt), " ")
 			switch verb {
 			case cmdSave:
-				if id, ok := saveDirectChat(chatStore, chatID, args, llmModelName, session, params.Messages); ok {
+				if id, ok := saveDirectChat(chatStore, chatID, args, llmModelName, session, conv.history); ok {
 					chatID = id
 				}
 			case cmdHistory:
-				if msgs, id, ok := resumeDirectChat(chatStore, initialSystemPrompt, session); ok {
-					params.Messages = msgs
+				if msgs, id, ok := resumeDirectChat(chatStore, session); ok {
+					conv.history = msgs
 					chatID = id
 				}
 			default:
@@ -202,8 +182,7 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 
 		if len(prompt) > 0 {
 			rl.SaveHistory(prompt)
-			params, err = handlePrompt(client, params, prompt, session, verbose)
-			if err != nil {
+			if err := handlePrompt(llm, conv, prompt, session, verbose); err != nil {
 				return err
 			}
 		}
@@ -242,16 +221,7 @@ func handshake(baseURL string) error {
 	return nil
 }
 
-func checkServer(client openai.Client, modelName string) error {
-	params := openai.ChatCompletionNewParams{
-		Messages: []openai.ChatCompletionMessageParamUnion{
-			openai.SystemMessage("Are you up?"),
-		},
-		Model:               modelName,
-		MaxCompletionTokens: openai.Int(1),
-		MaxTokens:           openai.Int(1), // for runtimes that don't yet support MaxCompletionTokens
-	}
-
+func checkServer(backend Backend, modelName string) error {
 	stopProgress := common.StartProgressSpinner("Waiting for server to be ready")
 	defer stopProgress()
 
@@ -261,41 +231,35 @@ func checkServer(client openai.Client, modelName string) error {
 	)
 	start := time.Now()
 	for {
-		_, err := client.Chat.Completions.New(context.Background(), params)
-		if err != nil {
-			var apiError *openai.Error
-			if errors.As(err, &apiError) {
-				// llama-server starting up
-				// Error: POST "http://localhost:8328/v1/chat/completions": 503 Service Unavailable {"message":"Loading model","type":"unavailable_error","code":503}
-				if apiError.StatusCode == http.StatusServiceUnavailable && apiError.Type == "unavailable_error" {
-					if time.Since(start) > waitTimeout {
-						// Stop waiting
-						return fmt.Errorf("no models available on server\n\n%s\n%s",
-							common.SuggestServerStartup(),
-							common.SuggestServerLogs())
-					}
-					time.Sleep(retryInterval)
-					continue
-				}
-				if apiError.StatusCode == http.StatusUnauthorized {
-					return fmt.Errorf("api: %s\n\nSet the CHAT_API_KEY environment variable to authenticate", apiError.Error())
-				}
-				return fmt.Errorf("api: %s", apiError.Error())
-			} else {
-				return fmt.Errorf("%s\n\n%s", err,
+		err := backend.Ping(context.Background(), modelName)
+		if err == nil {
+			return nil
+		}
+		if errors.Is(err, ErrServerLoading) {
+			if time.Since(start) > waitTimeout {
+				// Stop waiting
+				return fmt.Errorf("no models available on server\n\n%s\n%s",
+					common.SuggestServerStartup(),
 					common.SuggestServerLogs())
 			}
+			time.Sleep(retryInterval)
+			continue
 		}
-
-		return nil
+		var statusErr *StatusError
+		if errors.As(err, &statusErr) {
+			if statusErr.Unauthorized() {
+				return fmt.Errorf("api: %s\n\nSet the CHAT_API_KEY environment variable to authenticate", statusErr.Error())
+			}
+			return fmt.Errorf("api: %s", statusErr.Error())
+		}
+		return fmt.Errorf("%s\n\n%s", err,
+			common.SuggestServerLogs())
 	}
 }
 
-func findModelName(baseURL string, verbose bool) (string, error) {
+func findModelName(backend Backend, _ bool) (string, error) {
 	stopProgress := common.StartProgressSpinner("Looking up model name")
 	defer stopProgress()
-
-	modelService := openai.NewModelService(clientOptions(baseURL)...)
 
 	const (
 		retryInterval = 5 * time.Second
@@ -303,12 +267,14 @@ func findModelName(baseURL string, verbose bool) (string, error) {
 	)
 	start := time.Now()
 	for {
-		modelPage, err := modelService.List(context.Background())
-		if err != nil {
+		models, err := backend.ListModels(context.Background())
+		if errors.Is(err, ErrModelListingUnsupported) {
+			return "", ModelRequiredError()
+		} else if err != nil {
 			return "", err
 		}
 
-		if len(modelPage.Data) == 0 {
+		if len(models) == 0 {
 			// This can happen when OpenVINO Model Server is starting up
 			if time.Since(start) > waitTimeout {
 				// Stop waiting
@@ -318,19 +284,15 @@ func findModelName(baseURL string, verbose bool) (string, error) {
 			}
 			time.Sleep(retryInterval)
 			continue
-		} else if len(modelPage.Data) > 1 {
-			var names []string
-			for _, model := range modelPage.Data {
-				names = append(names, model.ID)
-			}
-			return "", fmt.Errorf("expected one but server returned multiple models: %s", strings.Join(names, ", "))
+		} else if len(models) > 1 {
+			return "", fmt.Errorf("expected one but server returned multiple models: %s", strings.Join(models, ", "))
 		}
 
-		return modelPage.Data[0].ID, nil
+		return models[0], nil
 	} // end for
 }
 
-func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, prompt string, session *Session, verbose bool) (openai.ChatCompletionNewParams, error) {
+func handlePrompt(backend Backend, conv *conversation, prompt string, session *Session, verbose bool) error {
 	// RAG augmentation applies only when a knowledge client is present AND at
 	// least one base is active. With no active base the prompt is answered
 	// without retrieval (mirroring the daemon's LiveSession.Prompt), so a plain
@@ -344,7 +306,7 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	lexicalQuery := prompt
 	ragContext := ""
 	if hasContext {
-		lexicalQuery = rewriteSearchQuery(client, params.Model, params.Messages, prompt, verbose)
+		lexicalQuery = rewriteSearchQuery(backend, conv.model, conv.history, prompt, verbose)
 		// Retrieve RAG context from knowledge base (no-op when unavailable).
 		ragContext = retrieveContext(session, prompt, lexicalQuery, verbose)
 	}
@@ -360,103 +322,69 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", "", "", prompt)
 	}
 
-	// Build a temporary copy of the message history so the augmented prompt
-	// is sent to the API but only the original prompt is kept in history.
-	apiMessages := make([]openai.ChatCompletionMessageParamUnion, len(params.Messages))
-	copy(apiMessages, params.Messages)
-	apiMessages = append(apiMessages, openai.UserMessage(llmPrompt))
-
-	apiParams := params
-	apiParams.Messages = apiMessages
+	// The augmented prompt is sent to the API, but only the original prompt is
+	// kept in history.
+	req := conv.turnRequest(llmPrompt)
 
 	if verbose {
-		paramDebugString, _ := json.Marshal(apiParams)
-		fmt.Printf("Sending request: %s\n", paramDebugString)
+		reqDebugString, _ := json.Marshal(req)
+		fmt.Printf("Sending request: %s\n", reqDebugString)
 	}
 
-	stopProgress := common.StartProgressSpinner("Generating an answer")
-	stream := client.Chat.Completions.NewStreaming(context.Background(), apiParams)
+	stopProgress := sync.OnceFunc(common.StartProgressSpinner("Generating an answer"))
+	reply, err := backend.Stream(context.Background(), req, printToken(stopProgress))
 	stopProgress()
-
-	appendParam, err := processStream(stream)
 	if err != nil {
-		return params, err
+		// A refusal or an exhausted output budget fails this turn only: report
+		// it and keep the session, without recording the turn.
+		var refusal *RefusalError
+		var ceiling *OutputCeilingError
+		if errors.As(err, &refusal) || errors.As(err, &ceiling) {
+			fmt.Printf("\n%s\n", color.YellowString(err.Error()))
+			return nil
+		}
+		return streamError(err)
 	}
 
-	// Store the original prompt (not the augmented one) plus the assistant
-	// response in the conversation history.
-	params.Messages = append(params.Messages, openai.UserMessage(prompt))
-	if appendParam != nil {
-		params.Messages = append(params.Messages, *appendParam)
-	}
+	conv.record(prompt, reply)
 	fmt.Println()
 
-	return params, nil
+	return nil
 }
 
-func processStream(stream *ssestream.Stream[openai.ChatCompletionChunk]) (*openai.ChatCompletionMessageParamUnion, error) {
-	// optionally, an accumulator helper can be used
-	acc := openai.ChatCompletionAccumulator{}
-
-	// An opening <think> tag will change the output color to indicate reasoning.
-	thinking := false
-
-	for stream.Next() {
-		chunk := stream.Current()
-		acc.AddChunk(chunk)
-
-		if _, ok := acc.JustFinishedContent(); ok {
-			//fmt.Println("\nContent stream finished")
+// printToken renders streamed output: reasoning in blue, answer text plain. The
+// spinner is stopped by the first token so it never interleaves with output. A
+// line break separates a reasoning block from the answer that follows it.
+func printToken(stopProgress func()) StreamFunc {
+	var last TokenKind
+	var lastText string
+	return func(kind TokenKind, content string) error {
+		stopProgress()
+		if last == TokenThink && kind == TokenAnswer && !strings.HasSuffix(lastText, "\n") {
+			fmt.Println()
 		}
-
-		// if using tool calls
-		if tool, ok := acc.JustFinishedToolCall(); ok {
-			fmt.Printf("Tool call stream finished %d: %s %s", tool.Index, tool.Name, tool.Arguments)
+		if kind == TokenThink {
+			fmt.Printf("%s", color.BlueString(content))
+		} else {
+			fmt.Printf("%s", content)
 		}
-
-		if refusal, ok := acc.JustFinishedRefusal(); ok {
-			fmt.Printf("Refusal stream finished: %s", refusal)
-		}
-
-		// Print chunks as they are received
-		if len(chunk.Choices) > 0 {
-			lastChunk := chunk.Choices[0].Delta.Content
-
-			if strings.Contains(lastChunk, "<think>") {
-				thinking = true
-				fmt.Printf("%s", color.BlueString(lastChunk))
-			} else if strings.Contains(lastChunk, "</think>") {
-				thinking = false
-				fmt.Printf("%s", color.BlueString(lastChunk))
-
-			} else if thinking {
-				fmt.Printf("%s", color.BlueString(lastChunk))
-
-			} else {
-				fmt.Printf("%s", lastChunk)
-			}
-		}
+		last, lastText = kind, content
+		return nil
 	}
+}
 
-	if err := stream.Err(); err != nil {
-		if errors.Is(err, syscall.ECONNREFUSED) { // connection refused before streaming
-			return nil, fmt.Errorf("connection refused\n\n%s",
-				common.SuggestServerLogs())
-		} else if errors.Is(err, io.ErrUnexpectedEOF) {
-			fmt.Println() // break the line after incomplete stream
-			return nil, fmt.Errorf("connection closed by server\n\n%s",
-				common.SuggestServerLogs())
-		}
-		return nil, fmt.Errorf("%s\n\n%s", err,
+// streamError adds troubleshooting guidance to a failed streaming turn.
+func streamError(err error) error {
+	if errors.Is(err, syscall.ECONNREFUSED) { // connection refused before streaming
+		return fmt.Errorf("connection refused\n\n%s",
+			common.SuggestServerLogs())
+	} else if errors.Is(err, io.ErrUnexpectedEOF) {
+		fmt.Println() // break the line after incomplete stream
+		return fmt.Errorf("connection closed by server\n\n%s",
 			common.SuggestServerLogs())
 	}
-
-	// After the stream is finished, acc can be used like a ChatCompletion
-	appendParam := acc.Choices[0].Message.ToParam()
-	if acc.Choices[0].Message.Content == "" {
-		return nil, nil
-	}
-	return &appendParam, nil
+	return fmt.Errorf("%s\n\n%s", err,
+		common.SuggestServerLogs())
 }
 
 func filterInput(r rune) (rune, bool) {

@@ -2,6 +2,7 @@ package basic
 
 import (
 	"fmt"
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"net/url"
 	"os"
 
@@ -153,6 +154,18 @@ func buildKapaClient(ctx *common.Context) *knowledge.KapaClient {
 		return knowledge.NewKapaClient(projectID, apiKey)
 	}
 	return nil
+}
+
+// chatBackend resolves the inference backend: the wire protocol selected by
+// chat.api (unset → openai) and the chat base URL from serverApiUrls. The daemon
+// resolves the same key the same way (internal/api clientCache.chatBackend).
+func chatBackend(ctx *common.Context, apiUrls map[string]string) (chat.BackendConfig, error) {
+	value, _ := config.GetString(ctx.Config, chat.ConfAPI)
+	api, err := chat.ResolveAPI(value)
+	if err != nil {
+		return chat.BackendConfig{}, err
+	}
+	return chat.BackendConfig{API: api, BaseURL: apiUrls[openAi]}, nil
 }
 
 func serverApiUrls(ctx *common.Context) (map[string]string, error) {

@@ -21,6 +21,9 @@ seed() {
 	fi
 }
 
+# Chat backend wire protocol. Keep in sync with the install hook, which documents it.
+seed chat.api "openai"
+
 # RFP analysis. Keep in sync with the install hook, which documents each key.
 seed analysis.enabled "false"
 seed analysis.model ""

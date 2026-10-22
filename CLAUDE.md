@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A CLI-based RAG (Retrieval-Augmented Generation) tool, packaged as a strictly-confined snap named `rag-cli` (binary `rag-cli.rag`). It lets users build local knowledge bases and chat with them. It is a thin orchestrator over three external services:
 
 - **OpenSearch** (the `knowledge` store) — embeddings, ingest/search pipelines, indexes, ML models. Accessed via `opensearch-go/v4`.
-- **An inference server** (the `chat` backend) — either a local Inference snap or a third-party OpenAI-compatible API (e.g. AWS Bedrock). Accessed via `openai-go/v3`.
+- **An inference server** (the `chat` backend) — a local Inference snap, a third-party OpenAI-compatible API (e.g. AWS Bedrock's `openai/v1` route), or the Anthropic Messages API (e.g. Claude on Bedrock's `bedrock-runtime …/anthropic` route). The `chat.api` key selects the protocol (`openai`, the default, or `anthropic`). Every call goes through the `Backend` interface in `basic/chat/backend.go`; the implementations use `openai-go/v3` and `anthropic-sdk-go`.
 - **Apache Tika** (the `tika` service) — text extraction from documents. Bundled and run as the `tika-server` snap daemon.
 
 The Go module path is `github.com/jpnorenam/rag-snap` (note: differs from the repo/snap name `rag-cli`).
@@ -34,7 +34,7 @@ All configuration is stored and read through `snapctl` (`pkg/storage/snapctl_sto
 
 Config has two layers with precedence (lowest → highest): `package` (set by install hook / maintainer via `set --package`) then `user` (overrides). User `set` rejects unknown keys — a key must already exist as a package key. See `pkg/storage/config.go`. Keys are dot-namespaced and flattened, e.g. `chat.http.host`, `knowledge.http.tls`, `knowledge.model.embedding`, `tika.http.port`, `gdrive.client.id`.
 
-Secrets are passed via **environment variables**, not config: `OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `CHAT_API_KEY`.
+Secrets are passed via **environment variables**, not config: `OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `CHAT_API_KEY`. With `chat.api=anthropic`, `CHAT_API_KEY` is the only credential: the Anthropic client is built with `option.WithoutEnvironmentDefaults()`, so ambient `ANTHROPIC_*` variables and `ant` profiles are never used.
 
 ## Architecture / code layout
 

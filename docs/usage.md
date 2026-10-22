@@ -973,7 +973,7 @@ rag-cli.rag chat [model_name] [--temperature <float>] [--prompt <variant>]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--temperature` | `0.3` | Sampling temperature (0.0–1.0). Lower values produce more deterministic responses; higher values allow more creative variation. |
+| `--temperature` | `0.3` | Sampling temperature (0.0–1.0). Lower values produce more deterministic responses; higher values allow more creative variation. Ignored with `chat.api=anthropic`: current Claude models reject sampling parameters. |
 | `--prompt` | (active) | Name of a `chat_system_prompt` variant to use for this session only (see [Prompt](#prompt)). Requires the `ragd` daemon. |
 
 **Example — auto-detect model**
@@ -1273,7 +1273,7 @@ rag-cli.rag answer batch <manifest.yaml> [--temperature <float>]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--temperature` | `0.1` | Sampling temperature (0.0–1.0). The low default keeps answers grounded and consistent across runs. Raise it for more varied phrasing. |
+| `--temperature` | `0.1` | Sampling temperature (0.0–1.0). The low default keeps answers grounded and consistent across runs. Raise it for more varied phrasing. Ignored with `chat.api=anthropic`: current Claude models reject sampling parameters. |
 
 #### YAML schema
 
@@ -1298,7 +1298,7 @@ questions:
 | Field | Required | Description |
 |---|---|---|
 | `version` | Yes | Schema version. Use `"1.0"`. |
-| `model` | No | LLM model identifier. Falls back to the `chat.model` config value, then to server auto-detection. |
+| `model` | No | LLM model identifier. Falls back to the `chat.model` config value, then to server auto-detection. Auto-detection is unavailable on AWS Bedrock and with `chat.api=anthropic`; set `chat.model` there. |
 | `knowledge_bases` | No | List of knowledge base names to search for context. Defaults to the `default` base. |
 | `prompt` | No | Custom system prompt for the entire batch. Overrides the built-in RAG answer prompt. `source_rules` is appended to it. Mutually exclusive with `prompt_ref`. |
 | `prompt_ref` | No | Name of a stored `answer_system_prompt` variant to run the batch on (see [Prompt](#prompt)). Requires the `ragd` daemon; mutually exclusive with `prompt`. The resolved `variant@version` is recorded in the output JSON. |
@@ -1420,7 +1420,7 @@ Results are written to `batch-results-YYYYMMDD-HHMMSS.json` in the current worki
 ```json
 {
   "generated_at": "2025-02-25T14:30:22Z",
-  "model": "mistral.mistral-large-3-675b-instruct",
+  "model": "global.anthropic.claude-sonnet-5-5",
   "prompt": "rfp-govco-2026@3",
   "results": [
     {
@@ -1440,12 +1440,13 @@ Two fields record how each answer was produced, and both are omitted when they d
 | `prompt` | A `prompt_ref` resolved | The `answer_system_prompt` variant that drove the run, as `variant@version`. Absent for the built-in default prompt and for an inline `prompt`. |
 | `results[].domain` | The question matched a `domains` entry | The `match` pattern of the entry that applied, which identifies exactly one entry. Absent when the manifest carried no `domains` block, or when the question matched no entry. |
 
-> **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run)
-> prints the error and moves on. All answers collected before the failure are still written to the
+> **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run,
+> or the model declines to answer it) prints the error and moves on. All answers collected before the failure are still written to the
 > output file.
 
 > **Note on model selection:** If the inference server does not support model auto-detection
-> (e.g. AWS Bedrock), set the model explicitly in the manifest or configure a default with
+> (e.g. AWS Bedrock, or any backend with `chat.api=anthropic`), set the model explicitly in the
+> manifest or configure a default with
 > `sudo rag-cli.rag set --package chat.model="<model-id>"` once after installation.
 
 ---

@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -108,7 +110,7 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}()
 	go func() {
 		defer wg.Done()
-		inference = s.probeInference()
+		inference = s.probeInference(ctx)
 	}()
 	go func() {
 		defer wg.Done()
@@ -204,34 +206,43 @@ func (s *Server) configuredModels() []configuredModel {
 
 // probeInference reports the chat backend's health and the model it serves. The
 // model listing doubles as the health check: a server that cannot name a model
-// cannot answer a chat turn either. It takes no context because chat.FindModelName —
-// the same probe the CLI's status command uses — carries its own.
-func (s *Server) probeInference() serviceStatus {
-	status := serviceStatus{Endpoint: s.backends.urls[backendOpenAI]}
+// cannot answer a chat turn either. A backend that cannot list models is probed
+// without spending tokens: health is taken from the configured chat.model — the
+// same value the daemon's chat and answer paths use then. ctx bounds only the
+// reachability dial; chat.FindModelName — the same probe the CLI's status command
+// uses — carries its own context.
+func (s *Server) probeInference(ctx context.Context) serviceStatus {
+	backend := s.clients.chatBackend()
+	status := serviceStatus{Endpoint: backend.BaseURL}
 	if status.Endpoint == "" {
 		status.State = serviceNotConfigured
 		return status
 	}
+	api, err := chat.ResolveAPI(backend.API)
+	if err != nil {
+		status.State = serviceUnreachable
+		status.Error = err.Error()
+		return status
+	}
 
-	name, err := chat.FindModelName(status.Endpoint)
+	if api == chat.APIAnthropic {
+		// The Messages API has no model listing: reachability is a TCP dial,
+		// and the model is the configured one.
+		if err := dialEndpoint(ctx, status.Endpoint); err != nil {
+			status.State = serviceUnreachable
+			status.Error = err.Error()
+			return status
+		}
+		return s.configuredInferenceModel(status)
+	}
+
+	name, err := chat.FindModelName(backend)
 	if err != nil {
 		// Some OpenAI-compatible backends (notably AWS Bedrock) don't implement
 		// GET /models: it 404s while /chat/completions works. That is a reachable
-		// server, not a down one, so health is taken from the explicitly
-		// configured chat.model — the same value the daemon's chat and answer
-		// paths use when /models is unavailable. With no model configured we can't
-		// name one, so we surface actionable guidance rather than a bare 404.
-		if chat.ModelListingUnsupported(err) {
-			if model, _ := config.GetString(s.ctx.Config, confChatModel); model != "" {
-				status.State = serviceRunning
-				status.LLMModel = model
-				return status
-			}
-			status.State = serviceUnreachable
-			status.Error = fmt.Sprintf(
-				"inference server has no model-listing endpoint; set the model name with `sudo rag-cli.rag set --package %s=<model>` (e.g. a Bedrock model id)",
-				confChatModel)
-			return status
+		// server, not a down one.
+		if errors.Is(err, chat.ErrModelListingUnsupported) {
+			return s.configuredInferenceModel(status)
 		}
 		status.State = serviceUnreachable
 		status.Error = err.Error()
@@ -241,6 +252,46 @@ func (s *Server) probeInference() serviceStatus {
 	status.State = serviceRunning
 	status.LLMModel = name
 	return status
+}
+
+// configuredInferenceModel reports a reachable inference server whose model
+// cannot be listed: running with the configured chat.model, or — with no model
+// configured — unreachable with actionable guidance rather than a bare 404.
+func (s *Server) configuredInferenceModel(status serviceStatus) serviceStatus {
+	if model, _ := config.GetString(s.ctx.Config, confChatModel); model != "" {
+		status.State = serviceRunning
+		status.LLMModel = model
+		return status
+	}
+	status.State = serviceUnreachable
+	status.Error = fmt.Sprintf(
+		"inference server has no model-listing endpoint; set the model name with `sudo rag-cli.rag set --package %s=<model>` (e.g. global.anthropic.claude-sonnet-5-5 or a Bedrock model id)",
+		confChatModel)
+	return status
+}
+
+// dialEndpoint checks that baseURL's host accepts a TCP connection, bounded by
+// ctx and probeTimeout.
+func dialEndpoint(ctx context.Context, baseURL string) error {
+	u, err := url.Parse(baseURL)
+	if err != nil {
+		return fmt.Errorf("invalid inference URL: %w", err)
+	}
+	port := u.Port()
+	if port == "" {
+		port = "80"
+		if u.Scheme == "https" {
+			port = "443"
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(u.Hostname(), port))
+	if err != nil {
+		return err
+	}
+	return conn.Close()
 }
 
 // probeTika reports the text-extraction service's health and version. Tika answers
