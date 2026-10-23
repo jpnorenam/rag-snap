@@ -437,7 +437,12 @@ Per-service detail:
   to `model_state: DEPLOYED`). Each configured model carries a `deployed` flag. **A configured
   model ID that is not deployed breaks retrieval, and nothing else reports it until a search
   fails** — this flag is how you see it. Fix it with `rag-cli.rag knowledge init`.
-- **`inference`** — the LLM model name the chat backend serves (`llm_model`).
+- **`inference`** — the LLM model name the chat backend serves (`llm_model`). When the backend
+  cannot list models (AWS Bedrock's OpenAI-compatible route, or any `chat.api=anthropic` setup),
+  this is the configured `chat.model`, and with `chat.api=anthropic` health is a connection check
+  only, so no tokens are spent. With no `chat.model` configured there, the entry is `unreachable`
+  with guidance. Under `chat.api=anthropic`, the optional `temperature` in chat and
+  answer-batch request bodies is accepted but ignored.
 - **`tika`** — the Tika server version (`version`).
 - **`ragd`** — the API version and the enabled listeners (unix socket, and the loopback address
   when the loopback listener is on). The localhost token is never included.

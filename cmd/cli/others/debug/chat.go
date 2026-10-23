@@ -13,6 +13,7 @@ type chatCommand struct {
 
 	// flags
 	baseUrl   string
+	api       string
 	modelName string
 }
 
@@ -23,15 +24,16 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 	cobraCmd := &cobra.Command{
 		Use:               "chat",
 		Short:             "Start the chat CLI providing connection parameters",
-		Long:              "Open a text-only chat session to the OpenAI-compatible server at the provided URL, requesting the model as specified.",
+		Long:              "Open a text-only chat session to the inference server at the provided URL (OpenAI-compatible, or Anthropic Messages with --api anthropic), requesting the model as specified.",
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE:              cmd.run,
 	}
 
 	// flags
-	cobraCmd.Flags().StringVar(&cmd.baseUrl, "base-url", "", "Base URL of the OpenAI-compatible server")
+	cobraCmd.Flags().StringVar(&cmd.baseUrl, "base-url", "", "Base URL of the inference server")
 	cobraCmd.Flags().StringVar(&cmd.modelName, "model", "", "Name of the model to use")
+	cobraCmd.Flags().StringVar(&cmd.api, "api", chat.APIOpenAI, "Wire protocol of the server: openai or anthropic")
 
 	return cobraCmd
 }
@@ -41,5 +43,5 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("the --base-url parameter is required")
 	}
 
-	return chat.Client(cmd.baseUrl, nil, nil, "", cmd.modelName, chat.DefaultPrompts(), 0.3, cmd.Verbose)
+	return chat.Client(chat.BackendConfig{API: cmd.api, BaseURL: cmd.baseUrl}, nil, nil, "", cmd.modelName, chat.DefaultPrompts(), 0.3, cmd.Verbose)
 }

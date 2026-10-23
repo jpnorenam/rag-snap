@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
@@ -99,3 +100,11 @@ func (c *clientCache) tikaURL() string { return c.urls[backendTika] }
 
 // openAIURL returns the configured inference server base URL.
 func (c *clientCache) openAIURL() string { return c.urls[backendOpenAI] }
+
+// chatBackend returns the inference backend: the chat.api wire protocol (read
+// live, like chat.model; validated at startup and again by chat.NewBackend) and
+// the configured base URL. It mirrors the CLI's chatBackend.
+func (c *clientCache) chatBackend() chat.BackendConfig {
+	api, _ := config.GetString(c.ctx.Config, chat.ConfAPI)
+	return chat.BackendConfig{API: api, BaseURL: c.openAIURL()}
+}

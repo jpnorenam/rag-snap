@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
-	"github.com/openai/openai-go/v3"
 	"gopkg.in/yaml.v3"
 )
 
@@ -237,6 +236,11 @@ func LoadBatchManifest(path string) (*BatchManifest, error) {
 	return &manifest, nil
 }
 
+// batchRetrieve is the retrieval step RunBatch grounds each question on. It is a
+// variable only so tests can decide which questions find context without a live
+// knowledge backend.
+var batchRetrieve = retrieveContext
+
 // RunBatch runs each question in the manifest through the RAG+LLM pipeline and
 // returns the structured results. It is presentation-free: progress is reported
 // through hooks rather than printed, and nothing is written to disk, so both the
@@ -245,7 +249,7 @@ func LoadBatchManifest(path string) (*BatchManifest, error) {
 // fixed no-context response rather than an ungrounded generation.
 func RunBatch(
 	ctx context.Context,
-	baseURL string,
+	backend BackendConfig,
 	knowledgeClient *knowledge.OpenSearchClient,
 	kapaClient *knowledge.KapaClient,
 	embeddingModelID string,
@@ -263,14 +267,20 @@ func RunBatch(
 		return nil, err
 	}
 
-	client := openai.NewClient(clientOptions(baseURL)...)
+	client, err := NewBackend(backend)
+	if err != nil {
+		return nil, err
+	}
 
 	modelName := manifest.Model
 	if modelName == "" {
-		modelName, err = findModelName(baseURL, verbose)
+		modelName, err = findModelName(client, verbose)
 		if err != nil {
 			return nil, fmt.Errorf("resolving model name: %w", err)
 		}
+	}
+	if notice := temperatureNotice(backend.API, temperature); notice != "" && verbose {
+		fmt.Println(notice)
 	}
 
 	activeIndexes := []string{knowledge.DefaultIndexName()}
@@ -323,7 +333,7 @@ func RunBatch(
 		if lexicalQuery != q.Question {
 			semanticQuery = q.Question + " " + lexicalQuery
 		}
-		ragContext := retrieveContext(session, semanticQuery, lexicalQuery, verbose)
+		ragContext := batchRetrieve(session, semanticQuery, lexicalQuery, verbose)
 
 		// When no context was retrieved there is nothing to ground the answer on.
 		// Skip the LLM call entirely and emit the fixed no-answer string to avoid
@@ -335,13 +345,12 @@ func RunBatch(
 			continue
 		}
 
-		resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
-			Messages: []openai.ChatCompletionMessageParamUnion{
-				openai.SystemMessage(defaultSystemPrompt),
-				openai.UserMessage(buildRAGPrompt(ragContext, domainContext, q.ID, q.Question)),
-			},
+		content, err := client.Complete(ctx, Request{
 			Model:       modelName,
-			Temperature: openai.Float(temperature),
+			System:      defaultSystemPrompt,
+			Messages:    []Message{{Role: RoleUser, Content: buildRAGPrompt(ragContext, domainContext, q.ID, q.Question)}},
+			Temperature: &temperature,
+			Purpose:     PurposeAnswer,
 		})
 		if err != nil {
 			// A cancelled context surfaces as a request error; propagate it so
@@ -351,15 +360,13 @@ func RunBatch(
 				return nil, ctxErr
 			}
 			// A single question failing is non-fatal: report it and skip,
-			// matching the CLI's original resilience.
+			// matching the CLI's original resilience. A refusal or an output
+			// ceiling hit with no text lands here too, never as an empty answer.
 			hooks.failure(i, total, q, err)
 			continue
 		}
 
-		var answer string
-		if len(resp.Choices) > 0 {
-			answer = StripThinkTags(resp.Choices[0].Message.Content)
-		}
+		answer := StripThinkTags(content)
 
 		result := BatchResult{ID: q.ID, Question: q.Question, Answer: answer, Domain: domainMatch}
 		results = append(results, result)
@@ -376,7 +383,7 @@ func RunBatch(
 // ProcessBatchChat runs each question in the manifest through the RAG+LLM pipeline,
 // prints Q&A pairs to the terminal, and writes all results to a timestamped JSON file.
 func ProcessBatchChat(
-	baseURL string,
+	backend BackendConfig,
 	knowledgeClient *knowledge.OpenSearchClient,
 	kapaClient *knowledge.KapaClient,
 	embeddingModelID string,
@@ -399,7 +406,7 @@ func ProcessBatchChat(
 		},
 	}
 
-	out, err := RunBatch(context.Background(), baseURL, knowledgeClient, kapaClient, embeddingModelID, manifest, prompts, temperature, hooks, verbose)
+	out, err := RunBatch(context.Background(), backend, knowledgeClient, kapaClient, embeddingModelID, manifest, prompts, temperature, hooks, verbose)
 	if err != nil {
 		return err
 	}

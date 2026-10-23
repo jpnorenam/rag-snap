@@ -37,12 +37,18 @@ func rfpMaybeRefineQuestions(ctx *common.Context, questions []rfp.Question) []rf
 		return questions
 	}
 
+	backend, err := chatBackend(ctx, apiUrls)
+	if err != nil {
+		fmt.Printf("LLM not configured — skipping question refinement (%v).\n", err)
+		return questions
+	}
+
 	model, _ := getConfigString(ctx, confChatModel)
 
 	fmt.Printf("\nRefining %d question(s) with LLM...\n", len(questions))
 	stopProgress := common.StartProgressSpinner("Calling LLM")
 
-	refined, raw, refineErr := chat.RefineQuestions(apiUrls[openAi], model, questions)
+	refined, raw, refineErr := chat.RefineQuestions(backend, model, questions)
 	stopProgress()
 
 	if refineErr != nil {
