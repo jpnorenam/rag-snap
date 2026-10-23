@@ -318,12 +318,13 @@ func chunkBlocks(blocks []block, opts ChunkOptions) []string {
 func splitTable(tableText, heading string, maxSize int) []string {
 	lines := strings.Split(tableText, "\n")
 	if len(lines) < 2 {
-		// Not enough lines to be a proper table
+		// Not enough lines to be a proper table: split it like prose so an
+		// oversized single line never becomes one oversized chunk.
 		content := tableText
 		if heading != "" {
 			content = heading + "\n\n" + content
 		}
-		return []string{content}
+		return recursiveSplit(content, maxSize)
 	}
 
 	// Extract header (first row) and separator (second row)
@@ -346,6 +347,20 @@ func splitTable(tableText, heading string, maxSize int) []string {
 	for _, line := range dataLines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
+			continue
+		}
+
+		// A row too long to fit beside the header even on its own is split
+		// into pieces, each carrying the header.
+		if budget := maxSize - len(headerWithPrefix); len(line)+1 > budget && budget > 0 {
+			if batch.Len() > len(headerWithPrefix) {
+				result = append(result, strings.TrimRight(batch.String(), "\n"))
+				batch.Reset()
+				batch.WriteString(headerWithPrefix)
+			}
+			for _, piece := range recursiveSplit(line, budget) {
+				result = append(result, headerWithPrefix+strings.TrimSpace(piece))
+			}
 			continue
 		}
 
