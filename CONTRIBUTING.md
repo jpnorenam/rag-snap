@@ -38,7 +38,7 @@ lxc config device add src-rag rag-snap-src disk \
   Inference snap or a third-party OpenAI-compatible API), and the bundled Tika
   service. See the [README](README.md) for full service setup.
 ```
-sudo apt intall make
+sudo apt install make
 sudo snap install go --classic
 sudo snap install golangci-lint --classic 
 sudo snap install snapcraft --classic
