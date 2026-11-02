@@ -11,16 +11,24 @@ import (
 )
 
 // searchUsage is printed when /search is invoked with missing or invalid args.
-var searchUsage = fmt.Sprintf("Usage: /search [-k N] <query>\n"+
+var searchUsage = fmt.Sprintf("Usage: /search [-k N] [%[2]s] <query>\n"+
 	"  Retrieve matching chunks from the active knowledge bases (no answer is generated).\n"+
-	"  -k N   maximum number of results (default: %d)", defaultRAGTopK)
+	"  -k N            maximum number of results, in total across bases (default: %[1]d)\n"+
+	"  %-14[2]s  also show similar results that don't match the query", defaultRAGTopK, knowledge.ShowSimilarFlag)
+
+// searchArgs is a parsed /search argument string.
+type searchArgs struct {
+	k           int
+	showSimilar bool
+	terms       string
+}
 
 // handleSearch implements the /search slash command: a retrieval-only query
 // against the active knowledge bases. It runs the same hybrid pipeline as the
 // RAG loop but performs no query rewriting, no augmentation, and no LLM
 // generation — it simply prints the matching chunks with their metadata.
 func handleSearch(args string, session *Session) {
-	k, terms, ok := parseSearchArgs(args)
+	parsed, ok := parseSearchArgs(args)
 	if !ok {
 		fmt.Println(searchUsage)
 		return
@@ -39,32 +47,39 @@ func handleSearch(args string, session *Session) {
 
 	// Verbatim terms for both the lexical (BM25) and neural/rerank query —
 	// no rewriteSearchQuery, so no inference-server round-trip.
-	hits, err := session.KnowledgeClient.Search(
+	hits, err := session.KnowledgeClient.SearchTop(
 		context.Background(),
 		session.ActiveIndexes,
-		terms,
-		terms,
+		parsed.terms,
+		parsed.terms,
 		session.EmbeddingModelID,
-		k,
+		parsed.k,
 	)
 	if err != nil {
 		fmt.Printf("Search failed: %v\n", err)
 		return
 	}
 
-	if len(hits) == 0 {
-		fmt.Println("No results found.")
-		return
-	}
-
-	fmt.Print(formatSearchResults(hits))
+	fmt.Print(formatSearchOutput(parsed.terms, hits, parsed.showSimilar))
 }
 
-// parseSearchArgs extracts an optional "-k N" flag and the remaining query
-// terms from a /search argument string. Returns ok=false when the query is
-// empty or when -k is missing/non-positive/non-integer.
-func parseSearchArgs(args string) (k int, terms string, ok bool) {
-	k = defaultRAGTopK
+// formatSearchOutput renders /search output for direct-mode hits: matched
+// hits, then similar results hidden behind a notice or, with showSimilar,
+// listed under a separator.
+func formatSearchOutput(terms string, hits []knowledge.SearchHit, showSimilar bool) string {
+	matched, similar := knowledge.SplitByMatch(hits, func(h knowledge.SearchHit) bool { return h.Matched })
+	return knowledge.FormatSplit(terms,
+		formatSearchResults(matched, 0), formatSearchResults(similar, len(matched)),
+		len(matched), len(similar), showSimilar)
+}
+
+// parseSearchArgs extracts an optional "-k N" flag, an optional
+// --show-similar flag, and the remaining query terms from a /search argument
+// string. Flags may appear anywhere among the terms. Returns ok=false when the
+// query is empty or when -k is missing/non-positive/non-integer.
+func parseSearchArgs(args string) (parsed searchArgs, ok bool) {
+	k := defaultRAGTopK
+	showSimilar := false
 
 	fields := strings.Fields(args)
 	var queryTokens []string
@@ -74,37 +89,40 @@ func parseSearchArgs(args string) (k int, terms string, ok bool) {
 		case f == "-k":
 			// Value is the next token.
 			if i+1 >= len(fields) {
-				return 0, "", false
+				return searchArgs{}, false
 			}
 			n, err := strconv.Atoi(fields[i+1])
 			if err != nil || n <= 0 {
-				return 0, "", false
+				return searchArgs{}, false
 			}
 			k = n
 			i++ // consume the value
 		case strings.HasPrefix(f, "-k="):
 			n, err := strconv.Atoi(strings.TrimPrefix(f, "-k="))
 			if err != nil || n <= 0 {
-				return 0, "", false
+				return searchArgs{}, false
 			}
 			k = n
+		case f == knowledge.ShowSimilarFlag:
+			showSimilar = true
 		default:
 			queryTokens = append(queryTokens, f)
 		}
 	}
 
-	terms = strings.Join(queryTokens, " ")
+	terms := strings.Join(queryTokens, " ")
 	if terms == "" {
-		return 0, "", false
+		return searchArgs{}, false
 	}
-	return k, terms, true
+	return searchArgs{k: k, showSimilar: showSimilar, terms: terms}, true
 }
 
 // formatSearchResults renders search hits for human reading. Unlike
 // formatContext (which is tuned for LLM injection), this leads with provenance
 // metadata and prints the full, untruncated chunk content. Hits are already
-// sorted by score descending by Search.
-func formatSearchResults(hits []knowledge.SearchHit) string {
+// sorted by score descending by Search. Numbering starts at start+1, so the
+// similar results continue from the matched ones.
+func formatSearchResults(hits []knowledge.SearchHit, start int) string {
 	var b strings.Builder
 	for i, hit := range hits {
 		if i > 0 {
@@ -116,7 +134,7 @@ func formatSearchResults(hits []knowledge.SearchHit) string {
 			name = hit.Index
 		}
 
-		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", i+1, hit.Score, name, knowledge.LabelTag(hit.Label))
+		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", start+i+1, hit.Score, name, knowledge.LabelTag(hit.Label))
 		fmt.Fprintln(&b, color.New(color.Bold).Sprint(header))
 		fmt.Fprintf(&b, "    source: %s   created: %s\n", hit.SourceID, hit.CreatedAt)
 		fmt.Fprintln(&b, color.HiBlackString("    "+strings.Repeat("─", 56)))

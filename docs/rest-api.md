@@ -372,6 +372,65 @@ OpenAPI specification at the repository root.
 
 ---
 
+## Search
+
+`POST /1.0/search` takes a `query`, the `bases` to search, and an optional `count` (default 15).
+It returns hits ordered by relevance score, highest first:
+
+```bash
+curl --unix-socket "$SOCK" -X POST http://ragd/1.0/search \
+  -H 'Content-Type: application/json' \
+  -d '{"bases":["default","docs"],"query":"kafka","count":4}' | jq '.metadata'
+```
+
+```json
+[
+  { "score": 9.1,  "base": "docs",    "source_id": "b1", "created_at": "2026-11-01", "label": "canonical", "content": "…", "matched": true },
+  { "score": 7.5,  "base": "default", "source_id": "a1", "created_at": "2026-11-01", "label": "canonical", "content": "…", "matched": true },
+  { "score": 0,    "base": "default", "source_id": "a2", "created_at": "2026-11-01", "label": "canonical", "content": "…", "matched": false },
+  { "score": -1.0, "base": "docs",    "source_id": "b2", "created_at": "2026-11-01", "label": "canonical", "content": "…", "matched": false }
+]
+```
+
+- **`count` caps the total across all bases.** Searching two bases with `count: 4` returns at most
+  4 hits: the best 4 across both, not 4 from each. To see more, raise `count`.
+- **`matched` tells whether a hit matches the query.** It's `true` when the relevance score is
+  above 0. The score comes from the cross-encoder reranker, and a positive score means the reranker
+  judges the passage relevant. Search always returns the nearest chunks, even for a term that
+  appears nowhere in the bases, so read `matched` rather than assuming every hit is relevant.
+  The CLI and the web UI show matched hits and hide the rest as "similar results".
+- Clients should use `matched` rather than comparing scores themselves: the threshold belongs to
+  the server and may change with the reranker. A hit without `matched` comes from an older daemon;
+  treat it as matching.
+
+### The match threshold
+
+`matched` is `true` when `score > 0`. The threshold is exclusive, so a score of exactly 0 does
+not match.
+
+The score is the output of the cross-encoder reranker (by default
+`ms-marco-MiniLM-L-12-v2`, deployed by `knowledge init`). It reads the query and the chunk together
+and outputs a **relevance logit**: sigmoid(score) is its estimate of the probability that the
+chunk is relevant to the query. That makes 0 the reranker's own decision boundary, not a tuned
+number:
+
+| Score | Probability of relevant | Typical meaning |
+|---|---|---|
+| +8 | ~99.9% | Clearly answers the query |
+| +2 | ~88% | Relevant |
+| 0 | 50% | Boundary: does not match |
+| −4 | ~2% | Unrelated |
+| −10 | ~0% | Noise |
+
+Scores are not normalized to 0–1 and can't be compared across rerankers. Some things to know:
+
+- Short keyword queries tend to score lower than full questions, so a relevant chunk can land
+  just below 0 and show up as a similar result.
+- The reranker reads about the first 512 tokens of each chunk.
+- The threshold only filters the candidates retrieval found; it can't add results.
+
+---
+
 ## Prompt templates
 
 Three templates drive generation: `chat_system_prompt` (interactive chat),

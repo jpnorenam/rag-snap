@@ -9,6 +9,10 @@ export interface SearchResult {
   created_at: string;
   label: string;
   content: string;
+  // matched is the daemon's verdict on whether the hit matches the query
+  // (relevance score above its threshold). Absent from daemons that predate
+  // it; splitResults treats a missing flag as matching.
+  matched?: boolean;
 }
 
 // search runs hybrid (neural + lexical) retrieval over the named bases with

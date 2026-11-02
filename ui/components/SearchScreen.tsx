@@ -7,6 +7,7 @@ import Spinner from "@/components/common/Spinner";
 import { errorMessage } from "@/lib/api/envelope";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
 import { search, type SearchResult } from "@/lib/api/search";
+import { noMatchesMessage, similarNotice, splitResults } from "@/lib/searchSplit";
 
 // TOP_K_OPTIONS are the selectable result budgets. 10 matches `k search --top`;
 // 15 (the chat REPL's retrieval default) stays available as an option.
@@ -30,6 +31,45 @@ function defaultSelection(bases: KnowledgeBase[]): string[] {
   return bases.map((b) => b.name);
 }
 
+interface ResultCardProps {
+  result: SearchResult;
+  rank: number;
+  similar?: boolean;
+}
+
+// ResultCard renders one hit. Similar results (hits that don't match the query)
+// say so in words, not only through their muted styling.
+function ResultCard({ result: r, rank, similar = false }: ResultCardProps) {
+  const className = ["search-result", similar && "search-result--similar"]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <li className={className}>
+      <div className="search-result__header">
+        <span className="search-result__rank u-text--muted">{rank}</span>
+        <strong className="search-result__source">{r.source_id}</strong>
+        <span className="p-chip u-no-margin--bottom">
+          <span className="p-chip__value">{r.base}</span>
+        </span>
+        {similar && (
+          <span className="p-chip u-no-margin--bottom">
+            <span className="p-chip__value">Not matching</span>
+          </span>
+        )}
+        <span className="search-result__score p-text--small u-text--muted">
+          {r.score.toFixed(3)}
+        </span>
+      </div>
+      <p className="search-result__body">{r.content}</p>
+      {/* Source ID stays plain text until the knowledge-detail route
+          lands (Change 2 flips it to a link). */}
+      <p className="search-result__footer p-text--small u-text--muted" title={r.created_at}>
+        Source: {r.source_id} · {r.label}
+      </p>
+    </li>
+  );
+}
+
 export default function SearchScreen() {
   const router = useRouter();
   const params = useSearchParams();
@@ -46,6 +86,10 @@ export default function SearchScreen() {
   // The scope a completed search actually ran against, for the no-hits copy —
   // the live chip selection may have changed since.
   const [searchedBases, setSearchedBases] = useState<string[]>([]);
+  // The query a completed search ran, for the no-matches copy.
+  const [searchedQuery, setSearchedQuery] = useState("");
+  // Similar results (hits that don't match the query) start hidden on every search.
+  const [showSimilar, setShowSimilar] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   // Guards the URL restore so strict-mode's double mount (and later param
@@ -60,7 +104,9 @@ export default function SearchScreen() {
     setSearching(true);
     setSearchError(null);
     setResults(null);
+    setShowSimilar(false);
     setSearchedBases(scope);
+    setSearchedQuery(q);
     try {
       setResults(await search(q, scope, k));
     } catch (e) {
@@ -134,6 +180,7 @@ export default function SearchScreen() {
   }
 
   const noBases = bases !== null && bases.length === 0;
+  const split = results !== null ? splitResults(results) : null;
   const showInitial =
     !searching && !searchError && results === null && !basesError && !noBases;
 
@@ -268,8 +315,8 @@ export default function SearchScreen() {
       <section className="search__results">
         <h2 className="u-off-screen">Results</h2>
         <p className="p-text--small u-text--muted search__count" aria-live="polite">
-          {results !== null
-            ? `${results.length} result${results.length === 1 ? "" : "s"}`
+          {split !== null
+            ? `${split.matched.length} result${split.matched.length === 1 ? "" : "s"}`
             : ""}
         </p>
 
@@ -283,43 +330,56 @@ export default function SearchScreen() {
           />
         )}
 
-        {results !== null && results.length === 0 && (
+        {split !== null && split.matched.length === 0 && (
           <div className="search__no-hits">
-            <p className="u-no-margin--bottom">
-              No matching chunks in <strong>{searchedBases.join(", ")}</strong>.
-            </p>
+            <p className="u-no-margin--bottom">{noMatchesMessage(searchedQuery)}</p>
             <p className="p-text--small u-text--muted">
-              Try widening the base selection or raising the Results count.
+              Searched <strong>{searchedBases.join(", ")}</strong>. Try widening the base
+              selection.
             </p>
           </div>
         )}
 
-        {results !== null && results.length > 0 && (
+        {split !== null && split.matched.length > 0 && (
           <ol className="search__list">
-            {results.map((r, i) => (
-              <li key={`${r.base}-${r.source_id}-${i}`} className="search-result">
-                <div className="search-result__header">
-                  <span className="search-result__rank u-text--muted">{i + 1}</span>
-                  <strong className="search-result__source">{r.source_id}</strong>
-                  <span className="p-chip u-no-margin--bottom">
-                    <span className="p-chip__value">{r.base}</span>
-                  </span>
-                  <span className="search-result__score p-text--small u-text--muted">
-                    {r.score.toFixed(3)}
-                  </span>
-                </div>
-                <p className="search-result__body">{r.content}</p>
-                {/* Source ID stays plain text until the knowledge-detail route
-                    lands (Change 2 flips it to a link). */}
-                <p
-                  className="search-result__footer p-text--small u-text--muted"
-                  title={r.created_at}
-                >
-                  Source: {r.source_id} · {r.label}
-                </p>
-              </li>
+            {split.matched.map((r, i) => (
+              <ResultCard key={`${r.base}-${r.source_id}-${i}`} result={r} rank={i + 1} />
             ))}
           </ol>
+        )}
+
+        {split !== null && split.similar.length > 0 && (
+          <>
+            <div className="search__similar">
+              <p className="p-text--small u-text--muted u-no-margin--bottom">
+                {similarNotice(split.similar.length)}
+              </p>
+              <button
+                type="button"
+                className="p-button--base u-no-margin--bottom"
+                aria-expanded={showSimilar}
+                aria-controls="search-similar"
+                onClick={() => setShowSimilar((v) => !v)}
+              >
+                {showSimilar ? "Hide similar results" : "Show similar results"}
+              </button>
+            </div>
+            <ol
+              id="search-similar"
+              className="search__list"
+              aria-label="Similar results that don't match the query"
+              hidden={!showSimilar}
+            >
+              {split.similar.map((r, i) => (
+                <ResultCard
+                  key={`${r.base}-${r.source_id}-${i}`}
+                  result={r}
+                  rank={split.matched.length + i + 1}
+                  similar
+                />
+              ))}
+            </ol>
+          </>
         )}
       </section>
     </main>

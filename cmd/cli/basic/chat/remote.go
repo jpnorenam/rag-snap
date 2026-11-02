@@ -290,12 +290,12 @@ func remoteHistory(ctx context.Context, dc *apiclient.Client) (*apiclient.ChatSe
 }
 
 // remoteSearch implements /search over the daemon: it parses the optional
-// "-k N" flag and query terms with the same parser as the direct REPL, then
+// "-k N" and --show-similar flags and query terms with the same parser as the direct REPL, then
 // POSTs to /1.0/search with the currently active bases. The daemon holds the
 // embedding model and runs the hybrid pipeline server-side; the REPL only
 // renders the returned hits.
 func remoteSearch(ctx context.Context, dc *apiclient.Client, args string, activeBases []string) {
-	k, terms, ok := parseSearchArgs(args)
+	parsed, ok := parseSearchArgs(args)
 	if !ok {
 		fmt.Println(searchUsage)
 		return
@@ -306,31 +306,36 @@ func remoteSearch(ctx context.Context, dc *apiclient.Client, args string, active
 	}
 
 	stop := common.StartProgressSpinner("Searching")
-	hits, err := dc.Search(ctx, terms, activeBases, k)
+	hits, err := dc.Search(ctx, parsed.terms, activeBases, parsed.k)
 	stop()
 	if err != nil {
 		fmt.Printf("Search failed: %v\n", err)
 		return
 	}
-	if len(hits) == 0 {
-		fmt.Println("No results found.")
-		return
-	}
-	fmt.Print(formatRemoteSearchResults(hits))
+	fmt.Print(formatRemoteSearchOutput(parsed.terms, hits, parsed.showSimilar))
+}
+
+// formatRemoteSearchOutput is formatSearchOutput for daemon hits, which carry
+// the daemon's match flag (missing on an older daemon, counted as matching).
+func formatRemoteSearchOutput(terms string, hits []apiclient.SearchHit, showSimilar bool) string {
+	matched, similar := knowledge.SplitByMatch(hits, apiclient.SearchHit.IsMatched)
+	return knowledge.FormatSplit(terms,
+		formatRemoteSearchResults(matched, 0), formatRemoteSearchResults(similar, len(matched)),
+		len(matched), len(similar), showSimilar)
 }
 
 // formatRemoteSearchResults renders daemon search hits for human reading,
 // mirroring formatSearchResults but sourcing the base name and provenance from
 // the API response (which already resolved them server-side). Hits are sorted
-// by score descending by the daemon.
-func formatRemoteSearchResults(hits []apiclient.SearchHit) string {
+// by score descending by the daemon. Numbering starts at start+1.
+func formatRemoteSearchResults(hits []apiclient.SearchHit, start int) string {
 	var b strings.Builder
 	for i, hit := range hits {
 		if i > 0 {
 			b.WriteString("\n")
 		}
 
-		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", i+1, hit.Score, hit.Base, knowledge.LabelTag(hit.Label))
+		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", start+i+1, hit.Score, hit.Base, knowledge.LabelTag(hit.Label))
 		fmt.Fprintln(&b, color.New(color.Bold).Sprint(header))
 		fmt.Fprintf(&b, "    source: %s   created: %s\n", hit.SourceID, hit.CreatedAt)
 		fmt.Fprintln(&b, color.HiBlackString("    "+strings.Repeat("─", 56)))

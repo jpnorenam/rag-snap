@@ -1475,7 +1475,17 @@ paths:
         post:
             description: |-
                 Runs hybrid (neural + lexical) retrieval over the named bases. Requires a
-                configured embedding model.
+                configured embedding model. The count caps the total number of hits across
+                all bases.
+
+                Each hit's score is the cross-encoder reranker's relevance score: a logit,
+                positive when the reranker judges the chunk relevant to the query and
+                negative when it does not. Each hit carries "matched": true when its score
+                is greater than 0 (the match threshold, exclusive). Search always returns the
+                nearest chunks, even for a query that nothing matches, so clients should use
+                "matched" rather than comparing scores: the threshold is owned by the server
+                and may change with the reranker. A hit without "matched" comes from an
+                older daemon and counts as matching.
             operationId: search
             parameters:
                 - in: body
