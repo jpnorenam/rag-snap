@@ -54,7 +54,7 @@
 - [x] 7.5 `IngestModal`: add an optional Source URL field for uploads only, with client-side http(s) validation, sent as `source_uri`; verify the field is hidden for URL ingest and blocks submission on invalid input
 - [x] 7.6 `QACard`/`ResultsReview`: render the per-answer sources list, keeping older results files that lack `sources` working; verify by extending `QACard.test.tsx` with and without sources
 - [x] 7.8 `ChatScreen`: preselect the `default` chip when that base exists and nothing is selected, and drop markers that match no retrieved/cited document from the displayed answer (D8a); verify with a `chatMessages` test for a marker in a turn with nothing retrieved
-- [ ] 7.7 Update `docs/local-ui.md` (chat source chips, "No relevant sources" notice, Source URL field, batch sources); verify compliance with the `ui-conventions` skill: both themes, a keyboard-only pass over the chips and Sources links, `--vf-*` tokens only, and all four view states on the touched screens
+- [x] 7.7 Update `docs/local-ui.md` (chat source chips, "No relevant sources" notice, Source URL field, batch sources); verify compliance with the `ui-conventions` skill: both themes, a keyboard-only pass over the chips and Sources links, `--vf-*` tokens only, and all four view states on the touched screens
 
 ## 7a. Revision: numeric markers, uncited chat answers kept
 
@@ -65,7 +65,7 @@
 ## 8. Integration
 
 - [x] 8.1 Run `make all` (tidy fmt vet lint test build) and `npm run build` in `ui/`; verify both succeed
-- [ ] 8.2 Build and install the snap. Then:
+- [x] 8.2 Build and install the snap. Then:
   - ingest one URL, one file with `--uri`, and one GitHub repo;
   - import a pre-change exported base;
   - run chat (direct and remote), `/search`, `answer batch`, and the UI chat;
