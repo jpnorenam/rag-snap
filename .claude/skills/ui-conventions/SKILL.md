@@ -56,12 +56,23 @@ Flex row `.app-shell` = dark `<Sidebar>` rail (15rem, sticky) + `.app-content` c
 | Destructive | `p-button--negative`, only inside a confirm flow |
 | Toggle chips | `p-chip` / `p-chip--positive` + `p-chip__value` (see KB selector in `ChatScreen.tsx`) |
 | Banners | `p-notification--negative` (+`role="alert"`) / `--positive` / `--information` / `--caution`, structure as in `ChatScreen.tsx` |
+| Banner carrying a decision | `p-notification--caution` with `role="status"`, a `p-notification__title`, and its actions in `p-notification__meta` › `p-notification__actions` (primary action `p-button--positive`, others `p-button`). For an outcome that is a choice rather than a failure — never `--negative`, and never with an action preselected. See `ShortfallStep` in `AnalysisSteps.tsx` |
+| Editable text with a locked suffix | The editable part in a labelled `<textarea>` inside `p-form__group`, an "Edited" `p-chip` and a bordered `p-button` restore action once it differs (not `p-button--base`: a borderless button reads as a link beside a form field); the locked part below in a read-only `analysis-prompt` region under its own heading saying it cannot be edited. The two are joined only by a shared helper pinned to its server-side twin — never by splitting combined text. See `PromptEditor` in `AnalysisSteps.tsx` |
 | Data lists | semantic `<table>` with `aria-label` or off-screen caption; numeric cols `u-align--right` |
 | Forms | `p-form p-form--stacked`, `p-form__group` + `<label>`; errors via `p-form-validation is-error` + `__message` |
 | Modals | `p-modal` + `p-modal__dialog`, `role="dialog" aria-modal="true" aria-labelledby`; Escape + overlay close; focus trapped, restored on close |
 | Code / IDs | `p-code-snippet` + `p-code-snippet__block` |
 | Spinner | `<i className="p-icon--spinner u-animation--spin" aria-hidden="true" />` + visible text |
 | Muted text | `u-text--muted`, `p-text--small` |
+| Mutually exclusive path chooser | `<fieldset className="answer-path">` + `<legend>` + `p-radio` per option; an unavailable option stays rendered `disabled` with a `p-notification--information` giving the reason, never hidden (see `BuildWizard.tsx`) |
+| Severity findings list | `.check-findings__group--{defect,warning}` with a left border from `--vf-color-border-{negative,caution}`, an inline line-SVG icon whose **shape** differs per severity, and the severity named in words; `role="alert"` on the defect group only (see `CheckFindings.tsx`) |
+| Long generated text for review | `.analysis-prompt` — bordered `--vf-color-background-alt` region, `max-height` + `overflow:auto`, `white-space:pre-wrap`, `tabIndex={0}` with `role="region"` and an `aria-label` so it is keyboard-scrollable |
+| Fact list (key/value pairs) | `<dl className="analysis-triage">` — two-column grid collapsing to one at 620px |
+
+**Severity must never be carried by colour alone.** Where a UI distinguishes "this will
+fail" from "this may be deliberate", encode it in at least two of: icon shape, a word,
+and position. A viewer who cannot separate the hues, and anyone pasting the text into a
+ticket, both need the distinction to survive.
 
 New visual patterns require updating this skill in the same PR.
 

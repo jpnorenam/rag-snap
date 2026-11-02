@@ -1,0 +1,673 @@
+# answer-manifest-analysis Specification
+
+## Purpose
+
+Generate a complete `answer batch` manifest from RFP/RFI documents using a document-capable LLM, so
+the operator no longer hand-writes the semantic half of a manifest. Where the existing build path
+extracts questions mechanically and leaves the RFP-level prompt, knowledge-base selection and domain
+routing to the operator, analysis produces all of them together: `questions`, `knowledge_bases`,
+`kapa_source_groups`, a single RFP-level `prompt`, and a populated `domains` block.
+
+This capability covers how documents reach the model without losing content, how the model is
+grounded in a manifest contract it has no prior knowledge of, the two-phase triage-then-generate flow
+and the operator interview between them, the rules baked into every generated prompt, and the
+guarantees on the emitted manifest. It is an additional mode of the build path shared by the CLI and
+the daemon; the existing extraction behaviour is unchanged and remains the default.
+
+## Requirements
+
+### Requirement: Analysis is an opt-in mode of the document build path
+
+Manifest analysis SHALL be an explicitly requested mode of the existing document build path, not a
+change to its default behaviour. When analysis is not requested, the build path SHALL behave exactly
+as it did before this capability existed: Tika extraction, pattern-based question detection, the
+optional refinement pass, and a manifest carrying `questions` plus `knowledge_bases` with a
+commented-out `domains` stub.
+
+The mode SHALL accept one primary RFP document and zero or more additional context documents. Every
+supplied document SHALL be conveyed to the model; a context document SHALL NOT be silently dropped.
+
+Analysis SHALL NOT be the only way to obtain a manifest — an operator SHALL retain the existing
+extraction path as a fallback when analysis is unavailable, fails, or produces a result they reject.
+
+#### Scenario: Build without requesting analysis
+
+- **WHEN** a document is built without requesting analysis
+- **THEN** the extracted questions, the emitted manifest fields, and the commented-out domains stub are identical to those produced before this capability existed
+
+#### Scenario: Analysis with additional context documents
+
+- **WHEN** analysis is requested with a primary RFP document and two additional context documents
+- **THEN** all three documents are conveyed to the model and the response is generated with all of them in scope
+
+#### Scenario: Analysis unavailable
+
+- **WHEN** analysis is requested but cannot run
+- **THEN** the failure names the reason and states that the existing extraction path remains available, and no partial manifest is written
+
+### Requirement: Documents are conveyed without losing tabular or column content
+
+Conveyance SHALL preserve the document content that naive text extraction destroys: the description,
+current-environment and evaluator-guidance columns beside a requirement, and the sheet or section a
+requirement belongs to. The value of a generated manifest depends on exactly that content.
+
+A PDF SHALL be conveyed as the original bytes, so the model applies its own document understanding to
+layout, tables and figures rather than receiving a flattened transcription.
+
+A format for which the model offers no native document understanding — spreadsheet and word-processor
+formats among them — SHALL NOT be conveyed by uploading the original bytes and SHALL NOT be conveyed
+as unstructured plain text. It SHALL instead be converted to a textual representation that preserves
+table structure, in which every cell of every row remains associated with its column heading, and each
+table is labelled with the sheet or section name it came from. Conversion SHALL NOT rely on markup
+that the model strips before reading.
+
+Every row and column of a converted table SHALL be conveyed. The conversion SHALL NOT select a single
+question column, drop columns judged uninteresting, or truncate rows, since the discarded columns are
+the material the RFP-level prompt and the domain contexts are built from.
+
+The number of documents conveyed, and per-document the format detected and the conveyance path taken,
+SHALL be reported to the operator, so a document silently converted rather than read natively is
+visible before the manifest is generated.
+
+#### Scenario: Spreadsheet with context columns beside the requirement
+
+- **WHEN** a spreadsheet whose sheets carry a requirement column plus description, current-environment and evaluator-guidance columns is analysed
+- **THEN** the conveyed representation retains every column with its heading, retains the sheet name for each table, and no column is dropped
+
+#### Scenario: PDF conveyance
+
+- **WHEN** a PDF is analysed
+- **THEN** the original bytes are conveyed rather than an extracted text transcription
+
+#### Scenario: Format without native document understanding
+
+- **WHEN** a word-processor document is analysed
+- **THEN** it is converted to a table-preserving textual representation rather than uploaded as original bytes, and the operator is told the document was converted
+
+#### Scenario: Document exceeding the model's document limits
+
+- **WHEN** a document exceeds the model's documented size or page limit for its conveyance path
+- **THEN** analysis fails before any model call with a message naming the document, the limit, and the measured value
+
+### Requirement: The model is grounded in the manifest contract and live catalogues
+
+Each analysis request SHALL carry all of the following as part of the request itself rather than as
+operator documentation, because the model has no prior knowledge of rag-cli, the manifest format, or
+the deployment it is generating for:
+
+- The manifest contract: every field the manifest may carry, which are required, and what each means.
+- The domain resolution rules the runtime actually applies — that a pattern is matched against a
+  question's `id`, that a question whose `id` is a bare sequence number is matched against its
+  `source` instead, that patterns may use glob wildcards, and that the most specific matching pattern
+  wins — so that generated patterns route as the model intends them to.
+- At least one worked example of a complete, well-formed manifest, so the contract is shown and not
+  only described.
+
+Each request SHALL additionally carry the **live** catalogue of selectable retrieval targets, read
+from the running services at request time: the knowledge bases that exist, and the kapa source groups
+that exist with both their names and their identifiers. The model SHALL be instructed to select only
+from that catalogue. Kapa source group identifiers are opaque and unguessable, so a manifest SHALL
+NOT be generated from a remembered or invented catalogue.
+
+When the live catalogue cannot be read, analysis SHALL fail with a message naming the unreachable
+service rather than proceeding with an empty or assumed catalogue.
+
+#### Scenario: Catalogue is read at request time
+
+- **WHEN** an analysis request is prepared
+- **THEN** the knowledge bases and kapa source groups offered to the model are those the running services report at that moment
+
+#### Scenario: Generated manifest selects only catalogued targets
+
+- **WHEN** a manifest is generated
+- **THEN** every entry in its `knowledge_bases` and `kapa_source_groups` appears in the catalogue that was supplied with the request
+
+#### Scenario: Catalogue unreachable
+
+- **WHEN** the knowledge store cannot be reached while preparing an analysis request
+- **THEN** analysis fails naming that service and no model call is made
+
+### Requirement: Analysis runs as two phases over one document upload
+
+Analysis SHALL run as two phases. The first phase SHALL convey the documents and return a triage of
+what was found, without generating a manifest: the RFP's identity as stated in the document, its
+section or sheet structure, an estimate of how many questions it contains, whether the RFP requires
+OpenStack to be addressed, whether questions carry more than one field to be answered each, and the
+knowledge bases the triage suggests. The second phase SHALL generate the manifest.
+
+Documents SHALL be conveyed once and reused by both phases; the second phase SHALL NOT require the
+operator to supply or re-upload them. The reference to the conveyed documents SHALL be staged under a
+token returned by the first phase, and SHALL expire.
+
+The first phase exists so that the interview can be conditioned on the document's actual content —
+in particular so the OpenStack question is asked only when the RFP requires OpenStack. An
+implementation SHALL NOT collapse the phases in a way that requires the operator to answer questions
+about content that has not yet been read.
+
+When the second phase is invoked with an expired or unknown token, it SHALL fail with a message saying
+the analysis session expired and that the documents must be re-conveyed, rather than proceeding
+without them.
+
+#### Scenario: Triage precedes the interview
+
+- **WHEN** the first phase completes
+- **THEN** it reports the RFP identity, structure, question-count estimate, whether OpenStack is in scope, whether questions carry multiple answer fields, and suggested knowledge bases, and no manifest has been generated
+
+#### Scenario: Second phase reuses the conveyed documents
+
+- **WHEN** the second phase is invoked with the token from a completed first phase
+- **THEN** the manifest is generated from the already-conveyed documents without the operator supplying them again
+
+#### Scenario: Expired analysis session
+
+- **WHEN** the second phase is invoked with an expired or unknown token
+- **THEN** it fails with a message stating the session expired and that the documents must be re-conveyed
+
+### Requirement: An operator interview conditions the generated manifest
+
+Between the phases the operator SHALL be asked, and their answers SHALL materially shape the
+generated manifest:
+
+- **Answer length.** A target answer length in words, defaulting to 100.
+- **Length enforcement.** Whether that length is a hard limit that must never be exceeded, or a soft
+  target that may be slightly exceeded.
+- **OpenStack flavour.** When and only when triage reported that the RFP requires OpenStack to be
+  addressed, whether answers SHALL present Sunbeam or Charmed OpenStack. When triage reported
+  OpenStack is not in scope, this question SHALL NOT be asked.
+
+The chosen length and its enforcement mode SHALL both appear in the generated prompt, stated as a
+number of words and explicitly as either a hard limit or a soft target — a generated prompt SHALL NOT
+state a length without stating which of the two it is.
+
+When an OpenStack flavour is chosen, the generated prompt SHALL name that flavour as the offering to
+describe, and SHALL NOT present the other flavour as the proposed solution.
+
+When triage found that questions carry more than one field to be answered each, the generated prompt
+SHALL state how the several fields of a question are to be answered.
+
+#### Scenario: Default answer length
+
+- **WHEN** the operator accepts the default at the answer-length question
+- **THEN** the interview records 100 words
+
+#### Scenario: Hard limit is stated as a hard limit
+
+- **WHEN** the operator sets 120 words as a hard limit
+- **THEN** the generated prompt states 120 words and states that the limit must never be exceeded
+
+#### Scenario: Soft target is stated as a soft target
+
+- **WHEN** the operator sets 150 words as a soft target
+- **THEN** the generated prompt states 150 words and states that it may be slightly exceeded
+
+#### Scenario: OpenStack in scope
+
+- **WHEN** triage reports that the RFP requires OpenStack and the operator chooses Sunbeam
+- **THEN** the OpenStack question was asked, and the generated prompt names Sunbeam as the offering and does not present Charmed OpenStack as the proposed solution
+
+#### Scenario: OpenStack not in scope
+
+- **WHEN** triage reports that the RFP does not require OpenStack
+- **THEN** the operator is not asked to choose a flavour
+
+#### Scenario: Questions with several answer fields
+
+- **WHEN** triage reports that each question carries more than one field to be answered
+- **THEN** the generated prompt states how the several fields of a question are to be answered
+
+### Requirement: Every generated prompt carries the non-negotiable answer rules
+
+The generated `prompt` SHALL carry all three of the following as instructions to the answering model,
+regardless of the RFP, the interview answers, or the model's own judgement:
+
+- That answering "no context available", or stating that a technology is NOT covered, is preferable to
+  giving a false or fabricated answer. This SHALL be stated as a strong instruction, not a hedge or an
+  aside.
+- That answers are direct, and that filler language is to be avoided.
+- That text attached to a question as its requirement domain describes what to address and where to
+  look, and is not a source: a capability, figure, location, entity or commitment that appears only in
+  that text and not in the retrieved passages SHALL be treated as unsubstantiated and reported as a gap.
+
+These rules SHALL be appended by rag-cli after generation rather than requested of the model, and SHALL
+be verifiable in the emitted manifest, so that a prompt missing any of them is detectable without
+re-reading the RFP.
+
+The generated prompt SHALL NOT contradict the guarantees the run already enforces around it — the
+fixed no-context answer emitted when retrieval returns nothing, and the source rules appended to every
+custom prompt. In particular the generated prompt SHALL NOT instruct the model to answer from its own
+knowledge when context is absent.
+
+#### Scenario: Rules present regardless of RFP
+
+- **WHEN** any manifest is generated
+- **THEN** its prompt instructs that "no context available" or "not covered" is preferable to a fabricated answer, that answers be direct and free of filler, and that requirement-domain text is not a source
+
+#### Scenario: Generated prompt does not license ungrounded answers
+
+- **WHEN** a manifest is generated
+- **THEN** its prompt contains no instruction to answer from the model's own knowledge when no context is available
+
+#### Scenario: Domain text is not evidence
+
+- **WHEN** a generated manifest is run and a question's domain context names a capability its retrieved passages do not support
+- **THEN** the prompt the answering model received instructs it to treat that capability as unsubstantiated rather than as established
+
+### Requirement: A generated manifest is complete and structurally valid
+
+A generated manifest SHALL load under the existing manifest reader without modification: it SHALL
+carry a `version`, at least one question, no question with an empty question field, no two `domains`
+entries with the same `match` pattern, and no `domains` entry carrying neither `context` nor
+`keywords`.
+
+Because a long RFP can drive the model's response against its output ceiling — a ceiling that on a
+reasoning model covers the model's internal reasoning as well as the visible answer — an incomplete
+response SHALL be an error and never a silently short manifest. Analysis SHALL treat the following as
+failures and SHALL report each rather than writing what it received:
+
+- A response the provider reports as having stopped at its output ceiling.
+- A response that is **empty**, which SHALL NOT be interpreted as the model having found nothing. An
+  empty response at the output ceiling is the signature of reasoning having consumed the budget.
+- A generated question count that falls materially short of the triage estimate.
+
+A response cut off at the output ceiling, and an empty response, SHALL NOT be acceptable by any means.
+
+A question-count shortfall from a questions call that finished normally is different: two passes
+disagreeing about how finely to split the document is as likely as a call that stopped early. Such a
+shortfall SHALL be reported naming the expected count, the produced count, and that the call finished
+normally, and SHALL NOT recommend changing reasoning effort as its remedy. The operator SHALL then be
+able to accept the produced questions and continue to the rest of generation, without the questions
+being generated again. Acceptance SHALL be an explicit operator action, never a default. When no
+operator can be asked, the shortfall SHALL fail as an error.
+
+Because the same pair of counts arises both from over-counting and from an extraction that left packed
+cells unsplit, the report SHALL show, for every section triage estimated, that section's produced and
+estimated counts, so the operator can see where extraction fell short rather than judging from a total.
+As an alternative to accepting, the operator SHALL be able to re-run only the questions call at the
+next higher reasoning effort, up to the highest, over the documents already conveyed.
+
+Analysis SHALL request an explicit output ceiling rather than relying on a provider default, since a
+default sized for ordinary replies truncates the answer without reducing the reasoning that displaced
+it.
+
+A response SHALL be validated against what the manifest requires rather than trusted because it
+parsed, so a syntactically valid response missing a required field is a failure and not a partially
+populated manifest.
+
+A generated manifest SHALL be written only after it has been validated. When validation fails,
+analysis SHALL surface the reason and SHALL NOT leave a partially written manifest in place of a
+previously valid file.
+
+The emitted manifest SHALL record that it was generated by analysis and the model that generated it,
+so a manifest's provenance is readable from the file. A manifest generated after the operator accepted a
+shortfall SHALL also record the acceptance with both counts.
+
+#### Scenario: Generated manifest loads unmodified
+
+- **WHEN** a generated manifest is loaded by the manifest reader
+- **THEN** it loads without error and without hand-editing
+
+#### Scenario: Truncated response
+
+- **WHEN** the model's response is truncated against its output ceiling
+- **THEN** analysis reports the truncation, does not write a manifest, and offers no way to accept it
+
+#### Scenario: Empty response at the output ceiling
+
+- **WHEN** the model returns no content and reports having stopped at its output ceiling
+- **THEN** analysis reports it as a failure rather than as the model having found nothing, and does not write a manifest
+
+#### Scenario: Response missing a required field
+
+- **WHEN** the model returns a well-formed response that omits a field the manifest requires
+- **THEN** analysis reports it as a failure rather than writing a manifest with that field absent
+
+#### Scenario: Question count materially short of triage
+
+- **WHEN** triage estimated roughly 150 questions and generation produced 40 from a call that finished normally
+- **THEN** analysis reports the discrepancy naming both counts and that the call finished normally, recommends no change to reasoning effort, and does not present the 40-question manifest as complete without the operator's decision
+
+#### Scenario: Operator accepts a shortfall
+
+- **WHEN** the operator accepts a reported shortfall
+- **THEN** generation continues with the questions already produced, without a second questions call, and the written manifest records the acceptance with both counts
+
+#### Scenario: Shortfall shows where it falls
+
+- **WHEN** a shortfall is reported for a document whose triage estimated two sections at about 95 and 115 questions
+- **THEN** the report shows each section's produced count beside its estimate
+
+#### Scenario: Re-running the extraction at higher effort
+
+- **WHEN** the operator chooses to re-run after a shortfall from a questions call made at low reasoning effort
+- **THEN** only the questions call is repeated, at medium effort, over the already-conveyed documents, and its result is checked against the estimate again
+
+#### Scenario: Shortfall with no operator to ask
+
+- **WHEN** a shortfall occurs and no operator can be asked to accept it
+- **THEN** analysis fails as an error and writes no manifest
+
+#### Scenario: Provenance is recorded
+
+- **WHEN** a manifest is generated
+- **THEN** the file records that it was produced by analysis and names the model that produced it
+
+### Requirement: Generated domains route to real questions
+
+The `domains` block a generated manifest carries SHALL be populated, not a commented-out stub, and its
+patterns SHALL be written against the question ids the same manifest actually contains.
+
+The generation step that writes domains SHALL be given each generated question's id **and text**, so
+that a context written for a pattern concerns the questions that pattern actually matches. The document's
+own clause numbering is not evidence of which generated question an id refers to.
+
+Every generated `domains` entry SHALL carry a `context` naming the section or requirement domain it
+covers. An entry MAY additionally carry `keywords`. A `context` SHALL describe what the matching
+questions ask about, what to address and what counts as evidence for them. It SHALL NOT state the
+proposed solution's capabilities, figures, locations, staffing, legal entities, certifications or
+commitments as facts, since it reaches the answering model next to the retrieved passages and would be
+repeated as though substantiated.
+
+Domains exist primarily to attach context to a section of the RFP; attaching context to a single
+question SHALL remain possible, expressed as a pattern matching that one question's id.
+
+Generation SHALL verify each generated pattern against the generated question list, and SHALL report
+any pattern matching no question. Such a pattern SHALL be reported rather than removed, since a
+deliberately reserved pattern is legitimate, but it SHALL NOT pass unreported. For each entry matching
+exactly one question, the generation summary SHALL show that question's text alongside the pattern.
+
+#### Scenario: Domains block is populated
+
+- **WHEN** a manifest is generated from an RFP with distinct sections
+- **THEN** its `domains` block is present and active, with an entry per section carrying a context, rather than a commented-out stub
+
+#### Scenario: Pattern matching no question
+
+- **WHEN** a generated `domains` entry matches none of the generated questions
+- **THEN** that pattern is reported to the operator and the manifest still records it
+
+#### Scenario: Context attached to one question
+
+- **WHEN** the RFP requires extra context for a single question
+- **THEN** that is expressed as a `domains` entry whose pattern matches only that question's id, and whose context concerns that question's text
+
+#### Scenario: Strategy is grounded in question text
+
+- **WHEN** the domains are generated
+- **THEN** the generation step received each question's id together with its text, not the ids alone
+
+#### Scenario: Context directs rather than asserts
+
+- **WHEN** a domain context is generated for a section about in-country support
+- **THEN** it directs the answer to address in-country support and to substantiate any claim from the retrieved passages, rather than stating that the vendor provides in-country support
+
+### Requirement: Analysis is configured by config keys and authenticated by environment
+
+The analysis API key SHALL be supplied by a single Gemini-specific environment variable, `GEMINI_API_KEY`,
+and SHALL NOT be stored in, read from, or written to the config layer. It SHALL NOT fall back to the
+variable the chat backend uses, or to any other variable, because the chat backend's credential belongs to
+a different provider and would be disclosed to Google. It SHALL be read explicitly, with no reliance on
+any client library's own environment auto-detection. It SHALL NOT appear in log or verbose output, in an
+error message, or in the emitted manifest.
+
+Whether analysis is available, the model id, and the reasoning effort used for each model call SHALL be
+configuration, seeded as `package` keys so that a `user` set can override each of them. The model id
+SHALL be configurable rather than compiled in, because the published identifier of a Gemini model is
+versioned and the Pro tier ships under a preview identifier.
+
+The analysis endpoint SHALL NOT be configuration. Analysis SHALL call only the Gemini API, and SHALL NOT
+default to, or fall back to, the chat backend's endpoint.
+
+Reasoning effort SHALL be configurable separately for the mechanical extraction call and the synthesis
+call. A level the Gemini API cannot honour for any current model — disabling reasoning entirely — SHALL
+be rejected when configuration is loaded, naming the key, rather than being sent to the provider.
+
+The interview defaults — the answer length in words and whether length is enforced as a hard limit or
+a soft target — SHALL also be `package` configuration, so a team can change the starting point of the
+interview without changing code. The default answer length SHALL be 100 words.
+
+When analysis is requested but `GEMINI_API_KEY` is absent, the request SHALL fail naming that variable,
+and SHALL NOT proceed without it. When the absent key coincides with the retired `ANALYSIS_API_KEY`
+variable being set, the failure SHALL say that the variable is no longer read and must be renamed.
+
+When the provider rejects the key, the failure SHALL say the key was rejected and name `GEMINI_API_KEY`,
+whichever HTTP status the provider uses to report it.
+
+When the configured model id is unknown to the Gemini API, the failure SHALL name the model id and the
+config key that set it. When the id carries a gateway namespace prefix, the failure SHALL say that
+direct Gemini model ids are unprefixed.
+
+Analysis SHALL NOT silently degrade when it cannot run: it SHALL NOT fall back to answering the
+questions, and it SHALL NOT quietly substitute the pattern-based extraction path for the operator's
+request.
+
+#### Scenario: Missing API key
+
+- **WHEN** analysis is requested with `GEMINI_API_KEY` absent from the environment
+- **THEN** it fails naming `GEMINI_API_KEY`, and no model call is attempted
+
+#### Scenario: Chat backend key is never used for analysis
+
+- **WHEN** analysis is requested with `GEMINI_API_KEY` absent and the chat backend's key present
+- **THEN** it fails as for a missing key, and the chat backend's key is not sent to any analysis request
+
+#### Scenario: Retired key variable
+
+- **WHEN** analysis is requested with `GEMINI_API_KEY` absent and `ANALYSIS_API_KEY` set
+- **THEN** it fails saying `ANALYSIS_API_KEY` is no longer read and must be renamed to `GEMINI_API_KEY`
+
+#### Scenario: Key is never disclosed
+
+- **WHEN** analysis runs with verbose output enabled, and when analysis fails
+- **THEN** the API key appears in neither the verbose output, nor the error message, nor the emitted manifest
+
+#### Scenario: Rejected key
+
+- **WHEN** the Gemini API rejects the key
+- **THEN** the failure states that the key was rejected and names `GEMINI_API_KEY`, without including the key
+
+#### Scenario: Gateway-prefixed model id
+
+- **WHEN** the model id is set to an id carrying a gateway namespace such as `google/gemini-3.1-pro-preview`
+- **THEN** the failure names the model id and the config key, and says that direct Gemini model ids are unprefixed
+
+#### Scenario: Reasoning disabled in configuration
+
+- **WHEN** a reasoning-effort key is set to disable reasoning entirely
+- **THEN** loading configuration fails naming that key, and no model call is attempted
+
+#### Scenario: Model id is overridden on the user layer
+
+- **WHEN** an operator sets the model id on the `user` layer
+- **THEN** analysis calls that model instead of the packaged default
+
+### Requirement: Analysis leaves the retrieval and answering pipeline untouched
+
+Analysis SHALL affect only manifest production. It SHALL NOT alter retrieval, reranking, prompt
+resolution, or generation for any run, and a manifest produced by analysis SHALL be run by exactly the
+same pipeline as a hand-written one, with no field or behaviour available only to generated manifests.
+
+Analysis SHALL NOT be routed through the RAG inference backend, and its use SHALL NOT change which
+model answers questions during a batch run.
+
+#### Scenario: Generated and hand-written manifests run identically
+
+- **WHEN** a generated manifest and a hand-written manifest carrying the same fields are run
+- **THEN** the runs are identical, with no behaviour conditioned on how the manifest was produced
+
+#### Scenario: Answering model is unaffected
+
+- **WHEN** a batch is run from a generated manifest
+- **THEN** the model answering the questions is the one the run resolves as usual, not the analysis model
+
+### Requirement: Analysis traffic goes only to the Gemini API and is not retained by it
+
+Analysis SHALL send document content only to Google's Gemini API, authenticated by the operator's own
+key, with no gateway or other intermediary in the request path.
+
+The destination, the backend and the credential SHALL be fixed by rag-cli rather than resolved from the
+host environment, so that no environment variable honoured by a client library can redirect the request
+to another host, select another Google backend, or substitute another credential.
+
+Each analysis request SHALL be self-contained: documents SHALL be conveyed inline in the request, and
+analysis SHALL NOT use any provider facility that stores request content beyond the call, such as a file
+upload store or server-side conversation state.
+
+When the provider blocks a prompt or a response on safety or policy grounds, analysis SHALL fail naming
+the call and the block reason the provider reported, and SHALL NOT produce a manifest. A blocked response
+SHALL NOT be reported as a truncation or as a malformed response.
+
+The operator-facing conveyance report SHALL name the Gemini API and the model called.
+
+#### Scenario: Ambient redirect is ignored
+
+- **WHEN** analysis runs on a host where a client library's base-URL, backend-selection or key environment variables are set to other values
+- **THEN** the request still goes to the Gemini API with the key from `GEMINI_API_KEY`
+
+#### Scenario: Documents are conveyed inline
+
+- **WHEN** a PDF is analysed
+- **THEN** its bytes travel inside the generation request, and no separate upload is made to the provider
+
+#### Scenario: Blocked by the provider
+
+- **WHEN** the provider blocks a triage or generation call on safety or policy grounds
+- **THEN** analysis fails naming the call and the reported block reason, and no manifest is written
+
+#### Scenario: Conveyance report names the destination
+
+- **WHEN** documents are conveyed for analysis
+- **THEN** the report names the Gemini API and the model id, not a configurable URL
+
+### Requirement: The worked example cannot stand in for the live catalogue
+
+The worked example carried in each request SHALL name retrieval targets that are visibly placeholders
+and cannot exist in a real catalogue, and each request SHALL state, next to the live catalogue, that only
+names from that catalogue may be selected and that names in the example are not selectable.
+
+When a generated selection names a target that is not in the live catalogue, the failure SHALL say so,
+naming the target. When the name is one the worked example uses, the failure SHALL say that it was copied
+from the example.
+
+#### Scenario: Example names are placeholders
+
+- **WHEN** the worked example is rendered into a request
+- **THEN** every knowledge base and source group it names is a visible placeholder that no real catalogue could contain
+
+#### Scenario: Name copied from the example
+
+- **WHEN** the generated selection names a knowledge base taken from the worked example
+- **THEN** analysis fails naming that knowledge base and saying it came from the example rather than the catalogue
+
+### Requirement: Requirements are extracted from every column that states one
+
+Triage and question extraction SHALL treat every part of a document that makes a demand of the
+respondent as a source of questions. In a table that includes evidence, validation-proof, acceptance-
+criteria or deliverable columns as well as the primary requirement column, a distinct demand in any of
+them SHALL become a question. A column that only describes, labels, numbers or scores a row SHALL NOT.
+
+A column the respondent fills in — a compliance status, the product or component offered, whether it is
+included in a licence, a cross-reference, comments or qualifications — is an answer field, not a demand.
+Extraction SHALL NOT emit a question per answer field, and triage SHALL NOT count answer fields as
+questions. A row with several answer fields is split only by the requirements it states, and the
+answering prompt fills every field from one answer.
+
+When one row covers a range of ids that the document does not define individually, the extracted
+questions SHALL keep the range in their ids and SHALL NOT assign requirements to individual ids inside
+the range.
+
+The triage question-count estimate SHALL be made on the same basis as extraction, so that a demand
+missed by extraction shows up as a shortfall against the estimate rather than being missed by both.
+
+A question extracted from a secondary column SHALL carry, in its `source`, which row and column it came
+from, so an operator reviewing the manifest can see why it exists.
+
+#### Scenario: Evidence column carries a separate requirement
+
+- **WHEN** a requirement row's evidence column asks the respondent to describe their image hardening process, a demand the requirement column does not make
+- **THEN** that demand is extracted as its own question, with a source naming the row and the evidence column
+
+#### Scenario: Answer-field columns are not questions
+
+- **WHEN** a compliance matrix row carries Compliance, Product, Included in Base Licence, Cross-Reference and Comment columns for the bidder to fill
+- **THEN** no question is extracted per answer field, and the row's questions are its requirements
+
+#### Scenario: Ranged row keeps its range
+
+- **WHEN** one row covers ids FR_16 to FR_20 without defining each individually
+- **THEN** its questions carry the range in their ids, such as `FR_16-20-a`, and no requirement is assigned to `FR_17` alone
+
+#### Scenario: Descriptive column is not a question
+
+- **WHEN** a column only labels a row's category or priority
+- **THEN** no question is extracted from it
+
+#### Scenario: Estimate and extraction agree on what counts
+
+- **WHEN** triage estimates a question count for a table with requirement and evidence columns
+- **THEN** the estimate includes the demands in the evidence column
+
+### Requirement: Operator instructions steer analysis
+
+Analysis SHALL accept optional free-text instructions from the operator alongside the documents, and
+SHALL apply them to every model call the analysis makes: triage, question extraction and strategy.
+Applying them to triage is what keeps the question-count estimate on the same basis as the extraction,
+so an instruction that narrows scope narrows the estimate too rather than producing a shortfall.
+
+Instructions SHALL be conveyed as operator-authored text, separate from and labelled distinctly from
+the document content, which remains untrusted input. They SHALL be bounded in length, and an
+over-long set SHALL be rejected before any model call, naming the limit.
+
+Instructions SHALL NOT remove, weaken or replace the mandatory prompt rules. The rules SHALL continue
+to be appended after generation, and SHALL remain the final word in the generated prompt whatever the
+instructions say.
+
+The instructions given SHALL be kept with the analysis session, so that generation uses the same
+instructions triage did. They SHALL be recorded in the generated manifest's provenance, so that a
+manifest shows what its generation was asked to do.
+
+#### Scenario: Granularity instruction reaches extraction
+
+- **WHEN** analysis is run with the instruction "split every matrix row into one question per requirement"
+- **THEN** the question-extraction request carries that instruction
+
+#### Scenario: Scope instruction narrows the estimate
+
+- **WHEN** analysis is run with an instruction limiting it to one matrix in the document
+- **THEN** the triage request carries the instruction, so its estimate counts only that matrix
+
+#### Scenario: Instructions are separate from document content
+
+- **WHEN** an analysis request is prepared with instructions
+- **THEN** the instructions appear as labelled operator text, not inside any document's content
+
+#### Scenario: Instructions cannot remove the mandatory rules
+
+- **WHEN** analysis is run with an instruction to omit gap reporting from the prompt
+- **THEN** the generated prompt still ends with every mandatory rule
+
+#### Scenario: Over-long instructions
+
+- **WHEN** instructions longer than the limit are given
+- **THEN** analysis fails before any model call, naming the limit
+
+#### Scenario: Instructions are recorded
+
+- **WHEN** a manifest is generated with instructions
+- **THEN** its provenance records the instructions that were given
+
+#### Scenario: No instructions
+
+- **WHEN** analysis is run without instructions
+- **THEN** it behaves exactly as before, and the provenance records no instructions
+
+### Requirement: The generated prompt is exposed separately from the appended rules
+
+Generation SHALL make available, alongside the assembled prompt, the model-written part of the prompt
+and the block rag-cli appends to it, such that the assembled prompt is exactly the model-written part
+followed by the appended block. A client offering prompt edits SHALL be able to replace the
+model-written part and re-assemble the prompt without parsing the assembled text.
+
+#### Scenario: Parts re-assemble to the prompt
+
+- **WHEN** a manifest is generated
+- **THEN** joining the model-written part and the appended block reproduces the manifest's prompt exactly

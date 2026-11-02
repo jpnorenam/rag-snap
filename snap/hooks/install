@@ -29,5 +29,10 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 # Register the package-layer config keys (shared with post-refresh).
 . "$SNAP/bin/package-config.sh"
 #
-# sudo snap start $SNAP_INSTANCE_NAME.tika-server
-# sudo snap start $SNAP_INSTANCE_NAME.ragd
+# Both daemons below are install-mode: disable, so snapd creates their systemd units but
+# leaves them stopped AND disabled at boot. Always start them with --enable: plain
+# `snap start` runs them for the current boot only, and they vanish at the next reboot.
+# (`snap enable <snap>` is unrelated -- it controls the whole snap, not service startup.)
+#
+# sudo snap start --enable $SNAP_INSTANCE_NAME.tika-server
+# sudo snap start --enable $SNAP_INSTANCE_NAME.ragd

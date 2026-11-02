@@ -4,7 +4,14 @@ import { useCallback, useMemo, useState } from "react";
 import { errorMessage } from "@/lib/api/envelope";
 import { parseManifest, ManifestParseError } from "@/lib/manifest";
 import { compileDomains, resolveDomain } from "@/lib/domains";
-import { runBatch, type BatchDomain, type BatchManifest } from "@/lib/api/answer";
+import {
+  runBatch,
+  checkManifest,
+  type BatchDomain,
+  type BatchManifest,
+  type CheckResult,
+} from "@/lib/api/answer";
+import CheckFindings from "@/components/answer/CheckFindings";
 import type { OperationView } from "@/lib/api/operations";
 import KapaSourcePicker from "@/components/common/KapaSourcePicker";
 
@@ -80,6 +87,11 @@ export default function ManifestRunner({ onRun, onCancel, onError }: Props) {
   // kapaGroups is the run's kapa.ai source-group selection, seeded from the
   // manifest and edited in the preview.
   const [kapaGroups, setKapaGroups] = useState<string[]>([]);
+  // Server-side check of the supplied manifest. Distinct from routingPreview below,
+  // which is the client's advisory copy: this is the daemon resolving the manifest's
+  // knowledge bases and routing the same way a run would.
+  const [check, setCheck] = useState<CheckResult | null>(null);
+  const [checking, setChecking] = useState(false);
 
   // Resolved once per parsed manifest: the preview walks every question, so it
   // is not recomputed on a temperature change or a re-render.
@@ -93,6 +105,7 @@ export default function ManifestRunner({ onRun, onCancel, onError }: Props) {
     setFileName(file.name);
     try {
       const text = await file.text();
+      setCheck(null);
       const parsed = parseManifest(text);
       setManifest(parsed);
       setKapaGroups(parsed.kapa_source_groups ?? []);
@@ -171,6 +184,30 @@ export default function ManifestRunner({ onRun, onCancel, onError }: Props) {
               />
             </div>
 
+            {/* Checking is read-only: no run is started, no model is called. It is the
+                same surface a generated manifest is reviewed with, so a hand-written and
+                a generated manifest are reported identically. */}
+            <button
+              type="button"
+              className="p-button u-no-margin--bottom"
+              onClick={() => {
+                setChecking(true);
+                checkManifest(manifest)
+                  .then(setCheck)
+                  .catch((e) => onError(errorMessage(e)))
+                  .finally(() => setChecking(false));
+              }}
+              disabled={checking || running}
+            >
+              {checking ? (
+                <>
+                  <i className="p-icon--spinner u-animation--spin" aria-hidden="true" /> Checking…
+                </>
+              ) : (
+                "Check manifest"
+              )}
+            </button>
+
             <button
               type="button"
               className="p-button--positive u-no-margin--bottom answer-flow__run"
@@ -188,6 +225,8 @@ export default function ManifestRunner({ onRun, onCancel, onError }: Props) {
           </>
         )}
       </div>
+
+      {check && <CheckFindings result={check} />}
 
       {manifest && (
         <div className="answer-preview">

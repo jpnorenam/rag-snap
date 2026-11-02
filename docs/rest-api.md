@@ -59,13 +59,13 @@ sudo snap restart rag-cli.ragd
 sudo snap logs -f rag-cli.ragd
 ```
 
-Backend secrets (`OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `CHAT_API_KEY`) are set on
-the **daemon's** service environment, not on each CLI invocation and never in `snapctl`
+Backend secrets (`OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `CHAT_API_KEY`, and
+`GEMINI_API_KEY` for RFP analysis) are set on the **daemon's** service environment, not on each CLI invocation and never in `snapctl`
 config. The daemon reads the rest of its configuration (`chat.*`, `knowledge.*`, `tika.*`,
 `api.socket.*`) from `snapctl` at startup.
 
-To give the daemon an inference API key (e.g. for OpenRouter or AWS Bedrock) and/or your real
-OpenSearch credentials, inject them via a root-only systemd drop-in, then restart the daemon:
+To give the daemon an inference API key (e.g. for AWS Bedrock) and/or your real OpenSearch
+credentials, inject them via a root-only systemd drop-in, then restart the daemon:
 
 ```bash
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
@@ -76,6 +76,10 @@ sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
 sudo systemctl daemon-reload
 sudo snap restart rag-cli.ragd
 ```
+
+To enable RFP analysis on the daemon, add `Environment=GEMINI_API_KEY=<key>` to the same drop-in.
+It is the only variable analysis reads (there is no fallback to `CHAT_API_KEY`), and the key must
+belong to a billing-enabled Google project — see [`answer batch --analyze`](usage.md#configuration).
 
 The drop-in file is `root:root 0600`, so the secrets are never world-readable and never pass
 through the `snapctl` config store or the `GET /1.0` config summary. `ragd`'s app definition
@@ -128,6 +132,42 @@ newgrp rag   # or log out and back in
 
 A connection from a user outside the group and not `root` is rejected with HTTP `403` and a
 message naming the group to join.
+
+### Using the CLI without `sudo`
+
+The default group, `rag`, usually doesn't exist on a fresh host, so until you act only `root`
+can reach the daemon. Running the CLI as `sudo` is **not** a workaround: the snap's `home`
+interface doesn't let `root` read files in another user's home directory, so any command that
+takes a file from your home fails:
+
+```
+$ sudo rag-cli.rag answer batch ./prompt.yaml
+Error: loading batch manifest: reading manifest file: open ./prompt.yaml: permission denied
+```
+
+Run without `sudo` and give your own user access instead. The quickest way is to point
+`api.socket.group` at a group you're already in. The daemon reads this key at startup, so
+restart it after the change:
+
+```bash
+sudo rag-cli.rag set --package api.socket.group=sudo   # any existing group you belong to
+sudo snap restart rag-cli.ragd
+rag-cli.rag -v answer batch ./prompt.yaml              # no sudo
+```
+
+To keep access narrower than `sudo`, create the dedicated group instead:
+`sudo groupadd rag && sudo usermod -aG rag "$USER"`, then start a new login session.
+
+> **Symptom of missing access:** a CLI user who can't reach the daemon falls back to **direct
+> mode** without a warning. Direct mode talks to OpenSearch and the inference server itself,
+> using `OPENSEARCH_USERNAME`/`OPENSEARCH_PASSWORD`/`CHAT_API_KEY` from your shell, not the
+> daemon's drop-in. If those aren't exported, `chat` may work under `sudo` (via `ragd`) while
+> `answer batch` without `sudo` can't reach the knowledge base. Older builds then answered every
+> question with *"The provided context does not contain enough information to answer this
+> question."* without calling the model. Behind a proxy you'd see only the keyword-extraction
+> request and no answer request. Current builds stop with a `knowledge base not available in
+> direct mode` error instead. Exporting the credentials also makes direct mode work, but routing
+> through the daemon keeps the secrets out of your shell and runs the same path as chat and the UI.
 
 ---
 
@@ -317,6 +357,9 @@ websocket URL to dial for streamed tokens and `<think>` blocks.
 | `GET /1.0/kapa/source-groups` | sync | List the kapa.ai project's source groups |
 | `POST /1.0/answer/build` | async | Extract questions from a document (spreadsheets return a column choice) |
 | `POST /1.0/answer/build/extract` | async | Extract questions from a chosen spreadsheet column |
+| `POST /1.0/answer/analyze` | async | Triage RFP documents for manifest generation |
+| `POST /1.0/answer/analyze/generate` | async | Generate a complete manifest from a triage token |
+| `POST /1.0/answer/check` | sync | Check a manifest without running it |
 | `GET /1.0/prompts`, `GET /1.0/prompts/{name}` | sync | Read the prompt templates |
 | `PUT /1.0/prompts/{name}` | sync | Customize a prompt template |
 | `DELETE /1.0/prompts/{name}` | sync | Reset a prompt to its built-in default |
@@ -510,3 +553,106 @@ returns `400` (re-upload the document); a column that yields no questions after
 the `min_length` filter fails the operation with a column-naming message so the
 client can pick a different column or lower the minimum without starting a batch
 run.
+
+### `POST /1.0/answer/analyze`
+
+First of the two RFP-analysis passes. `multipart/form-data`: `file` is the RFP, and any
+number of repeated `context` fields are supporting documents. An optional `instructions`
+field carries the operator's free-text instructions (granularity, scope, which questions to
+include). They are applied to every analysis call for the session, including generation,
+without being sent again. Over 4,000 characters is a `400` before any operation starts.
+Runs as an async operation and publishes `analysis_token`, `expires_at`, `model`, `triage`,
+`report` and `instructions` (the instructions the session is working to, empty when none).
+
+`triage` is what the model found without generating anything: the RFP's identity, its
+section structure with the id prefix each section uses, an estimated question count,
+`openstack_in_scope`, and `multi_field_answers`. `report` says per document whether it was
+read `native`ly (a PDF, as bytes) or `converted` — no model API accepts a spreadsheet or a
+word-processor document, so those become table-preserving Markdown first, and a client
+should show which happened.
+
+Returns `400` when analysis is not configured or no API key is present in the environment;
+the key never appears in any response. An upload larger than the staging bound is rejected
+before anything is conveyed, naming the limit and the measured value.
+
+The staged entry holds the conveyed document **content**, not a reference to it — base64
+PDF bytes have no server-side handle to point at — so the session is bounded by bytes as
+well as by count, and its TTL is short. `expires_at` is published so a client can tell the
+operator their session has a lifetime.
+
+### `POST /1.0/answer/analyze/generate`
+
+Second pass. JSON body: `{analysis_token, answer_words, answer_limit, openstack?, accept_shortfall?, retry_questions?}` —
+`answer_limit` is `"hard"` or `"soft"`, and `openstack` (`"sunbeam"` or `"charmed"`) is
+meaningful only when the triage reported OpenStack in scope. The documents are **not**
+re-uploaded; generation runs against the set the token refers to.
+
+Publishes `manifest` (in the shape `POST /1.0/answer/batch` accepts, so a client can post
+it back unchanged), `check` (see below) and `model`. An unknown or expired token returns
+`400` stating that the session expired and the documents must be uploaded again — a
+recoverable error, so a client should return to its upload step rather than dead-ending.
+
+The metadata also carries the prompt's two halves: `prompt_generated`, the part the model
+wrote, and `prompt_appended`, the rules rag-cli adds. `prompt_generated` (trimmed) +
+`"\n\n"` + `prompt_appended` is exactly `manifest.prompt`, so a client can let the first be
+edited and re-join it without being able to touch the rules. Both are omitted together when
+the prompt does not end with the exact rules block; show the prompt whole and read-only
+then.
+
+A truncated response, or an **empty** response at the model's output ceiling, fails the
+operation rather than completing with a short manifest, and **cannot be accepted**. On a
+reasoning model the output ceiling covers the model's own reasoning, so an empty response is
+a budget failure and must never be read as "the model found nothing".
+
+A question count materially short of the triage estimate, from an extraction that finished
+normally, also fails the operation — but as a decision for the operator, not a dead end. The
+failed operation's metadata carries a `shortfall` object; read it rather than parsing the
+error text:
+
+```json
+{
+  "expected": 220, "produced": 53,
+  "finish_reason": "STOP", "answer_tokens": 9214, "ceiling": 65536,
+  "effort": "low", "next_effort": "medium",
+  "sections": [
+    {"name": "A.1 Functional Requirements", "id_prefix": "FR_", "estimated": 95, "produced": 31},
+    {"name": "A.2 Non-Functional Requirements", "id_prefix": "NFR_", "estimated": 115, "produced": 22}
+  ]
+}
+```
+
+A section's `produced` is `-1` when it has no id prefix to attribute questions by. The
+produced questions stay on the session (they are not sent to the client). Post the same token
+and interview answers again with **one** of:
+
+- `"accept_shortfall": true` — continue from the retained questions without extracting them
+  again. The completed metadata carries `shortfall_accepted: {expected, produced}`, which a
+  client should record with the manifest.
+- `"retry_questions": true` — re-run only the extraction, at `next_effort`. Refused when
+  `next_effort` is empty (already at the highest effort).
+
+Either flag on a session holding no shortfall, or both together, is a `400`. The session's
+lifetime is unchanged, so an expired token is still the expired-session `400`.
+
+### `POST /1.0/answer/check`
+
+Checks a manifest without running it. Accepts the same JSON body as
+`POST /1.0/answer/batch`; answers no question, calls no model, and stores nothing.
+Synchronous.
+
+Returns the question and domain counts, `domain_matches` (how many questions each pattern
+would route, resolved with the run's own routing so the check cannot disagree with a run),
+`prompt` assertions (`no_context_rule`, `directness_rule`, `domain_text_rule`,
+`length_stated`, `length_hard`), and `findings` at two severities. An entry in
+`domain_matches` routing exactly one question also carries `only_question: {id, text}` and
+`context_preview`, so a client can show the question beside the context attached to it —
+informational only, never a finding:
+
+- `defect` — would fail a run, or names a retrieval target that contributes nothing.
+- `warning` — will run, but may not be intended. A pattern reserved for a section with no
+  questions yet is the canonical example, so a zero-match pattern is never a defect.
+
+`references_checked` and `kapa_checked` are reported **separately**, and each is `false`
+when that check did not run: the knowledge store may be unreachable, and this daemon does
+not wire kapa retrieval at all, so it cannot report whether a source group exists. A client
+must present a check that did not run as such rather than implying it passed.

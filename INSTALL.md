@@ -141,10 +141,33 @@ sudo rag-cli.rag set --package knowledge.http.tls="true"
 sudo rag-cli.rag set --package tika.http.host="127.0.0.1"
 sudo rag-cli.rag set --package tika.http.port="9998"
 sudo rag-cli.rag set --package tika.http.path="tika"
-sudo snap start rag-cli.tika-server
+sudo snap start --enable rag-cli.tika-server
 ```
 
 Check everything with `rag-cli.rag status`.
+
+`--enable` matters: the Tika daemon ships disabled at boot, and plain `snap start` would run it
+only until the next reboot. The same applies to OpenSearch and, if you use the REST API or web UI,
+to `ragd`:
+
+```bash
+sudo snap start --enable opensearch
+sudo snap start --enable rag-cli.ragd
+```
+
+Confirm both columns read `enabled active` — `snap services | grep -E 'opensearch|rag-cli'`. See
+[Services](docs/usage.md#services) for the reasoning and for recovery after an unclean shutdown.
+
+If you run `ragd`, give your own user access to it so CLI commands don't need `sudo`. Under
+`sudo`, the snap can't read files in your home directory, such as a batch manifest. The default
+access group `rag` usually doesn't exist, so point it at a group you're already in:
+
+```bash
+sudo rag-cli.rag set --package api.socket.group=sudo
+sudo snap restart rag-cli.ragd
+```
+
+See [Using the CLI without `sudo`](docs/rest-api.md#using-the-cli-without-sudo) for the details.
 
 ---
 

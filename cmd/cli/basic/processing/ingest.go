@@ -31,8 +31,9 @@ type IngestResult struct {
 	TikaMetadata  *TikaMetadata // may be nil if metadata extraction fails
 }
 
-// Ingest extracts content from a file using Tika and splits it into chunks
-// ready for indexing.
+// Ingest extracts content from a file and splits it into chunks ready for
+// indexing. Markdown and plain-text files are read directly; everything else
+// goes through Tika.
 func Ingest(tikaURL, filePath, sourceID string) (*IngestResult, error) {
 	// 1. Compute file checksum and size
 	checksum, fileSize, err := checksumAndSize(filePath)
@@ -44,31 +45,15 @@ func Ingest(tikaURL, filePath, sourceID string) (*IngestResult, error) {
 		return nil, err
 	}
 
-	// 2. Extract content via Tika
-	stopProgress := common.StartProgressSpinner("Extracting content")
 	tika, err := NewTikaClient(tikaURL)
 	if err != nil {
-		stopProgress()
 		return nil, err
 	}
 
-	rawHTML, err := tika.ExtractHTML(filePath)
-	stopProgress()
+	// 2-3. Extract content as Markdown
+	content, err := extractMarkdown(tika, filePath)
 	if err != nil {
-		return nil, fmt.Errorf("content extraction failed: %w", err)
-	}
-
-	rawHTML = strings.TrimSpace(rawHTML)
-	if rawHTML == "" {
-		return nil, fmt.Errorf("no content extracted from %s", filepath.Base(filePath))
-	}
-
-	// 3. Convert HTML to Markdown (preserves table structure)
-	stopProgress = common.StartProgressSpinner("Converting to Markdown")
-	content, err := HTMLToMarkdown(rawHTML)
-	stopProgress()
-	if err != nil {
-		return nil, fmt.Errorf("HTML to Markdown conversion failed: %w", err)
+		return nil, err
 	}
 
 	content = strings.TrimSpace(content)
@@ -81,7 +66,7 @@ func Ingest(tikaURL, filePath, sourceID string) (*IngestResult, error) {
 	tikaMeta, _ = tika.ExtractMetadata(filePath)
 
 	// 5. Chunk the Markdown content (structure-aware)
-	stopProgress = common.StartProgressSpinner("Chunking content")
+	stopProgress := common.StartProgressSpinner("Chunking content")
 	chunks := ChunkMarkdown(content, sourceID, ChunkOptions{
 		Size:    DefaultChunkSize,
 		Overlap: DefaultChunkOverlap,
@@ -98,6 +83,39 @@ func Ingest(tikaURL, filePath, sourceID string) (*IngestResult, error) {
 		ContentLength: fileSize,
 		TikaMetadata:  tikaMeta,
 	}, nil
+}
+
+// extractMarkdown returns the file's content as Markdown. Markdown and
+// plain-text files are read as-is so their line structure survives (see
+// textSourceExtensions); other formats are extracted by Tika and converted
+// from its XHTML.
+func extractMarkdown(tika *TikaClient, filePath string) (string, error) {
+	if content, ok, err := readTextSource(filePath); err != nil {
+		return "", err
+	} else if ok {
+		return content, nil
+	}
+
+	stopProgress := common.StartProgressSpinner("Extracting content")
+	rawHTML, err := tika.ExtractHTML(filePath)
+	stopProgress()
+	if err != nil {
+		return "", fmt.Errorf("content extraction failed: %w", err)
+	}
+
+	rawHTML = strings.TrimSpace(rawHTML)
+	if rawHTML == "" {
+		return "", fmt.Errorf("no content extracted from %s", filepath.Base(filePath))
+	}
+
+	// Convert HTML to Markdown (preserves table structure)
+	stopProgress = common.StartProgressSpinner("Converting to Markdown")
+	content, err := HTMLToMarkdown(rawHTML)
+	stopProgress()
+	if err != nil {
+		return "", fmt.Errorf("HTML to Markdown conversion failed: %w", err)
+	}
+	return content, nil
 }
 
 // checksumAndSize computes the SHA-256 hex digest and file size.

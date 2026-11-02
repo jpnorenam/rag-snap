@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -312,6 +311,10 @@ func toBuildQuestionsJSON(questions []rfp.Question) []buildQuestionJSON {
 // parseTables parses a tabular document into rfp.SheetTable(s): Tika HTML for
 // XLSX (one table per sheet, names recovered from the workbook), a single
 // synthesized table for CSV.
+//
+// The parsing itself lives in the rfp package so that this path, the CLI's and the
+// analysis path cannot disagree about how a sheet gets its name; this function is
+// only the Tika call in front of it.
 func parseTables(format, path, tikaURL string) ([]rfp.SheetTable, error) {
 	switch format {
 	case "xlsx":
@@ -326,53 +329,12 @@ func parseTables(format, path, tikaURL string) ([]rfp.SheetTable, error) {
 		if err != nil {
 			return nil, fmt.Errorf("tika extraction failed: %w", err)
 		}
-		sheets := rfp.ParseTikaHTMLSheets(htmlContent)
-		if names, err := rfp.XLSXSheetNames(path); err == nil {
-			usePage := false
-			for _, sh := range sheets {
-				if sh.PageIndex > 0 {
-					usePage = true
-					break
-				}
-			}
-			for i := range sheets {
-				idx := i
-				if usePage {
-					idx = sheets[i].PageIndex
-				}
-				if idx < len(names) {
-					sheets[i].Name = names[idx]
-				}
-			}
-		}
-		return sheets, nil
+		return rfp.SheetsFromTikaHTML(htmlContent, path), nil
 	case "csv":
-		return parseCSVTable(path)
+		return rfp.SheetsFromCSV(path)
 	default:
 		return nil, fmt.Errorf("not a tabular format: %s", format)
 	}
-}
-
-// parseCSVTable reads a CSV file into a single-table shape so it flows through
-// the same column-selection path as a spreadsheet sheet.
-func parseCSVTable(path string) ([]rfp.SheetTable, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("opening file: %w", err)
-	}
-	defer f.Close()
-
-	rd := csv.NewReader(f)
-	rd.LazyQuotes = true
-	rd.FieldsPerRecord = -1
-	rows, err := rd.ReadAll()
-	if err != nil {
-		return nil, fmt.Errorf("reading CSV: %w", err)
-	}
-	if len(rows) == 0 {
-		return nil, fmt.Errorf("CSV file is empty")
-	}
-	return []rfp.SheetTable{{Name: "CSV", Rows: rows, PageIndex: 0}}, nil
 }
 
 // inspectTables builds the client-facing table/column descriptors and the

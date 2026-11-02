@@ -28,6 +28,36 @@ register_package_key gdrive.client.secret ""
 register_package_key kapa.enabled "true"
 register_package_key kapa.project.id ""
 
+# RFP analysis. Sends RFP documents directly to Google's Gemini API and generates
+# a complete answer-batch manifest, so it is OFF by default: it sends document
+# content to a third party. There is no gateway and no configurable endpoint; the
+# destination is fixed in code.
+#   sudo rag set analysis.enabled=true
+#   sudo rag set analysis.model=<gemini-model-id>
+#
+# analysis.model has no default on purpose. Gemini model ids are versioned (the Pro
+# tier currently ships only under a preview identifier), so baking one in would age
+# badly and fail as an opaque 404. Ids are unprefixed, not google/... as on a
+# gateway. Verified values:
+#   gemini-3.1-pro-preview   Pro tier, preview (deprecated with >= 2 weeks' notice)
+#   gemini-3.8-flash         newest stable model
+#
+# The API key is NEVER config: it comes from GEMINI_API_KEY only, with no fallback
+# to CHAT_API_KEY (that key belongs to the chat backend, never to Google). The key
+# MUST belong to a billing-enabled (paid-tier) Google project: on the unpaid tier,
+# Google may use submitted content to improve its products and human reviewers may
+# read it. See the `ragd` app's environment comment in snapcraft.yaml.
+register_package_key analysis.enabled "false"
+register_package_key analysis.model ""
+# Question extraction defaults to medium reasoning: at low, a 36-row compliance matrix
+# whose cells pack several requirements came back nearly unsplit (53 questions where a
+# person wrote 164), and medium cleared it for a few thousand reasoning tokens.
+# Registration never overwrites, so an install that already holds "low" keeps it.
+register_package_key analysis.reasoning.questions "medium"
+register_package_key analysis.reasoning.strategy "high"
+register_package_key analysis.answer.words "100"
+register_package_key analysis.answer.limit "soft"
+
 # REST API daemon (ragd) socket. Members of api.socket.group (plus root) may use
 # the local unix socket; access is enforced by the daemon's SO_PEERCRED check, not
 # by the socket's file ownership (under strict confinement the daemon cannot chown

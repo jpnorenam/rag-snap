@@ -297,3 +297,12 @@ questions:
 		}
 	})
 }
+
+func TestBuildRAGPromptLabelsTheDomainContext(t *testing.T) {
+	// Generated prompts tell the answering model that text under this label is
+	// guidance, not a source, so the label must actually appear in the turn.
+	got := buildRAGPrompt("passages", "In-country support: address the support model.", "T4-ii", "Is support local?")
+	if !strings.Contains(got, RequirementDomainLabel+": In-country support") {
+		t.Errorf("the domain context is not introduced by %q:\n%s", RequirementDomainLabel, got)
+	}
+}
