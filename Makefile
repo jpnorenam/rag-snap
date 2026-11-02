@@ -74,6 +74,7 @@ snapcraft-install:
 # /snap/bin is put on PATH so a snapcraft installed in this same run is found.
 .PHONY: snap
 snap: snapcraft-install
+	$(SNAPCRAFT) clean go-cli 	# cleanup other possible branches files
 	PATH="/snap/bin:$$PATH" $(SNAPCRAFT) $(SNAPCRAFT_FLAGS)
 
 # ------------------------------------------------------------------------------
