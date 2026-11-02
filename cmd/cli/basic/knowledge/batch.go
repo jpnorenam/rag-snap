@@ -31,7 +31,7 @@ type BatchConfig struct {
 
 // ProcessBatch reads a YAML batch file and ingests each job into OpenSearch.
 // When force is false, sources that are already ingested (status=completed) are skipped.
-func ProcessBatch(ctx context.Context, client *OpenSearchClient, tikaURL string, yamlPath string, force bool) error {
+func ProcessBatch(ctx context.Context, client *OpenSearchClient, tikaURL, yamlPath string, force bool) error {
 	data, err := os.ReadFile(yamlPath)
 	if err != nil {
 		return fmt.Errorf("reading batch file: %w", err)

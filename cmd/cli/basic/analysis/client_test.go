@@ -319,7 +319,7 @@ func TestSchemasArriveVerbatim(t *testing.T) {
 }
 
 func TestAmbientEnvironmentCannotRedirectOrReauthenticate(t *testing.T) {
-	// Each of these is honoured by the SDK when the client leaves the matching field
+	// Each of these is honored by the SDK when the client leaves the matching field
 	// unset. Pinned explicitly, none of them may move confidential RFP content to
 	// another host, another Google backend, or another credential.
 	fs := newFakeServer(t, fakeCompletion{content: okTriage})

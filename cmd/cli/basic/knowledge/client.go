@@ -23,10 +23,14 @@ const (
 	envOpenSearchUsername = "OPENSEARCH_USERNAME"
 	envOpenSearchPassword = "OPENSEARCH_PASSWORD"
 
+	// ConfEmbeddingModelID is the config key holding the deployed embedding model's ID.
 	ConfEmbeddingModelID = "knowledge.model.embedding"
-	ConfRerankModelID    = "knowledge.model.rerank"
+	// ConfRerankModelID is the config key holding the deployed rerank model's ID.
+	ConfRerankModelID = "knowledge.model.rerank"
 )
 
+// OpenSearchClient talks to the OpenSearch knowledge store: indexes, ingest and
+// search pipelines, ML models, and source metadata.
 type OpenSearchClient struct {
 	client           *opensearchapi.Client
 	url              string
@@ -88,12 +92,12 @@ func (c *OpenSearchClient) CreateIndex(ctx context.Context, indexName string) er
 // NewClient creates and validates an OpenSearch client connection. It waits for the
 // server to become ready (see checkServer), so it suits callers that can afford to
 // block while a starting OpenSearch comes up — ingest, search, init.
-func NewClient(baseUrl string) (*OpenSearchClient, error) {
-	if err := handshake(baseUrl); err != nil {
+func NewClient(baseURL string) (*OpenSearchClient, error) {
+	if err := handshake(baseURL); err != nil {
 		return nil, err
 	}
 
-	client, err := newClient(baseUrl)
+	client, err := newClient(baseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -259,10 +263,10 @@ func lookupCredential(name string) (string, error) {
 	return v, nil
 }
 
-func newOpenSearchClient(baseUrl, username, password string) (*opensearchapi.Client, error) {
+func newOpenSearchClient(baseURL, username, password string) (*opensearchapi.Client, error) {
 	client, err := opensearchapi.NewClient(opensearchapi.Config{
 		Client: opensearch.Config{
-			Addresses: []string{baseUrl},
+			Addresses: []string{baseURL},
 			Username:  username,
 			Password:  password,
 			Transport: &headerTransport{
@@ -297,7 +301,8 @@ func handshake(baseURL string) error {
 			port = "9200"
 		}
 	}
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 5*time.Second)
+	dialer := &net.Dialer{Timeout: 5 * time.Second}
+	conn, err := dialer.DialContext(context.Background(), "tcp", net.JoinHostPort(host, port))
 	if errors.Is(err, syscall.ECONNREFUSED) {
 		return fmt.Errorf("connection refused\n\n%s\n%s",
 			common.SuggestServerStartup(),
@@ -383,12 +388,12 @@ func (c *OpenSearchClient) IndexExists(ctx context.Context, indexName string) (b
 // Returns 0 and no error if the index does not yet exist.
 func (c *OpenSearchClient) CountDocuments(ctx context.Context, indexName string) (int, error) {
 	path := fmt.Sprintf("/%s/_count", indexName)
-	req, err := c.newAuthenticatedRequest(http.MethodGet, path, nil)
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return 0, fmt.Errorf("creating count request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return 0, fmt.Errorf("counting documents: %w", err)
 	}
@@ -416,12 +421,12 @@ func (c *OpenSearchClient) CountDocuments(ctx context.Context, indexName string)
 // and the credentials are accepted, which is what a status view needs to claim the
 // knowledge store is usable.
 func (c *OpenSearchClient) Ping(ctx context.Context) error {
-	req, err := c.newAuthenticatedRequest(http.MethodGet, "/", nil)
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, "/", nil)
 	if err != nil {
 		return fmt.Errorf("creating ping request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return fmt.Errorf("pinging OpenSearch: %w", err)
 	}
@@ -435,8 +440,8 @@ func (c *OpenSearchClient) Ping(ctx context.Context) error {
 }
 
 // newAuthenticatedRequest creates an HTTP request with basic authentication.
-func (c *OpenSearchClient) newAuthenticatedRequest(method, path string, body io.Reader) (*http.Request, error) {
-	req, err := http.NewRequest(method, c.url+path, body)
+func (c *OpenSearchClient) newAuthenticatedRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.url+path, body)
 	if err != nil {
 		return nil, err
 	}

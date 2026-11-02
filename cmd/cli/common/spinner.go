@@ -20,6 +20,9 @@ func interactive() bool {
 // instead when this is false.
 func Interactive() bool { return interactive() }
 
+// StartProgressSpinner shows a spinner with prefix while work runs, and
+// returns the function that stops it. It is a no-op when stdout is not a
+// terminal.
 func StartProgressSpinner(prefix string) (stop func()) {
 	if !interactive() {
 		return func() {}

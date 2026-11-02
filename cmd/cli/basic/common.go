@@ -17,26 +17,28 @@ const (
 
 	// [chat] Inference snap API URLs
 	openAi             = "openai"
-	confOpenAiHttpHost = "chat.http.host"
-	confOpenAiHttpPort = "chat.http.port"
-	confOpenAiHttpPath = "chat.http.path"
-	confOpenAiHttpTLS  = "chat.http.tls"
+	confOpenAIHTTPHost = "chat.http.host"
+	confOpenAIHTTPPort = "chat.http.port"
+	confOpenAIHTTPPath = "chat.http.path"
+	confOpenAIHTTPTLS  = "chat.http.tls"
 	confChatModel      = "chat.model"
 
 	// [knowledge] OpenSearch snap API URLs
 	opensearch             = "opensearch"
-	confOpenSearchHttpHost = "knowledge.http.host"
-	confOpenSearchHttpPort = "knowledge.http.port"
-	confOpenSearchHttpTLS  = "knowledge.http.tls"
+	confOpenSearchHTTPHost = "knowledge.http.host"
+	confOpenSearchHTTPPort = "knowledge.http.port"
+	confOpenSearchHTTPTLS  = "knowledge.http.tls"
 
 	// [tika] Tika snap API URLs
 	tika             = "tika"
-	confTikaHttpHost = "tika.http.host"
-	confTikaHttpPort = "tika.http.port"
-	confTikaHttpPath = "tika.http.path"
-	confTikaHttpTLS  = "tika.http.tls"
+	confTikaHTTPHost = "tika.http.host"
+	confTikaHTTPPort = "tika.http.port"
+	confTikaHTTPPath = "tika.http.path"
+	confTikaHTTPTLS  = "tika.http.tls"
 )
 
+// Group returns the cobra command group that the basic commands belong to,
+// shown in help under title.
 func Group(title string) *cobra.Group {
 	return &cobra.Group{
 		ID:    groupID,
@@ -57,7 +59,7 @@ func getConfigString(ctx *common.Context, key string) (string, error) {
 }
 
 // buildServiceURL constructs an HTTP URL from host, port, and optional path.
-func buildServiceURL(host any, port any, path any, secure bool) string {
+func buildServiceURL(host, port, path any, secure bool) string {
 	u := url.URL{
 		Host: fmt.Sprintf("%s:%v", host, port),
 		Path: fmt.Sprintf("%v", path),
@@ -80,10 +82,10 @@ func addDebugFlags(cobraCmd *cobra.Command, ctx *common.Context) {
 	var configFile string
 
 	cobraCmd.PersistentFlags().BoolVar(&debug, "debug", false, "Enable debug mode (requires --config)")
-	cobraCmd.PersistentFlags().MarkHidden("debug") // Todo: this isn't working, debug flag still shows up in help.
+	_ = cobraCmd.PersistentFlags().MarkHidden("debug") // Only fails for an unknown flag. Todo: this isn't working, debug flag still shows up in help.
 
 	cobraCmd.PersistentFlags().StringVar(&configFile, "config", "", "Path to config file (required with --debug)")
-	cobraCmd.PersistentFlags().MarkHidden("config") // Todo: this isn't working, debug flag still shows up in help.
+	_ = cobraCmd.PersistentFlags().MarkHidden("config") // Only fails for an unknown flag. Todo: this isn't working, debug flag still shows up in help.
 
 	original := cobraCmd.PersistentPreRunE
 	cobraCmd.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
@@ -155,44 +157,44 @@ func buildKapaClient(ctx *common.Context) *knowledge.KapaClient {
 	return nil
 }
 
-func serverApiUrls(ctx *common.Context) (map[string]string, error) {
-	openAiHost, err := getConfigString(ctx, confOpenAiHttpHost)
+func serverAPIURLs(ctx *common.Context) (map[string]string, error) {
+	openAiHost, err := getConfigString(ctx, confOpenAIHTTPHost)
 	if err != nil {
 		return nil, err
 	}
-	openAiPort, err := getConfigString(ctx, confOpenAiHttpPort)
+	openAiPort, err := getConfigString(ctx, confOpenAIHTTPPort)
 	if err != nil {
 		return nil, err
 	}
-	openAiBasePath, err := getConfigString(ctx, confOpenAiHttpPath)
+	openAiBasePath, err := getConfigString(ctx, confOpenAIHTTPPath)
 	if err != nil {
 		return nil, err
 	}
-	openAiTLS := getConfigBool(ctx, confOpenAiHttpTLS, false)
+	openAiTLS := getConfigBool(ctx, confOpenAIHTTPTLS, false)
 
-	openSearchHost, err := getConfigString(ctx, confOpenSearchHttpHost)
+	openSearchHost, err := getConfigString(ctx, confOpenSearchHTTPHost)
 	if err != nil {
 		return nil, err
 	}
-	openSearchPort, err := getConfigString(ctx, confOpenSearchHttpPort)
+	openSearchPort, err := getConfigString(ctx, confOpenSearchHTTPPort)
 	if err != nil {
 		return nil, err
 	}
-	openSearchTLS := getConfigBool(ctx, confOpenSearchHttpTLS, true)
+	openSearchTLS := getConfigBool(ctx, confOpenSearchHTTPTLS, true)
 
-	tikaHost, err := getConfigString(ctx, confTikaHttpHost)
+	tikaHost, err := getConfigString(ctx, confTikaHTTPHost)
 	if err != nil {
 		return nil, err
 	}
-	tikaPort, err := getConfigString(ctx, confTikaHttpPort)
+	tikaPort, err := getConfigString(ctx, confTikaHTTPPort)
 	if err != nil {
 		return nil, err
 	}
-	tikaBasePath, err := getConfigString(ctx, confTikaHttpPath)
+	tikaBasePath, err := getConfigString(ctx, confTikaHTTPPath)
 	if err != nil {
 		return nil, err
 	}
-	tikaTLS := getConfigBool(ctx, confTikaHttpTLS, false)
+	tikaTLS := getConfigBool(ctx, confTikaHTTPTLS, false)
 
 	return map[string]string{
 		openAi:     buildServiceURL(openAiHost, openAiPort, openAiBasePath, openAiTLS),

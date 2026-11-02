@@ -12,8 +12,8 @@ import (
 
 // envGeminiKey is the one environment variable the API key is read from. The key is
 // never read from config, and never from the SDK's own environment auto-detection:
-// the SDK also honours GOOGLE_API_KEY and gives it precedence, which would make
-// rag-cli's behaviour depend on a variable set for an unrelated tool on the same
+// the SDK also honors GOOGLE_API_KEY and gives it precedence, which would make
+// rag-cli's behavior depend on a variable set for an unrelated tool on the same
 // machine.
 //
 // There is deliberately no fallback to the chat backend's key. Analysis always goes
@@ -365,7 +365,7 @@ var documentRejectionSignals = []string{
 }
 
 // classifyRequestError turns a provider error into one that says what to do about it,
-// and returns it wrapped with the call name when it recognises nothing.
+// and returns it wrapped with the call name when it recognizes nothing.
 func classifyRequestError(err error, s Settings, call string) error {
 	if err == nil {
 		return nil
@@ -413,7 +413,7 @@ type MalformedResponseError struct {
 	Reason       string
 }
 
-// excerptLimit is how much of each end of the payload is shown. Enough to recognise the
+// excerptLimit is how much of each end of the payload is shown. Enough to recognize the
 // shape and see where it stops, short enough not to bury the message.
 const excerptLimit = 600
 

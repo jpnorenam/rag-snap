@@ -65,7 +65,7 @@ const (
 )
 
 // Valid reports whether m is one of the two defined modes. A length is never
-// rendered into a prompt without a mode, so an unrecognised value is rejected
+// rendered into a prompt without a mode, so an unrecognized value is rejected
 // rather than defaulted.
 func (m LengthMode) Valid() bool {
 	return m == LengthHard || m == LengthSoft
@@ -215,7 +215,7 @@ func configString(cfg storage.Config, key string) string {
 
 // configBool reads a key as a boolean, returning fallback when unset or empty.
 // It matches the truthiness of cmd/cli/basic.getConfigBool so that an operator sees
-// one behaviour across every key.
+// one behavior across every key.
 func configBool(cfg storage.Config, key string, fallback bool) bool {
 	val := configString(cfg, key)
 	if val == "" {

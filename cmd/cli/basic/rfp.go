@@ -14,32 +14,32 @@ import (
 )
 
 // rfpTikaURL returns the Tika server URL by reading only the tika.http.* config keys.
-// Unlike serverApiUrls it does not require chat or opensearch config to be present.
+// Unlike serverAPIURLs it does not require chat or opensearch config to be present.
 func rfpTikaURL(ctx *common.Context) (string, error) {
-	host, err := getConfigString(ctx, confTikaHttpHost)
+	host, err := getConfigString(ctx, confTikaHTTPHost)
 	if err != nil {
-		return "", fmt.Errorf("Tika host not configured — run: rag set tika.http.host <host>")
+		return "", fmt.Errorf("tika host not configured — run: rag set tika.http.host <host>")
 	}
-	port, err := getConfigString(ctx, confTikaHttpPort)
+	port, err := getConfigString(ctx, confTikaHTTPPort)
 	if err != nil {
-		return "", fmt.Errorf("Tika port not configured — run: rag set tika.http.port <port>")
+		return "", fmt.Errorf("tika port not configured — run: rag set tika.http.port <port>")
 	}
-	tikaPath, _ := getConfigString(ctx, confTikaHttpPath) // optional
-	tikaTLS := getConfigBool(ctx, confTikaHttpTLS, false)
+	tikaPath, _ := getConfigString(ctx, confTikaHTTPPath) // optional
+	tikaTLS := getConfigBool(ctx, confTikaHTTPTLS, false)
 	return buildServiceURL(host, port, tikaPath, tikaTLS), nil
 }
 
 // rfpOpenSearchURL returns the OpenSearch URL by reading only the knowledge.http.* config keys.
 func rfpOpenSearchURL(ctx *common.Context) (string, error) {
-	host, err := getConfigString(ctx, confOpenSearchHttpHost)
+	host, err := getConfigString(ctx, confOpenSearchHTTPHost)
 	if err != nil {
 		return "", fmt.Errorf("OpenSearch host not configured")
 	}
-	port, err := getConfigString(ctx, confOpenSearchHttpPort)
+	port, err := getConfigString(ctx, confOpenSearchHTTPPort)
 	if err != nil {
 		return "", fmt.Errorf("OpenSearch port not configured")
 	}
-	osTLS := getConfigBool(ctx, confOpenSearchHttpTLS, true)
+	osTLS := getConfigBool(ctx, confOpenSearchHTTPTLS, true)
 	return buildServiceURL(host, port, "", osTLS), nil
 }
 
@@ -225,7 +225,7 @@ func rfpExtractXLSX(filePath, tikaURL string) ([]rfp.Question, error) {
 	htmlContent, err := tikaClient.ExtractHTML(filePath)
 	stop()
 	if err != nil {
-		return nil, fmt.Errorf("Tika HTML extraction failed: %w\n"+
+		return nil, fmt.Errorf("tika HTML extraction failed: %w\n"+
 			"Ensure the Tika service is running ('rag status')", err)
 	}
 
@@ -445,7 +445,7 @@ func rfpExtractText(filePath, tikaURL string) ([]rfp.Question, error) {
 	htmlRaw, err := tikaClient.ExtractHTML(filePath)
 	stop()
 	if err != nil {
-		return nil, fmt.Errorf("Tika extraction failed: %w\n"+
+		return nil, fmt.Errorf("tika extraction failed: %w\n"+
 			"Ensure the Tika service is running ('rag status')", err)
 	}
 
@@ -493,15 +493,15 @@ func rfpExtractTextTable(filePath string, tikaClient *processing.TikaClient) ([]
 	htmlContent, err := tikaClient.ExtractHTML(filePath)
 	stop()
 	if err != nil {
-		return nil, fmt.Errorf("Tika HTML extraction failed: %w\n"+
+		return nil, fmt.Errorf("tika HTML extraction failed: %w\n"+
 			"Ensure the Tika service is running ('rag status')", err)
 	}
 
 	sheets := rfp.ParseTikaHTMLSheets(htmlContent)
 	if len(sheets) == 0 {
 		return nil, fmt.Errorf("no HTML tables found in document\n" +
-			"Tip: Tika may not recognise PDF tables as HTML <table> elements.\n" +
-			"Re-run and choose 'Numbered / bulleted list or question marks' instead.")
+			"Tip: Tika may not recognize PDF tables as HTML <table> elements.\n" +
+			"Re-run and choose 'Numbered / bulleted list or question marks' instead")
 	}
 
 	maxPage := sheets[len(sheets)-1].PageIndex + 1

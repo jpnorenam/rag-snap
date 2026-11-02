@@ -219,7 +219,7 @@ func (s *Server) collectUploadedItems(r *http.Request) ([]ingestItem, bool, erro
 	}}, force, nil
 }
 
-// runIngest processes each item, updating operation progress and honouring
+// runIngest processes each item, updating operation progress and honoring
 // cancellation between items. Repo items expand into many files server-side.
 func runIngest(ctx context.Context, op *Operation, client *knowledge.OpenSearchClient, tikaURL, index string, items []ingestItem, force bool) error {
 	total := len(items)
@@ -314,7 +314,7 @@ func ingestGiteaRepo(ctx context.Context, client *knowledge.OpenSearchClient, ti
 	}
 	token := os.Getenv("GITEA_TOKEN")
 	if token == "" {
-		return fmt.Errorf("Gitea ingestion requires the GITEA_TOKEN environment variable")
+		return fmt.Errorf("gitea ingestion requires the GITEA_TOKEN environment variable")
 	}
 	entries, _, err := processing.ListGiteaRepoFiles(baseURL, owner, repo, item.Branch, item.Path, item.Extensions, token)
 	if err != nil {
@@ -323,7 +323,7 @@ func ingestGiteaRepo(ctx context.Context, client *knowledge.OpenSearchClient, ti
 	return ingestRepoEntries(ctx, client, tikaURL, index, entries, token, item.Label, force)
 }
 
-// ingestRepoEntries fetches and ingests each repo file, honouring cancellation.
+// ingestRepoEntries fetches and ingests each repo file, honoring cancellation.
 func ingestRepoEntries(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index string, entries []processing.RepoEntry, token, label string, force bool) error {
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {

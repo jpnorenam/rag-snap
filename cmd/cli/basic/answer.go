@@ -18,6 +18,7 @@ type answerCommand struct {
 	*common.Context
 }
 
+// AnswerCommand builds the `answer` command group (batch question answering).
 func AnswerCommand(ctx *common.Context) *cobra.Command {
 	var cmd answerCommand
 	cmd.Context = ctx
@@ -87,7 +88,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 				return cmd.runBuild(buildDoc, outputPath, previewOnly, noRefine)
 			}
 			if analyze {
-				return fmt.Errorf("--analyze applies to --build <document>; pass the document to analyse")
+				return fmt.Errorf("--analyze applies to --build <document>; pass the document to analyze")
 			}
 			if len(contextDocs) > 0 {
 				return fmt.Errorf("--context applies to --build <document> --analyze")
@@ -119,7 +120,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 				return fmt.Errorf("manifest 'prompt_ref' names a stored prompt variant, which requires the ragd daemon; start it and retry, or use an inline 'prompt' instead")
 			}
 
-			apiUrls, err := serverApiUrls(cmd.Context)
+			apiUrls, err := serverAPIURLs(cmd.Context)
 			if err != nil {
 				return fmt.Errorf("getting server API URLs: %w", err)
 			}

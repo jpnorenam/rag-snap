@@ -13,12 +13,15 @@ import (
 	opensearchapi "github.com/opensearch-project/opensearch-go/v4/opensearchapi"
 )
 
+// Ingest status values recorded in a source's metadata.
 const (
-	sourcesIndexName = "rag-snap-metadata"
-
 	StatusProcessing = "processing"
 	StatusCompleted  = "completed"
 	StatusFailed     = "failed"
+)
+
+const (
+	sourcesIndexName = "rag-snap-metadata"
 
 	// DateFormat matches the OpenSearch date mapping format.
 	DateFormat = "2006-01-02 15:04:05"
@@ -149,12 +152,12 @@ func (c *OpenSearchClient) indexSourceMetadata(ctx context.Context, meta SourceM
 	}
 
 	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, url.PathEscape(meta.SourceID))
-	req, err := c.newAuthenticatedRequest(http.MethodPut, path, bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPut, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return fmt.Errorf("error indexing source metadata: %w", err)
 	}
@@ -187,12 +190,12 @@ func (c *OpenSearchClient) updateSourceStatus(ctx context.Context, sourceID, sta
 	}
 
 	path := fmt.Sprintf("/%s/_update/%s", sourcesIndexName, url.PathEscape(sourceID))
-	req, err := c.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return fmt.Errorf("error updating source status: %w", err)
 	}
@@ -213,12 +216,12 @@ func (c *OpenSearchClient) GetSourceMetadata(ctx context.Context, sourceID strin
 
 func (c *OpenSearchClient) getSourceMetadata(ctx context.Context, sourceID string) (*SourceMetadata, error) {
 	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, url.PathEscape(sourceID))
-	req, err := c.newAuthenticatedRequest(http.MethodGet, path, nil)
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return nil, fmt.Errorf("error getting source metadata: %w", err)
 	}
@@ -274,12 +277,12 @@ func (c *OpenSearchClient) listSourceMetadata(ctx context.Context, indexName str
 	}
 
 	path := fmt.Sprintf("/%s/_search", sourcesIndexName)
-	req, err := c.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return nil, fmt.Errorf("error listing source metadata: %w", err)
 	}
@@ -334,11 +337,11 @@ func (c *OpenSearchClient) SourceCountsByIndex(ctx context.Context) (map[string]
 	}
 
 	path := fmt.Sprintf("/%s/_search", sourcesIndexName)
-	req, err := c.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return nil, fmt.Errorf("error aggregating source metadata: %w", err)
 	}
@@ -380,12 +383,12 @@ func (c *OpenSearchClient) DeleteSourceMetadata(ctx context.Context, sourceID st
 
 func (c *OpenSearchClient) deleteSourceMetadata(ctx context.Context, sourceID string) error {
 	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, url.PathEscape(sourceID))
-	req, err := c.newAuthenticatedRequest(http.MethodDelete, path, nil)
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return fmt.Errorf("error deleting source metadata: %w", err)
 	}
@@ -401,11 +404,11 @@ func (c *OpenSearchClient) deleteSourceMetadata(ctx context.Context, sourceID st
 
 // DeleteChunksBySourceID deletes all chunks with the given source_id from a KNN index.
 // Returns the number of deleted documents.
-func (c *OpenSearchClient) DeleteChunksBySourceID(ctx context.Context, indexName string, sourceID string) (int, error) {
+func (c *OpenSearchClient) DeleteChunksBySourceID(ctx context.Context, indexName, sourceID string) (int, error) {
 	return c.deleteChunksBySourceID(ctx, indexName, sourceID)
 }
 
-func (c *OpenSearchClient) deleteChunksBySourceID(ctx context.Context, indexName string, sourceID string) (int, error) {
+func (c *OpenSearchClient) deleteChunksBySourceID(ctx context.Context, indexName, sourceID string) (int, error) {
 	query := map[string]any{
 		"query": map[string]any{
 			"term": map[string]any{
@@ -420,12 +423,12 @@ func (c *OpenSearchClient) deleteChunksBySourceID(ctx context.Context, indexName
 	}
 
 	path := fmt.Sprintf("/%s/_delete_by_query", indexName)
-	req, err := c.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return 0, fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return 0, fmt.Errorf("error deleting chunks: %w", err)
 	}
@@ -463,12 +466,12 @@ func (c *OpenSearchClient) DeleteSourceMetadataByIndex(ctx context.Context, inde
 	}
 
 	path := fmt.Sprintf("/%s/_delete_by_query", sourcesIndexName)
-	req, err := c.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return 0, fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return 0, fmt.Errorf("error deleting source metadata: %w", err)
 	}

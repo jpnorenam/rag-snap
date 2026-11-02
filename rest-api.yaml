@@ -114,7 +114,7 @@ definitions:
         description: |-
             chatStartRequest is the body of POST /1.0/chat. All fields are optional: the
             model falls back to config/server lookup, and the active bases and
-            temperature default to the chat REPL's behaviour. Resume, when set, seeds the
+            temperature default to the chat REPL's behavior. Resume, when set, seeds the
             session from the saved chat with that id (its transcript and active bases).
         properties:
             bases:
@@ -323,7 +323,7 @@ info:
 
         ragd exposes knowledge management, hybrid search, interactive chat, and batch
         answering over a local unix socket. Every JSON response uses a uniform
-        sync/async/error envelope; long-running work is modelled as operations with a
+        sync/async/error envelope; long-running work is modeled as operations with a
         companion events websocket. Local access is authenticated by socket peer
         credentials (root or a member of the configured group); there is no
         per-route authorization.
@@ -1063,7 +1063,7 @@ paths:
         post:
             description: |-
                 Resolves a Drive folder or file URL into the list of discovered .tar.gz
-                archives, distinguishing not found, no access, and unrecognised-URL errors.
+                archives, distinguishing not found, no access, and unrecognized-URL errors.
             operationId: gdriveResolve
             parameters:
                 - in: body

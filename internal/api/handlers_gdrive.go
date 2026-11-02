@@ -182,7 +182,7 @@ type gdriveResolveView struct {
 // Resolve a Google Drive URL into archives.
 //
 // Resolves a Drive folder or file URL into the list of discovered .tar.gz
-// archives, distinguishing not found, no access, and unrecognised-URL errors.
+// archives, distinguishing not found, no access, and unrecognized-URL errors.
 //
 //	Responses:
 //	  200: syncResponse

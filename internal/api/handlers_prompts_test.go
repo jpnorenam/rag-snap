@@ -19,7 +19,7 @@ import (
 // promptRequest issues a request against the prompt endpoints over the unix
 // socket (where the test runner authenticates as a trusted peer) and returns the
 // status code and decoded envelope.
-func promptRequest(t *testing.T, sock, method, path string, body any) (int, map[string]any) {
+func promptRequest(t *testing.T, sock, method, path string, body any) (status int, envelope map[string]any) {
 	t.Helper()
 
 	var reader io.Reader
@@ -216,7 +216,7 @@ func TestPromptsRequireAuthOnLoopback(t *testing.T) {
 	}
 
 	// With the daemon's token: admitted.
-	req, err := http.NewRequest(http.MethodGet, base+"/1.0/prompts", nil)
+	req, err := http.NewRequest(http.MethodGet, base+"/1.0/prompts", http.NoBody)
 	if err != nil {
 		t.Fatalf("building request: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestCustomChatPromptReachesInference(t *testing.T) {
 // uncustomized, the customization otherwise — is sent as the system message
 // regardless of retrieval availability. The prompts API and the session must
 // never disagree about what runs (the bug behind the original "prompt ignored
-// without retrieval" behaviour).
+// without retrieval" behavior).
 func TestChatPromptWithoutRetrieval(t *testing.T) {
 	systemPrompts := make(chan string, 4)
 	inference := capturingInference(t, systemPrompts)
@@ -557,15 +557,15 @@ func TestVariantEndpointsLifecycle(t *testing.T) {
 	}
 
 	// Duplicate create → 409.
-	if status, _ := promptRequest(t, sock, http.MethodPost, base,
-		map[string]string{"name": "presales-call", "value": "again"}); status != http.StatusConflict {
-		t.Errorf("duplicate create: status = %d, want 409", status)
+	if dupStatus, _ := promptRequest(t, sock, http.MethodPost, base,
+		map[string]string{"name": "presales-call", "value": "again"}); dupStatus != http.StatusConflict {
+		t.Errorf("duplicate create: status = %d, want 409", dupStatus)
 	}
 
 	// Reserved name → 400.
-	if status, _ := promptRequest(t, sock, http.MethodPost, base,
-		map[string]string{"name": "default", "value": "x"}); status != http.StatusBadRequest {
-		t.Errorf("reserved-name create: status = %d, want 400", status)
+	if reservedStatus, _ := promptRequest(t, sock, http.MethodPost, base,
+		map[string]string{"name": "default", "value": "x"}); reservedStatus != http.StatusBadRequest {
+		t.Errorf("reserved-name create: status = %d, want 400", reservedStatus)
 	}
 
 	// List shows the variant.
@@ -583,10 +583,10 @@ func TestVariantEndpointsLifecycle(t *testing.T) {
 	}
 
 	// Save a new version.
-	if status, env := promptRequest(t, sock, http.MethodPut, base+"/presales-call",
-		map[string]string{"value": "v2 text"}); status != http.StatusOK {
-		t.Errorf("PUT save: status = %d, want 200", status)
-	} else if v := decodeVariantView(t, env); v.Version != 2 {
+	if saveStatus, saveEnv := promptRequest(t, sock, http.MethodPut, base+"/presales-call",
+		map[string]string{"value": "v2 text"}); saveStatus != http.StatusOK {
+		t.Errorf("PUT save: status = %d, want 200", saveStatus)
+	} else if v := decodeVariantView(t, saveEnv); v.Version != 2 {
 		t.Errorf("saved head version = %d, want 2", v.Version)
 	}
 

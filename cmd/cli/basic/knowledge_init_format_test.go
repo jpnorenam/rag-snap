@@ -21,7 +21,7 @@ func TestPrintModelIDFormat(t *testing.T) {
 
 	for label, id := range map[string]string{"Embedding": "aB3-x_9", "Rerank": "Zz9"} {
 		re := regexp.MustCompile(`(?m)^` + label + ` model ID: ([A-Za-z0-9_-]+)\s*$`)
-		if m := re.FindStringSubmatch(string(out)); m == nil || m[1] != id {
+		if m := re.FindStringSubmatch(string(out)); len(m) < 2 || m[1] != id {
 			t.Errorf("%s line not in the parsed format:\n%s", label, out)
 		}
 	}

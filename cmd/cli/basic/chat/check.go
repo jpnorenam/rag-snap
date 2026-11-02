@@ -356,7 +356,7 @@ func (r *CheckResult) checkPrompt() {
 // Phrasings that evidence each prompt assertion.
 //
 // These are calibrated against the hand-written prompts in real use, not against the
-// wording this codebase generates. A detector that only recognised generated phrasing
+// wording this codebase generates. A detector that only recognized generated phrasing
 // would warn on almost every hand-written manifest, and an assertion that fires
 // constantly teaches operators to ignore it — which is worse than not checking.
 var (

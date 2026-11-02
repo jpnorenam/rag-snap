@@ -101,13 +101,13 @@ Follow the contract's "questions[]" section exactly. The three rules that matter
 
 - ONE QUESTION PER ENTRY. A cell, row or bullet list often packs several distinct questions together, separated by bullet markers (_ - •), newlines, semicolons, or a "?" mid-text. Each becomes its own entry. A cell left whole produces one crammed answer that addresses its first clause and neglects the rest, so splitting is not tidying — it decides whether those requirements get answered at all. Do not emit an entry for a header that merely labels the cells beneath it.
 
-- EVERY COLUMN THAT MAKES A DEMAND. A table row may carry its requirement in more than one column — evidence, validation proof, acceptance criteria, deliverables. A distinct demand in any of these is its own question, even when the primary requirement column says nothing of it. Put the row id and the column heading in "source" (e.g. "T4 — Evidence / Validation proof"). Columns that only label, number, categorise or score a row are not questions.
+- EVERY COLUMN THAT MAKES A DEMAND. A table row may carry its requirement in more than one column — evidence, validation proof, acceptance criteria, deliverables. A distinct demand in any of these is its own question, even when the primary requirement column says nothing of it. Put the row id and the column heading in "source" (e.g. "T4 — Evidence / Validation proof"). Columns that only label, number, categorize or score a row are not questions.
 
-- ANSWER FIELDS ARE NOT QUESTIONS. Columns the respondent fills in — a compliance status, the bidder's product or component, whether it is included in a licence, a proposal cross-reference, comments, remarks or qualifications — are where the answer goes, not demands. Never emit one question per answer field: a row with five answer columns is still split only by the requirements it states, and the answering prompt fills every field from one answer.
+- ANSWER FIELDS ARE NOT QUESTIONS. Columns the respondent fills in — a compliance status, the bidder's product or component, whether it is included in a license, a proposal cross-reference, comments, remarks or qualifications — are where the answer goes, not demands. Never emit one question per answer field: a row with five answer columns is still split only by the requirements it states, and the answering prompt fills every field from one answer.
 
 - RANGED ROWS KEEP THEIR RANGE. When one row covers a range of ids the document never defines individually ("FR_11–FR_15"), keep the range in the id ("FR_11-15-a", "FR_11-15-b") and split by requirement. Never assign requirements to individual numbers inside the range: that is inventing ids, and guessing which requirement is which number.
 
-- MAKE EACH QUESTION STAND ALONE. The answering model sees one question with no document, no neighbouring rows and no section header. Where the source is shorthand ("_ control over encryption keys."), expand it into a complete question meaning exactly what the shorthand meant. Add only what the shorthand implied; never invent a requirement, and never split one question into two by inventing a second clause. The exception is a compliance matrix whose rows are single named capabilities ("SR-IOV", "CPU Pinning") — there the term is the requirement, so leave it alone.
+- MAKE EACH QUESTION STAND ALONE. The answering model sees one question with no document, no neighboring rows and no section header. Where the source is shorthand ("_ control over encryption keys."), expand it into a complete question meaning exactly what the shorthand meant. Add only what the shorthand implied; never invent a requirement, and never split one question into two by inventing a second clause. The exception is a compliance matrix whose rows are single named capabilities ("SR-IOV", "CPU Pinning") — there the term is the requirement, so leave it alone.
 
 - IDS MUST BE SHORT AND ROUTABLE. Use the document's ids where they exist. Where they do not, assign a short section code and suffix each question within it (R02-a, R02-b, R02-c), and put the full section title in "source". Never use a long section title as an id.
 
@@ -364,7 +364,7 @@ const digestTextLimit = 300
 // The text is the point. Given ids alone, the strategy call routed by the document's
 // own clause numbering and attached a context to the wrong question when the extraction
 // pass had numbered clauses differently (MeitY's T4-iii). Grouped by source, so the
-// section structure a domains list is organised around stays visible.
+// section structure a domains list is organized around stays visible.
 func questionIDDigest(questions []chat.BatchQuestion) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "The %d questions the extraction pass produced. Your domains patterns must match these ids, and each context must concern the questions its pattern matches:\n\n", len(questions))

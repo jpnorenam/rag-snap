@@ -40,7 +40,9 @@ type DriveArchive struct {
 type DriveURLKind int
 
 const (
+	// DriveKindFolder is a Drive folder share link.
 	DriveKindFolder DriveURLKind = iota
+	// DriveKindFile is a single-file Drive share link.
 	DriveKindFile
 )
 
@@ -71,7 +73,7 @@ func ParseDriveURL(rawURL string) (DriveURLKind, string, error) {
 	if m := reDriveIDParam.FindStringSubmatch(rawURL); m != nil {
 		return DriveKindFile, m[1], nil
 	}
-	return 0, "", fmt.Errorf("unrecognised Google Drive URL %q — expected a folder or file share link", rawURL)
+	return 0, "", fmt.Errorf("unrecognized Google Drive URL %q — expected a folder or file share link", rawURL)
 }
 
 // driveFilesPage is the JSON envelope from Drive API files.list.
@@ -99,7 +101,7 @@ func (m driveFileMeta) toArchive() DriveArchive {
 
 // driveGET performs an authenticated GET against the Drive API.
 func driveGET(ctx context.Context, client *http.Client, apiURL, accessToken string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil) //nolint:gosec
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, http.NoBody) //nolint:gosec // apiURL is built from the fixed Drive API base
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)
 	}
@@ -135,7 +137,7 @@ func ListDriveArchives(ctx context.Context, folderID, accessToken string) ([]Dri
 		if resp.StatusCode != http.StatusOK {
 			body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 			resp.Body.Close()
-			return nil, fmt.Errorf("Drive API returned HTTP %d: %s",
+			return nil, fmt.Errorf("the Drive API returned HTTP %d: %s",
 				resp.StatusCode, strings.TrimSpace(string(body)))
 		}
 
@@ -176,7 +178,7 @@ func DownloadDriveArchive(ctx context.Context, archive DriveArchive, accessToken
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return "", func() {}, fmt.Errorf("Drive returned HTTP %d for %q: %s",
+		return "", func() {}, fmt.Errorf("the Drive API returned HTTP %d for %q: %s",
 			resp.StatusCode, archive.Name, strings.TrimSpace(string(body)))
 	}
 
@@ -209,7 +211,7 @@ func GetDriveFile(ctx context.Context, fileID, accessToken string) (DriveArchive
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return DriveArchive{}, fmt.Errorf("Drive API returned HTTP %d: %s",
+		return DriveArchive{}, fmt.Errorf("the Drive API returned HTTP %d: %s",
 			resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 
@@ -248,7 +250,7 @@ func GetDriveAccountEmail(ctx context.Context, accessToken string) (string, erro
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
-		return "", fmt.Errorf("Drive API returned HTTP %d: %s",
+		return "", fmt.Errorf("the Drive API returned HTTP %d: %s",
 			resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 

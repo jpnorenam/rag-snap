@@ -54,7 +54,7 @@ func startTestServer(t *testing.T, urls map[string]string) (string, *Server) {
 }
 
 // startTestServerWithConfig is startTestServer with seeded config keys, given as
-// "key=value" lines (the file-config format). Use it for handlers whose behaviour
+// "key=value" lines (the file-config format). Use it for handlers whose behavior
 // depends on config — e.g. retrieval is enabled only when the embedding model key
 // is set, which in turn is what makes a chat session apply its system prompt.
 func startTestServerWithConfig(t *testing.T, urls map[string]string, configLines []string) (string, *Server) {

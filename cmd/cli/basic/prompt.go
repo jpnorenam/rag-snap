@@ -129,8 +129,8 @@ func runPromptInitDaemon(dc *apiclient.Client) error {
 
 	// A customized prompt can be edited or put back to its built-in default.
 	if current.Customized {
-		reset, ok, err := askResetOrEdit(selected)
-		if err != nil || !ok {
+		reset, confirmed, err := askResetOrEdit(selected)
+		if err != nil || !confirmed {
 			return err
 		}
 		if reset {
@@ -302,7 +302,7 @@ func runForm(form *huh.Form) (ok bool, err error) {
 
 // askResetOrEdit offers to reset a customized prompt instead of editing it.
 // ok is false when the user cancelled.
-func askResetOrEdit(key promptKey) (reset bool, ok bool, err error) {
+func askResetOrEdit(key promptKey) (reset, ok bool, err error) {
 	form := huh.NewForm(
 		huh.NewGroup(
 			huh.NewSelect[bool]().

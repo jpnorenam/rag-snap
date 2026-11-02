@@ -11,16 +11,16 @@ type snapInfoResponse struct {
 		} `json:"prices"`
 		Publisher struct {
 			DisplayName string `json:"display-name"`
-			Id          string `json:"id"`
+			ID          string `json:"id"`
 			Username    string `json:"username"`
 			Validation  string `json:"validation"`
 		} `json:"publisher"`
-		SnapId   string `json:"snap-id"`
-		StoreUrl string `json:"store-url"`
+		SnapID   string `json:"snap-id"`
+		StoreURL string `json:"store-url"`
 		Summary  string `json:"summary"`
 		Title    string `json:"title"`
 	} `json:"snap"`
-	SnapId string `json:"snap-id"`
+	SnapID string `json:"snap-id"`
 }
 
 type snapRefreshRequest struct {
@@ -30,7 +30,7 @@ type snapRefreshRequest struct {
 }
 
 type snapRefreshContext struct {
-	SnapId          string `json:"snap-id"`
+	SnapID          string `json:"snap-id"`
 	InstanceKey     string `json:"instance-key"`
 	Revision        int    `json:"revision"`
 	TrackingChannel string `json:"tracking-channel"`
@@ -39,7 +39,7 @@ type snapRefreshContext struct {
 type snapRefreshActions struct {
 	Action      string `json:"action"`
 	InstanceKey string `json:"instance-key"`
-	SnapId      string `json:"snap-id"`
+	SnapID      string `json:"snap-id"`
 	Revision    int    `json:"revision"`
 }
 
@@ -53,7 +53,7 @@ type snapRefreshResponse struct {
 		Snap        struct {
 			Resources []snapResources `json:"resources"`
 		} `json:"snap"`
-		SnapId string `json:"snap-id"`
+		SnapID string `json:"snap-id"`
 	} `json:"results"`
 }
 
@@ -64,7 +64,7 @@ type snapResources struct {
 	Download      struct {
 		Sha3384 string `json:"sha3-384"`
 		Size    int64  `json:"size"`
-		Url     string `json:"url"`
+		URL     string `json:"url"`
 	} `json:"download"`
 	Name     string `json:"name"`
 	Revision int    `json:"revision"`

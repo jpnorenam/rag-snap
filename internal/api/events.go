@@ -38,12 +38,12 @@ func newEventsHub() *eventsHub {
 
 // subscribe registers a subscriber for the given event types (empty = all) and
 // returns it along with an unsubscribe function.
-func (h *eventsHub) subscribe(types []string) (*subscriber, func()) {
+func (h *eventsHub) subscribe(types []string) (sub *subscriber, unsubscribe func()) {
 	set := map[string]bool{}
 	for _, t := range types {
 		set[t] = true
 	}
-	sub := &subscriber{ch: make(chan event, 64), types: set}
+	sub = &subscriber{ch: make(chan event, 64), types: set}
 	h.mu.Lock()
 	h.subs[sub] = struct{}{}
 	h.mu.Unlock()

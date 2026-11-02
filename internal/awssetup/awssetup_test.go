@@ -339,7 +339,7 @@ esac`
 }
 
 func TestEC2ImageDiscoveryAndReuse(t *testing.T) {
-	// The catalogue returns an image whose name matches the requested release, so a
+	// The catalog returns an image whose name matches the requested release, so a
 	// selection for 26.04 is exercised as well as 24.04.
 	discover := func(t *testing.T, release string) (string, string, error) {
 		dir := t.TempDir()
@@ -624,7 +624,7 @@ func destroyFixture(t *testing.T) (dir, prelude string) {
 		save_env "$SETTINGS" "${SETTINGS_KEYS[@]}"; save_env "$SECRETS" "${SECRET_KEYS[@]}"
 		write_credentials
 		`
-	// Materialise the files the way a real run would, so tests can read them before
+	// Materialize the files the way a real run would, so tests can read them before
 	// running destroy.
 	if out, err := bashIn(t, "opensearch-on-aws.sh", "", prelude, "D="+dir); err != nil {
 		t.Fatalf("fixture setup failed: %v\n%s", err, out)

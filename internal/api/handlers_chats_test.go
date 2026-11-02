@@ -380,7 +380,7 @@ func getMeta(t *testing.T, client *http.Client, path string, out any) {
 // statusOf issues a request and returns the HTTP status code.
 func statusOf(t *testing.T, client *http.Client, method, path string) int {
 	t.Helper()
-	req, err := http.NewRequest(method, "http://unix"+path, nil)
+	req, err := http.NewRequest(method, "http://unix"+path, http.NoBody)
 	if err != nil {
 		t.Fatalf("new request %s %s: %v", method, path, err)
 	}

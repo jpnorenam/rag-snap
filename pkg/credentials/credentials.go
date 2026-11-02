@@ -51,7 +51,7 @@ func Path() string {
 // to an empty string, wins without touching the file. The file is read and
 // validated only when the fallback is enabled and the variable is unset; a
 // missing file is not an error.
-func Lookup(name string) (string, bool, error) {
+func Lookup(name string) (value string, found bool, err error) {
 	if v, ok := os.LookupEnv(name); ok {
 		return v, true, nil
 	}

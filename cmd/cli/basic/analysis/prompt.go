@@ -43,7 +43,7 @@ func (f OpenStackFlavour) Other() string {
 	return ""
 }
 
-// Valid reports whether f is a recognised value.
+// Valid reports whether f is a recognized value.
 func (f OpenStackFlavour) Valid() bool {
 	return f == OpenStackNotApplicable || f == OpenStackSunbeam || f == OpenStackCharmed
 }
@@ -90,7 +90,7 @@ func (iv Interview) Validate() error {
 		return fmt.Errorf("answer length mode must be %q or %q, got %q", LengthHard, LengthSoft, iv.AnswerLimit)
 	}
 	if !iv.OpenStack.Valid() {
-		return fmt.Errorf("unrecognised openstack flavour %q", iv.OpenStack)
+		return fmt.Errorf("unrecognized openstack flavour %q", iv.OpenStack)
 	}
 	return nil
 }

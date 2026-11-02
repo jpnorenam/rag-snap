@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+// Config keys for the kapa.ai integration, and the pseudo-index name its hits
+// carry so they can be told apart from local OpenSearch hits.
 const (
 	ConfKapaAPIKey    = "kapa.api.key"
 	ConfKapaProjectID = "kapa.project.id"
@@ -28,6 +30,7 @@ type KapaClient struct {
 	httpClient *http.Client
 }
 
+// NewKapaClient returns a client for the given kapa.ai project and API key.
 func NewKapaClient(projectID, apiKey string) *KapaClient {
 	return &KapaClient{
 		projectID:  projectID,
@@ -77,7 +80,7 @@ func (c *KapaClient) ListSourceGroups(ctx context.Context) ([]SourceGroup, error
 	var groups []SourceGroup
 
 	for nextURL != "" {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, http.NoBody)
 		if err != nil {
 			return nil, fmt.Errorf("kapa: creating sources request: %w", err)
 		}
@@ -110,7 +113,7 @@ func (c *KapaClient) ListSourceGroups(ctx context.Context) ([]SourceGroup, error
 				}
 				if _, ok := seen[g.ID]; !ok {
 					seen[g.ID] = struct{}{}
-					groups = append(groups, SourceGroup{ID: g.ID, Name: g.Name})
+					groups = append(groups, SourceGroup(g))
 				}
 			}
 		}

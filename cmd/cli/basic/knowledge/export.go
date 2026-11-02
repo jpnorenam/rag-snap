@@ -53,7 +53,7 @@ func findElasticdump() (bin, nodeDir string, err error) {
 // runElasticdump executes elasticdump with the given args, streaming stdout/stderr live.
 // nodeDir, when non-empty, is prepended to PATH so the elasticdump shebang can resolve node.
 // NODE_TLS_REJECT_UNAUTHORIZED=0 disables TLS verification at the Node.js runtime level,
-// matching the Go client's InsecureSkipVerify behaviour for self-signed OpenSearch certs.
+// matching the Go client's InsecureSkipVerify behavior for self-signed OpenSearch certs.
 func runElasticdump(ctx context.Context, bin, nodeDir string, args []string, stdout, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Stdout = stdout
@@ -94,7 +94,7 @@ func ExportKnowledgeBase(ctx context.Context, client *OpenSearchClient, kbName s
 		chunkCount += s.ChunkCount
 	}
 
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return fmt.Errorf("creating output directory: %w", err)
 	}
 
@@ -139,7 +139,7 @@ func ExportKnowledgeBase(ctx context.Context, client *OpenSearchClient, kbName s
 	sourcesPath := filepath.Join(outputDir, "sources.json")
 	fmt.Printf("Exporting source metadata to %s...\n", sourcesPath)
 	metaInputURL := client.AuthenticatedURL("/" + sourcesIndexName)
-	searchBody := fmt.Sprintf(`{"query":{"term":{"index_name":"%s"}}}`, indexName)
+	searchBody := fmt.Sprintf(`{"query":{"term":{"index_name":%q}}}`, indexName)
 	if err := runElasticdump(ctx, bin, nodeDir, []string{
 		"--input=" + metaInputURL,
 		"--output=" + sourcesPath,
@@ -165,7 +165,7 @@ func ExportKnowledgeBase(ctx context.Context, client *OpenSearchClient, kbName s
 	if err != nil {
 		return fmt.Errorf("marshaling manifest: %w", err)
 	}
-	if err := os.WriteFile(manifestPath, manifestBytes, 0644); err != nil {
+	if err := os.WriteFile(manifestPath, manifestBytes, 0o644); err != nil {
 		return fmt.Errorf("writing manifest: %w", err)
 	}
 

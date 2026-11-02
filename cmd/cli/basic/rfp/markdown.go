@@ -115,7 +115,7 @@ func collapseBlankLines(s string) string {
 	return strings.Join(out, "\n")
 }
 
-// RenderSheetsMarkdown renders parsed tables as Markdown, one labelled section per
+// RenderSheetsMarkdown renders parsed tables as Markdown, one labeled section per
 // table, for conveyance to a document-capable model.
 //
 // This is the deliberate opposite of ExtractFromTable, which takes a single column by
