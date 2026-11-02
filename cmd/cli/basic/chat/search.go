@@ -118,7 +118,7 @@ func formatSearchResults(hits []knowledge.SearchHit) string {
 
 		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", i+1, hit.Score, name, knowledge.LabelTag(hit.Label))
 		fmt.Fprintln(&b, color.New(color.Bold).Sprint(header))
-		fmt.Fprintf(&b, "    source: %s   created: %s\n", hit.SourceID, hit.CreatedAt)
+		fmt.Fprintf(&b, "    source: %s   created: %s\n", knowledge.SourceLine(hit.Citation.Label, hit.Citation.Href, hit.SourceID), hit.CreatedAt)
 		fmt.Fprintln(&b, color.HiBlackString("    "+strings.Repeat("─", 56)))
 		b.WriteString(hit.Content)
 		b.WriteString("\n")

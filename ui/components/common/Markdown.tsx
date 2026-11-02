@@ -1,6 +1,7 @@
 "use client";
 
 import { createElement, type ReactNode } from "react";
+import type { CitedSource } from "@/lib/types";
 
 // Markdown is a small, dependency-free renderer for the subset of Markdown the
 // chat model emits: headings, bold/italic/strikethrough, inline code, fenced
@@ -13,22 +14,29 @@ import { createElement, type ReactNode } from "react";
 // hrefs are still sanitized to http(s)/mailto/relative to block javascript:
 // URLs. Partial input (a half-streamed table or an unclosed code fence) degrades
 // to literal text or a best-effort block rather than throwing.
+//
+// When a `citations` map is given, `[n]` citation markers whose n is in the map
+// render as source chips (linked when the source has a link); markers for
+// unknown sources stay literal text.
+
+export type CitationMap = Map<number, CitedSource>;
 
 interface Props {
   content: string;
   className?: string;
+  citations?: CitationMap;
 }
 
-export default function Markdown({ content, className }: Props) {
+export default function Markdown({ content, className, citations }: Props) {
   const classes = ["md", className].filter(Boolean).join(" ");
-  return <div className={classes}>{parseBlocks(content)}</div>;
+  return <div className={classes}>{parseBlocks(content, citations)}</div>;
 }
 
 // ---------------------------------------------------------------------------
 // Block parsing
 // ---------------------------------------------------------------------------
 
-function parseBlocks(input: string): ReactNode[] {
+function parseBlocks(input: string, cites?: CitationMap): ReactNode[] {
   const lines = input.replace(/\r\n?/g, "\n").split("\n");
   const blocks: ReactNode[] = [];
   let i = 0;
@@ -69,7 +77,7 @@ function parseBlocks(input: string): ReactNode[] {
         createElement(
           `h${level}`,
           { key: key++, className: "md__heading" },
-          ...parseInline(heading[2].replace(/\s+#+\s*$/, ""))
+          ...parseInline(heading[2].replace(/\s+#+\s*$/, ""), cites)
         )
       );
       i++;
@@ -98,7 +106,7 @@ function parseBlocks(input: string): ReactNode[] {
             <thead>
               <tr>
                 {header.map((cell, c) => (
-                  <th key={c}>{parseInline(cell)}</th>
+                  <th key={c}>{parseInline(cell, cites)}</th>
                 ))}
               </tr>
             </thead>
@@ -106,7 +114,7 @@ function parseBlocks(input: string): ReactNode[] {
               {rows.map((row, r) => (
                 <tr key={r}>
                   {header.map((_, c) => (
-                    <td key={c}>{parseInline(row[c] ?? "")}</td>
+                    <td key={c}>{parseInline(row[c] ?? "", cites)}</td>
                   ))}
                 </tr>
               ))}
@@ -126,7 +134,7 @@ function parseBlocks(input: string): ReactNode[] {
       }
       blocks.push(
         <blockquote key={key++} className="md__quote">
-          {parseBlocks(quoted.join("\n"))}
+          {parseBlocks(quoted.join("\n"), cites)}
         </blockquote>
       );
       continue;
@@ -142,7 +150,7 @@ function parseBlocks(input: string): ReactNode[] {
       blocks.push(
         <ul key={key++} className="md__list">
           {items.map((it, n) => (
-            <li key={n}>{parseInline(it)}</li>
+            <li key={n}>{parseInline(it, cites)}</li>
           ))}
         </ul>
       );
@@ -159,7 +167,7 @@ function parseBlocks(input: string): ReactNode[] {
       blocks.push(
         <ol key={key++} className="md__list">
           {items.map((it, n) => (
-            <li key={n}>{parseInline(it)}</li>
+            <li key={n}>{parseInline(it, cites)}</li>
           ))}
         </ol>
       );
@@ -175,7 +183,7 @@ function parseBlocks(input: string): ReactNode[] {
     }
     blocks.push(
       <p key={key++} className="md__p">
-        {parseInline(para.join(" "))}
+        {parseInline(para.join(" "), cites)}
       </p>
     );
   }
@@ -227,14 +235,14 @@ interface InlineMatch {
   render: (key: number) => ReactNode;
 }
 
-function parseInline(text: string): ReactNode[] {
+function parseInline(text: string, cites?: CitationMap): ReactNode[] {
   const out: ReactNode[] = [];
   let rest = text;
   let key = 0;
   let guard = 0;
 
   while (rest.length > 0 && guard++ < 5000) {
-    const match = firstInlineMatch(rest);
+    const match = firstInlineMatch(rest, cites);
     if (!match) {
       out.push(rest);
       break;
@@ -247,8 +255,19 @@ function parseInline(text: string): ReactNode[] {
   return out;
 }
 
-function firstInlineMatch(text: string): InlineMatch | null {
+function firstInlineMatch(text: string, cites?: CitationMap): InlineMatch | null {
   const matchers: Array<{ re: RegExp; make: (m: RegExpExecArray, key: number) => ReactNode }> = [
+    {
+      // Citation marker: [n], not glued to a preceding word ("arr[1]"). Listed
+      // before links so "[1](…)" is a marker followed by literal text, never a
+      // link posing as a citation. Unknown markers render literally.
+      re: /(?<!\w)\[(\d{1,3})\]/,
+      make: (m, key) => {
+        const source = cites?.get(Number(m[1]));
+        if (!source) return <span key={key}>{m[0]}</span>;
+        return <CitationChip key={key} source={source} />;
+      },
+    },
     {
       // Inline code: backticks; content is literal (no nested parsing).
       re: /`([^`]+)`/,
@@ -266,28 +285,28 @@ function firstInlineMatch(text: string): InlineMatch | null {
         if (!href) return <span key={key}>{m[0]}</span>;
         return (
           <a key={key} href={href} target="_blank" rel="noreferrer noopener">
-            {parseInline(m[1])}
+            {parseInline(m[1], cites)}
           </a>
         );
       },
     },
     {
       re: /\*\*([^]+?)\*\*/,
-      make: (m, key) => <strong key={key}>{parseInline(m[1])}</strong>,
+      make: (m, key) => <strong key={key}>{parseInline(m[1], cites)}</strong>,
     },
     {
       re: /__([^]+?)__/,
-      make: (m, key) => <strong key={key}>{parseInline(m[1])}</strong>,
+      make: (m, key) => <strong key={key}>{parseInline(m[1], cites)}</strong>,
     },
     {
       re: /~~([^]+?)~~/,
-      make: (m, key) => <del key={key}>{parseInline(m[1])}</del>,
+      make: (m, key) => <del key={key}>{parseInline(m[1], cites)}</del>,
     },
     {
       // Italic uses *…* only. Underscore-italic is deliberately not supported:
       // this is a technical tool and _ appears inside snake_case identifiers.
       re: /\*([^*\n]+?)\*/,
-      make: (m, key) => <em key={key}>{parseInline(m[1])}</em>,
+      make: (m, key) => <em key={key}>{parseInline(m[1], cites)}</em>,
     },
   ];
 
@@ -299,6 +318,33 @@ function firstInlineMatch(text: string): InlineMatch | null {
     }
   }
   return best;
+}
+
+// CitationChip renders one cited source as a compact chip showing its marker
+// number. The source label is its accessible name and tooltip; a source with a
+// link opens it in a new tab.
+function CitationChip({ source }: { source: CitedSource }) {
+  const href = source.href ? sanitizeHref(source.href) : null;
+  const body = (
+    <>
+      <span className="p-chip__value" aria-hidden="true">
+        {source.marker}
+      </span>
+      <span className="u-off-screen">Source {source.marker}: {source.label}</span>
+    </>
+  );
+  if (href) {
+    return (
+      <a className="p-chip md__cite" href={href} target="_blank" rel="noopener noreferrer" title={source.label}>
+        {body}
+      </a>
+    );
+  }
+  return (
+    <span className="p-chip md__cite" title={source.label}>
+      {body}
+    </span>
+  );
 }
 
 // sanitizeHref allows only http(s), mailto, and same-origin/relative/anchor

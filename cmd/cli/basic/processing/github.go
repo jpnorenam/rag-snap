@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,23 @@ type RepoEntry struct {
 	Path     string // file path within the repo (e.g. "docs/overview.md")
 	RawURL   string // URL to fetch the raw file content
 	SourceID string // repo-qualified id used for source metadata (see RepoSourceID)
+	WebURL   string // browsable link to the file at the fetched branch, recorded as the source URI
+}
+
+// GitHubWebURL returns the github.com link to a file at a branch.
+func GitHubWebURL(owner, repo, branch, path string) string {
+	return fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s",
+		escapeSegments(owner), escapeSegments(repo), escapeSegments(branch), escapeSegments(path))
+}
+
+// escapeSegments path-escapes each "/"-separated segment, keeping the slashes,
+// so branch names like "release/1.0" and nested file paths stay navigable.
+func escapeSegments(p string) string {
+	segs := strings.Split(p, "/")
+	for i, seg := range segs {
+		segs[i] = url.PathEscape(seg)
+	}
+	return strings.Join(segs, "/")
 }
 
 // RepoSourceID returns the source id for a file within a repository: the
@@ -56,8 +74,8 @@ func ListGitHubRepoFiles(owner, repo, branch, pathFilter string, extensions []st
 		}
 	}
 
-	url := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1", gitHubAPIBase, owner, repo, branch)
-	body, err := githubGET(url, token)
+	treeURL := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1", gitHubAPIBase, owner, repo, branch)
+	body, err := githubGET(treeURL, token)
 	if err != nil {
 		return nil, false, fmt.Errorf("fetching repository tree: %w", err)
 	}
@@ -94,6 +112,7 @@ func ListGitHubRepoFiles(owner, repo, branch, pathFilter string, extensions []st
 			Path:     item.Path,
 			RawURL:   fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s/%s", owner, repo, branch, item.Path),
 			SourceID: RepoSourceID(owner+"/"+repo, item.Path),
+			WebURL:   GitHubWebURL(owner, repo, branch, item.Path),
 		})
 	}
 	return entries, treeResp.Truncated, nil
@@ -112,7 +131,7 @@ func FetchRepoFile(rawURL, filePath, token string) (tempPath string, cleanup fun
 	if ext == "" {
 		ext = ".txt"
 	}
-	tmpFile, err := os.CreateTemp("", "rag-github-*"+ext)
+	tmpFile, err := os.CreateTemp("", TempPrefixRepo+"*"+ext)
 	if err != nil {
 		return "", nil, fmt.Errorf("creating temp file: %w", err)
 	}
@@ -137,8 +156,8 @@ func FetchRepoFile(rawURL, filePath, token string) (tempPath string, cleanup fun
 
 // fetchDefaultBranch returns the default branch name for the given repository.
 func fetchDefaultBranch(owner, repo, token string) (string, error) {
-	url := fmt.Sprintf("%s/repos/%s/%s", gitHubAPIBase, owner, repo)
-	body, err := githubGET(url, token)
+	repoURL := fmt.Sprintf("%s/repos/%s/%s", gitHubAPIBase, owner, repo)
+	body, err := githubGET(repoURL, token)
 	if err != nil {
 		return "", err
 	}

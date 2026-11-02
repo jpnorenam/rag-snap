@@ -148,6 +148,9 @@ type BatchResult struct {
 	// pattern. Empty when the question resolved to no domain. It is the routing
 	// audit trail: which rule produced this answer.
 	Domain string `json:"domain,omitempty"`
+	// Sources lists the documents the answer cited, in first-cited order. The
+	// answer text itself carries no citation markers. Empty for a no-answer.
+	Sources []CitedSource `json:"sources"`
 }
 
 // BatchOutput is the structured result of a batch run: the resolved model, a
@@ -194,6 +197,31 @@ func (h BatchHooks) result(i, total int, r BatchResult) {
 func (h BatchHooks) failure(i, total int, q BatchQuestion, err error) {
 	if h.OnError != nil {
 		h.OnError(i, total, q, err)
+	}
+}
+
+// batchResultFor validates a generated answer's citations against the
+// documents retrieved for the question, then moves them out of the prose: the
+// answer is stored marker-free and the cited documents go in Sources. Batch
+// answers feed procurement documents, so unlike chat an answer citing nothing
+// it was given is withheld as the no-answer response.
+func batchResultFor(q BatchQuestion, domainMatch, answer string, retrieved []CitedSource, verbose bool) BatchResult {
+	cited, sources, uncited := citeAnswer(answer, retrieved)
+	if uncited {
+		cited = noContextAnswer
+		if verbose {
+			fmt.Printf("withheld answer to %q: no valid citations\n", q.Question)
+		}
+	}
+	if sources == nil {
+		sources = []CitedSource{}
+	}
+	return BatchResult{
+		ID:       q.ID,
+		Question: q.Question,
+		Answer:   stripMarkers(cited),
+		Domain:   domainMatch,
+		Sources:  sources,
 	}
 }
 
@@ -327,13 +355,15 @@ func RunBatch(
 		if lexicalQuery != q.Question {
 			semanticQuery = q.Question + " " + lexicalQuery
 		}
-		ragContext := retrieveContext(session, semanticQuery, lexicalQuery, verbose)
+		// Each answer's citation numbering is self-contained.
+		session.Citations = NewCitationRegistry()
+		ragContext, retrieved := retrieveContext(session, semanticQuery, lexicalQuery, verbose)
 
 		// When no context was retrieved there is nothing to ground the answer on.
 		// Skip the LLM call entirely and emit the fixed no-answer string to avoid
 		// the model hallucinating from parametric knowledge.
 		if ragContext == "" {
-			result := BatchResult{ID: q.ID, Question: q.Question, Answer: noContextAnswer, Domain: domainMatch}
+			result := BatchResult{ID: q.ID, Question: q.Question, Answer: noContextAnswer, Domain: domainMatch, Sources: []CitedSource{}}
 			results = append(results, result)
 			hooks.result(i, total, result)
 			continue
@@ -342,7 +372,7 @@ func RunBatch(
 		resp, err := client.Chat.Completions.New(ctx, openai.ChatCompletionNewParams{
 			Messages: []openai.ChatCompletionMessageParamUnion{
 				openai.SystemMessage(defaultSystemPrompt),
-				openai.UserMessage(buildRAGPrompt(ragContext, domainContext, q.ID, q.Question)),
+				openai.UserMessage(buildRAGPrompt(ragContext, domainContext, q.ID, q.Question, true)),
 			},
 			Model:       modelName,
 			Temperature: openai.Float(temperature),
@@ -365,7 +395,7 @@ func RunBatch(
 			answer = StripThinkTags(resp.Choices[0].Message.Content)
 		}
 
-		result := BatchResult{ID: q.ID, Question: q.Question, Answer: answer, Domain: domainMatch}
+		result := batchResultFor(q, domainMatch, answer, retrieved, verbose)
 		results = append(results, result)
 		hooks.result(i, total, result)
 	}

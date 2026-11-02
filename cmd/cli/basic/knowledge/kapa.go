@@ -174,5 +174,6 @@ func (c *KapaClient) Search(ctx context.Context, query string, limit int, source
 			Label:    LabelKapa,
 		}
 	}
+	ResolveCitations(ctx, DefaultCitationChain(nil), hits)
 	return hits, nil
 }

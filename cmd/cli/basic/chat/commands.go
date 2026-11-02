@@ -127,6 +127,21 @@ type Session struct {
 	EmbeddingModelID string
 	ActiveIndexes    []string
 	ActiveKapaGroups []string
+	// Citations numbers cited documents for the session's lifetime, so a
+	// document keeps its "[n]" marker across turns. Created lazily.
+	Citations *CitationRegistry
+	// AnswerSources holds the cited sources of each assistant message in the
+	// conversation history, in order (nil for an uncited answer), so a save can
+	// persist them alongside the transcript.
+	AnswerSources [][]CitedSource
+}
+
+// citationRegistry returns the session's registry, creating it on first use.
+func (s *Session) citationRegistry() *CitationRegistry {
+	if s.Citations == nil {
+		s.Citations = NewCitationRegistry()
+	}
+	return s.Citations
 }
 
 // handleSlashCommand processes slash commands entered in the chat REPL.

@@ -38,6 +38,8 @@ export interface SourceMetadata {
   source_id: string;
   file_name?: string;
   file_path?: string;
+  /** Web link recorded at ingest and used when citations link to the source. */
+  source_uri?: string;
   content_type?: string;
   title?: string;
   author?: string;
@@ -152,19 +154,22 @@ export async function initEngine(): Promise<OperationView> {
 }
 
 // ingestFile uploads a document to a base and returns the operation to track.
-// label optionally overrides the base's default knowledge label.
+// label optionally overrides the base's default knowledge label; sourceUri
+// optionally records the document's web link for citations.
 export async function ingestFile(
   name: string,
   file: File,
   sourceId: string,
   force: boolean,
-  label?: string
+  label?: string,
+  sourceUri?: string
 ): Promise<OperationView> {
   const form = new FormData();
   form.append("file", file);
   if (sourceId) form.append("source_id", sourceId);
   if (force) form.append("force", "true");
   if (label) form.append("label", label);
+  if (sourceUri) form.append("source_uri", sourceUri);
   const { metadata } = await postAsyncForm<OperationView>(
     `/1.0/knowledge/${encodeURIComponent(name)}/sources`,
     form

@@ -231,3 +231,25 @@ func TestStripThink(t *testing.T) {
 		}
 	}
 }
+
+// A chat written before turns carried sources must still load, list, and
+// resume: its turns simply have no sources.
+func TestChatSavedBeforeSourcesStillLoads(t *testing.T) {
+	dir := t.TempDir()
+	legacy := `{"id":"0123abcd","title":"Old chat","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z","model":"m","bases":["docs"],"turns":[{"role":"user","content":"hi"},{"role":"assistant","content":"hello"}]}`
+	if err := os.WriteFile(filepath.Join(dir, "0123abcd.json"), []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := New(dir)
+	got, err := s.Get("0123abcd")
+	if err != nil {
+		t.Fatalf("Get legacy chat: %v", err)
+	}
+	if len(got.Turns) != 2 || got.Turns[1].Sources != nil {
+		t.Errorf("legacy turns = %+v, want two turns without sources", got.Turns)
+	}
+	list, err := s.List("")
+	if err != nil || len(list) != 1 {
+		t.Errorf("List = %v, %v; want the legacy chat", list, err)
+	}
+}

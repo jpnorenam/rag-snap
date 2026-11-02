@@ -29,6 +29,8 @@ type searchResult struct {
 	CreatedAt string  `json:"created_at"`
 	Label     string  `json:"label"`
 	Content   string  `json:"content"`
+	// Citation is the hit's resolved document citation (label, link).
+	Citation knowledge.Citation `json:"citation"`
 }
 
 // swagger:route POST /1.0/search search search
@@ -97,6 +99,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: h.CreatedAt,
 			Label:     h.Label,
 			Content:   h.Content,
+			Citation:  h.Citation,
 		})
 	}
 	respondSync(w, results)

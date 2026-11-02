@@ -1,10 +1,13 @@
 import { getSync, deleteSync } from "./envelope";
+import type { CitedSource } from "@/lib/types";
 
 // ChatTurn is one exchange in a saved conversation, mirroring the daemon's
-// chatstore.Turn.
+// chatstore.Turn. An assistant turn carries the sources its answer cited;
+// chats saved before citations existed have none.
 export interface ChatTurn {
   role: "user" | "assistant";
   content: string;
+  sources?: CitedSource[] | null;
 }
 
 // ChatSummary is the transcript-free view of a saved chat from GET /1.0/chats.

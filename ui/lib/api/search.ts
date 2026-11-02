@@ -1,4 +1,5 @@
 import { postSync } from "./envelope";
+import type { Citation } from "@/lib/types";
 
 // SearchResult is the API view of a single retrieval hit from
 // POST /1.0/search, matching the daemon's searchResult.
@@ -9,6 +10,8 @@ export interface SearchResult {
   created_at: string;
   label: string;
   content: string;
+  /** The hit's resolved document citation (absent from older daemons). */
+  citation?: Citation;
 }
 
 // search runs hybrid (neural + lexical) retrieval over the named bases with

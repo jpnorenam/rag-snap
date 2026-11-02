@@ -361,10 +361,11 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	// On the first turn (no history) this returns the original prompt.
 	lexicalQuery := prompt
 	ragContext := ""
+	var retrieved []CitedSource
 	if hasContext {
 		lexicalQuery = rewriteSearchQuery(client, params.Model, params.Messages, prompt, verbose)
 		// Retrieve RAG context from knowledge base (no-op when unavailable).
-		ragContext = retrieveContext(session, prompt, lexicalQuery, verbose)
+		ragContext, retrieved = retrieveContext(session, prompt, lexicalQuery, verbose)
 	}
 
 	// Build the message sent to the LLM: augmented when context is found.
@@ -373,9 +374,9 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	// the model does not answer from parametric knowledge.
 	llmPrompt := prompt
 	if ragContext != "" {
-		llmPrompt = buildRAGPrompt(ragContext, "", "", prompt)
+		llmPrompt = buildRAGPrompt(ragContext, "", "", prompt, true)
 	} else if hasContext {
-		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", "", "", prompt)
+		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", "", "", prompt, false)
 	}
 
 	// Build a temporary copy of the message history so the augmented prompt
@@ -400,14 +401,31 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 	if err != nil {
 		return params, err
 	}
+	fmt.Println()
+
+	// Validate the streamed answer's citations against what was retrieved: the
+	// history keeps the normalized answer and the session records its sources.
+	// An answer citing nothing it was given is kept, flagged as unsourced.
+	var sources []CitedSource
+	if appendParam != nil {
+		content, cited, uncited := citeAnswer(appendParam.OfAssistant.Content.OfString.Or(""), retrieved)
+		if uncited {
+			fmt.Println(color.YellowString(noSourcesNotice))
+		} else {
+			fmt.Print(formatSourcesBlock(cited))
+		}
+		sources = cited
+		msg := openai.AssistantMessage(content)
+		appendParam = &msg
+	}
 
 	// Store the original prompt (not the augmented one) plus the assistant
 	// response in the conversation history.
 	params.Messages = append(params.Messages, openai.UserMessage(prompt))
 	if appendParam != nil {
 		params.Messages = append(params.Messages, *appendParam)
+		session.AnswerSources = append(session.AnswerSources, sources)
 	}
-	fmt.Println()
 
 	return params, nil
 }

@@ -22,7 +22,7 @@ make lint           # golangci-lint run ./...  (config in .golangci.yml)
 make all            # tidy fmt vet lint test build
 go test ./pkg/utils/ -run TestName   # run a single test
 
-snapcraft -v        # build the .snap
+make snap           # install snapcraft if missing (sudo), then build the .snap with `snapcraft -v`
 sudo snap install --dangerous ./rag-cli_*.snap
 ```
 

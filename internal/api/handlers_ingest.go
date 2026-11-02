@@ -27,6 +27,8 @@ type ingestItem struct {
 	Extensions []string `json:"extensions,omitempty"` // repo file extensions (github/gitea)
 	Label      string   `json:"label,omitempty"`      // knowledge label; empty means the base default
 	filePath   string   // server-side path to the staged upload; not from JSON
+	fileName   string   // original name of the uploaded file; not from JSON
+	sourceURI  string   // user-supplied citation link for an upload; not from JSON
 	cleanup    func()   // optional cleanup for crawled/uploaded temp files
 }
 
@@ -194,7 +196,7 @@ func (s *Server) collectUploadedItems(r *http.Request) ([]ingestItem, bool, erro
 	}
 	defer file.Close()
 
-	tmp, err := os.CreateTemp("", "ragd-upload-*"+filepath.Ext(header.Filename))
+	tmp, err := os.CreateTemp("", processing.TempPrefixUpload+"*"+filepath.Ext(header.Filename))
 	if err != nil {
 		return nil, false, fmt.Errorf("staging upload: %w", err)
 	}
@@ -205,17 +207,25 @@ func (s *Server) collectUploadedItems(r *http.Request) ([]ingestItem, bool, erro
 	}
 	tmp.Close()
 
+	path := tmp.Name()
+	sourceURI := strings.TrimSpace(r.FormValue("source_uri"))
+	if sourceURI != "" && !knowledge.IsHTTPURL(sourceURI) {
+		_ = os.Remove(path)
+		return nil, false, fmt.Errorf("source_uri %q must be an absolute http(s) URL", sourceURI)
+	}
+
 	sourceID := r.FormValue("source_id")
 	if sourceID == "" {
 		sourceID = header.Filename
 	}
-	path := tmp.Name()
 	return []ingestItem{{
-		SourceID: sourceID,
-		Type:     "file",
-		Label:    r.FormValue("label"),
-		filePath: path,
-		cleanup:  func() { _ = os.Remove(path) },
+		SourceID:  sourceID,
+		Type:      "file",
+		Label:     r.FormValue("label"),
+		filePath:  path,
+		fileName:  filepath.Base(header.Filename),
+		sourceURI: sourceURI,
+		cleanup:   func() { _ = os.Remove(path) },
 	}}, force, nil
 }
 
@@ -256,7 +266,7 @@ func ingestOneItem(ctx context.Context, client *knowledge.OpenSearchClient, tika
 		if sourceID == "" {
 			sourceID = item.URL
 		}
-		return ingestResolvedFile(ctx, client, tikaURL, index, path, sourceID, item.URL, item.Label, force)
+		return ingestResolvedFile(ctx, client, tikaURL, index, path, sourceID, item.URL, item.URL, item.Label, force)
 	default: // staged file upload
 		if item.filePath == "" {
 			if item.Type == "file" {
@@ -268,13 +278,19 @@ func ingestOneItem(ctx context.Context, client *knowledge.OpenSearchClient, tika
 		if sourceID == "" {
 			sourceID = filepath.Base(item.filePath)
 		}
-		return ingestResolvedFile(ctx, client, tikaURL, index, item.filePath, sourceID, item.filePath, item.Label, force)
+		// Record the upload's original name, never the staging temp path.
+		metadataPath := item.fileName
+		if metadataPath == "" {
+			metadataPath = filepath.Base(item.filePath)
+		}
+		return ingestResolvedFile(ctx, client, tikaURL, index, item.filePath, sourceID, metadataPath, item.sourceURI, item.Label, force)
 	}
 }
 
 // ingestResolvedFile skips an already-completed source unless force is set, then
-// runs the shared ingest core.
-func ingestResolvedFile(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index, filePath, sourceID, metadataPath, label string, force bool) error {
+// runs the shared ingest core. metadataPath is the original input recorded as
+// the source's file path; sourceURI is its citation link (empty when unknown).
+func ingestResolvedFile(ctx context.Context, client *knowledge.OpenSearchClient, tikaURL, index, filePath, sourceID, metadataPath, sourceURI, label string, force bool) error {
 	if !force && client.SourceCompleted(ctx, sourceID) {
 		return nil
 	}
@@ -282,6 +298,7 @@ func ingestResolvedFile(ctx context.Context, client *knowledge.OpenSearchClient,
 		FilePath:     filePath,
 		SourceID:     sourceID,
 		MetadataPath: metadataPath,
+		SourceURI:    sourceURI,
 		TargetIndex:  index,
 		Label:        label,
 		Force:        force,
@@ -333,7 +350,7 @@ func ingestRepoEntries(ctx context.Context, client *knowledge.OpenSearchClient, 
 		if err != nil {
 			return fmt.Errorf("fetching %q: %w", entry.Path, err)
 		}
-		err = ingestResolvedFile(ctx, client, tikaURL, index, tempPath, entry.SourceID, entry.Path, label, force)
+		err = ingestResolvedFile(ctx, client, tikaURL, index, tempPath, entry.SourceID, entry.Path, entry.WebURL, label, force)
 		cleanup()
 		if err != nil {
 			return fmt.Errorf("ingesting %q: %w", entry.Path, err)

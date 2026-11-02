@@ -372,6 +372,46 @@ OpenAPI specification at the repository root.
 
 ---
 
+## Citations
+
+Retrieval resolves every hit to a **document-level citation**, and every surface that shows
+retrieved content or a grounded answer carries it. All fields are additive: older clients ignore
+them.
+
+**Citation object.** `key` (the cited document's identity — its source ID), `label` (a
+human-readable name: the document title when usable, else the file name, else the source ID),
+`href` (a link, omitted when none was recorded), `locator` (reserved for section/cell references,
+currently always omitted), plus `base` (knowledge base) and `tag` (knowledge label) where a source
+is listed outside a search hit. A source in an answer also carries `marker`, the `n` of the
+`[n]` marker the answer uses for it.
+
+**Links are never guessed.** `href` comes from the Kapa source URL, the source's recorded
+`source_uri`, or its recorded file path when that is an http(s) URL. Sources ingested before
+`source_uri` existed resolve through the remaining fallbacks; re-ingest with `force` to record a
+link.
+
+| Surface | What carries citations |
+|---|---|
+| `POST /1.0/search` | Each hit has a `citation` object. |
+| `POST /1.0/knowledge/{name}/sources` | URL ingests record their `url` as `source_uri`; `github`/`gitea` batch entries record each file's web URL on its branch; a multipart upload accepts an optional `source_uri` form field (absolute http(s) URL, else `400`). Source metadata from `GET …/sources[/{id}]` includes `source_uri` when recorded. |
+| Chat websocket | A grounded answer is preceded by a `sources` frame listing the documents retrieved for it, sent before the first `token`. The terminal `done` frame carries `sources` — the documents the answer actually cited, in first-cited order. A turn without retrieval sends no `sources` frame. |
+| `POST /1.0/answer/batch` results | Each result has `sources`; its `answer` is free of `[n]` markers. |
+| `GET /1.0/chats/{id}` | Assistant turns carry the `sources` they cited; chats saved before sources existed have none. |
+
+**Uncited answers.** When retrieval supplied context and the answer cites none of it (after
+markers matching no retrieved document are removed), the chat websocket's `done` frame is flagged
+`"unsourced": true` and carries no `sources`; the streamed answer stands and the session history
+keeps it, and clients show that it has no relevant sources. Batch answers are stricter: such an
+answer is withheld, so `answer` is the no-answer response and `sources` is empty.
+
+```json
+{"type": "sources", "sources": [{"marker": 1, "key": "pro-guide", "label": "Ubuntu Pro Guide", "href": "https://ubuntu.com/pro", "base": "docs", "tag": "canonical"}]}
+{"type": "token", "content": "Ubuntu Pro includes FIPS 140-3 modules. [1]"}
+{"type": "done", "sources": [{"marker": 1, "key": "pro-guide", "label": "Ubuntu Pro Guide", "href": "https://ubuntu.com/pro", "base": "docs", "tag": "canonical"}]}
+```
+
+---
+
 ## Prompt templates
 
 Three templates drive generation: `chat_system_prompt` (interactive chat),

@@ -49,13 +49,21 @@ type chatControlMessage struct {
 // "token"/"think" content, a terminal "done" per answer, an "active-kbs"
 // acknowledgement, a "saved" acknowledgement (carrying the saved chat's id and
 // title), or an "error".
+//
+// A grounded answer is preceded by a "sources" frame listing the documents
+// retrieved for it (each with its "[n]" marker number), and its "done" frame
+// carries the sources the answer actually cited. A "done" frame flagged
+// unsourced means the answer cited nothing it was given; the streamed text
+// stands, and clients show that it has no relevant sources.
 type chatServerMessage struct {
-	Type    string   `json:"type"`
-	Content string   `json:"content,omitempty"`
-	Bases   []string `json:"bases,omitempty"`
-	Error   string   `json:"error,omitempty"`
-	ChatID  string   `json:"id,omitempty"`
-	Title   string   `json:"title,omitempty"`
+	Type      string             `json:"type"`
+	Content   string             `json:"content,omitempty"`
+	Bases     []string           `json:"bases,omitempty"`
+	Error     string             `json:"error,omitempty"`
+	ChatID    string             `json:"id,omitempty"`
+	Title     string             `json:"title,omitempty"`
+	Sources   []chat.CitedSource `json:"sources,omitempty"`
+	Unsourced bool               `json:"unsourced,omitempty"`
 }
 
 // defaultChatTemperature matches the chat REPL's default sampling temperature.
@@ -266,14 +274,19 @@ func (s *Server) runChatSession(ctx context.Context, conn *websocket.Conn, live 
 			emit := func(kind chat.TokenKind, content string) error {
 				return writeChat(ctx, conn, chatServerMessage{Type: string(kind), Content: content})
 			}
-			if err := live.Prompt(ctx, text, emit); err != nil {
+			emitSources := func(sources []chat.CitedSource) error {
+				return writeChat(ctx, conn, chatServerMessage{Type: "sources", Sources: sources})
+			}
+			result, err := live.Prompt(ctx, text, emit, emitSources)
+			if err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				_ = writeChat(ctx, conn, chatServerMessage{Type: "error", Error: err.Error()})
 				continue
 			}
-			if err := writeChat(ctx, conn, chatServerMessage{Type: "done"}); err != nil {
+			done := chatServerMessage{Type: "done", Sources: result.Sources, Unsourced: result.Unsourced}
+			if err := writeChat(ctx, conn, done); err != nil {
 				return nil
 			}
 

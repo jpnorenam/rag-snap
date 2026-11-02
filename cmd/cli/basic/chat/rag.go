@@ -27,31 +27,42 @@ type extractedKeywords struct {
 
 // formatContext renders a slice of search hits into a single text block
 // suitable for injection into a RAG prompt. Each chunk is prefixed with its
-// resolved knowledge label so the LLM can apply the priority rules the active
-// system prompt defines for those labels.
-func formatContext(hits []knowledge.SearchHit) string {
+// document's citation marker (numbered through reg, so chunks of one document
+// share a marker), its resolved knowledge label so the LLM can apply the
+// priority rules the active system prompt defines for those labels, and the
+// document's label. It returns the distinct documents in the context, in order
+// of first appearance.
+func formatContext(hits []knowledge.SearchHit, reg *CitationRegistry) (string, []CitedSource) {
 	var b strings.Builder
+	var retrieved []CitedSource
+	seen := make(map[int]bool)
 	for i, hit := range hits {
 		if i > 0 {
 			b.WriteString("\n---\n")
 		}
-		fmt.Fprintf(&b, "%s\n", knowledge.LabelTag(hit.Label))
+		n := reg.Number(citationKey(hit))
+		if !seen[n] {
+			seen[n] = true
+			retrieved = append(retrieved, CitedSource{Marker: n, Citation: hit.Citation})
+		}
+		fmt.Fprintf(&b, "[%d] %s %s\n", n, knowledge.LabelTag(hit.Label), hit.Citation.Label)
 		b.WriteString(hit.Content)
-		fmt.Fprintf(&b, "\n(source: %s, score: %.4f)", hit.SourceID, hit.Score)
 	}
-	return b.String()
+	return b.String(), retrieved
 }
 
 // retrieveContext searches all active knowledge sources for content relevant to
 // query. Local OpenSearch indexes and kapa.ai are queried in parallel when both
 // are available. Local hits appear first (more specific); kapa hits follow.
-// Returns an empty string when no sources are configured or retrieval yields nothing.
-func retrieveContext(session *Session, query, lexicalQuery string, verbose bool) string {
+// Returns an empty string and no sources when no sources are configured or
+// retrieval yields nothing; otherwise the context text and the distinct
+// documents in it, numbered through the session's citation registry.
+func retrieveContext(session *Session, query, lexicalQuery string, verbose bool) (string, []CitedSource) {
 	hasLocal := session.KnowledgeClient != nil && len(session.ActiveIndexes) > 0 && session.EmbeddingModelID != ""
 	hasKapa := session.KapaClient != nil && len(session.ActiveKapaGroups) > 0
 
 	if !hasLocal && !hasKapa {
-		return ""
+		return "", nil
 	}
 
 	var (
@@ -102,14 +113,17 @@ func retrieveContext(session *Session, query, lexicalQuery string, verbose bool)
 	allHits = append(allHits, kapaHits...)
 
 	if len(allHits) == 0 {
-		return ""
+		return "", nil
 	}
 
 	if verbose {
 		fmt.Printf("Retrieved %d local + %d kapa results\n", len(localHits), len(kapaHits))
+		for _, h := range allHits {
+			fmt.Printf("  citation %s -> %q %s (%s)\n", citationKey(h), h.Citation.Label, h.Citation.Href, h.Citation.Via)
+		}
 	}
 
-	return formatContext(allHits)
+	return formatContext(allHits, session.citationRegistry())
 }
 
 // rewriteSearchQuery uses the inference server to extract search keywords
@@ -339,9 +353,16 @@ const RequirementDomainLabel = "Requirement domain"
 // system prompt so the system prompt stays byte-identical across a batch run,
 // and because a domain scopes one question rather than the whole run. With both
 // empty the result is the plain "Context / Question" form.
-func buildRAGPrompt(ragContext, domainContext, id, prompt string) string {
+//
+// cite adds the citation rules right after the context. It is set only when
+// ragContext is retrieved, marker-tagged chunks — never for the empty-context
+// note, which offers nothing to cite.
+func buildRAGPrompt(ragContext, domainContext, id, prompt string, cite bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Context:\n%s", ragContext)
+	if cite {
+		fmt.Fprintf(&b, "\n\n%s", ragCitationRules)
+	}
 
 	if domain := strings.TrimSpace(domainContext); domain != "" {
 		// Terminate the operator's prose so the instruction that follows reads

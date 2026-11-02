@@ -2,6 +2,7 @@ import { postAsync } from "./envelope";
 import { ROOT_PATH } from "./rootPath";
 import { getToken } from "./token";
 import type { ChatTurn } from "./chats";
+import type { CitedSource } from "@/lib/types";
 
 // RestoredChat is the transcript and knowledge-base context recovered when a
 // session is started by resuming a saved chat (POST /1.0/chat with `resume`).
@@ -82,8 +83,11 @@ function buildWsUrl(opPath: string, secret: string): string {
 }
 
 // Server→client frame types on the chat websocket. A "saved" frame acknowledges
-// a save control message, carrying the saved chat's id and title.
-export type ChatFrameType = "token" | "think" | "done" | "active-kbs" | "saved" | "error";
+// a save control message, carrying the saved chat's id and title. A "sources"
+// frame precedes a grounded answer's tokens, listing the documents retrieved
+// for it; that answer's "done" frame carries the sources it actually cited, or
+// is flagged `unsourced` when it cited none (the streamed answer stands).
+export type ChatFrameType = "token" | "think" | "sources" | "done" | "active-kbs" | "saved" | "error";
 
 export interface ChatFrame {
   type: ChatFrameType;
@@ -92,6 +96,8 @@ export interface ChatFrame {
   error?: string;
   id?: string;
   title?: string;
+  sources?: CitedSource[];
+  unsourced?: boolean;
 }
 
 // ChatConnection wraps the websocket with typed send helpers for the control

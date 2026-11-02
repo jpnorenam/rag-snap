@@ -235,7 +235,7 @@ func (c *OpenSearchClient) Init(ctx context.Context, hooks InitHooks) error {
 
 	// Ensure the sources metadata index exists
 	if err := withProgress("Setting up sources metadata index", func() error {
-		return c.getOrCreateSourcesIndex(ctx)
+		return c.CreateSourcesIndex(ctx)
 	}); err != nil {
 		return fmt.Errorf("error setting up sources metadata index: %w", err)
 	}

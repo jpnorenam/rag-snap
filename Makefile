@@ -52,6 +52,31 @@ build-ragd:
 	CGO_ENABLED=$(CGO_ENABLED) go build $(GOFLAGS) -trimpath -tags '$(TAGS)' -ldflags '$(LDFLAGS)' -o '$(BINDIR)'/ragd ./cmd/ragd
 
 # ------------------------------------------------------------------------------
+#  Snap
+#
+# Build the rag-cli snap. snapcraft builds every part itself (Go binaries, the
+# UI, Tika, the Node/elasticdump bundle), so no other target needs to run first.
+# Pass extra flags with SNAPCRAFT_FLAGS, e.g. `make snap SNAPCRAFT_FLAGS=--debug`.
+
+SNAPCRAFT       := snapcraft
+SNAPCRAFT_FLAGS := -v
+
+# Install snapcraft (classic snap) if it is not already available. Uses sudo,
+# so it prompts for a password the first time.
+.PHONY: snapcraft-install
+snapcraft-install:
+	@if command -v $(SNAPCRAFT) >/dev/null 2>&1 || [ -x /snap/bin/$(SNAPCRAFT) ]; then \
+		echo "snapcraft is already installed."; \
+	else \
+		sudo snap install snapcraft --classic; \
+	fi
+
+# /snap/bin is put on PATH so a snapcraft installed in this same run is found.
+.PHONY: snap
+snap: snapcraft-install
+	PATH="/snap/bin:$$PATH" $(SNAPCRAFT) $(SNAPCRAFT_FLAGS)
+
+# ------------------------------------------------------------------------------
 #  Development
 
 .PHONY: run

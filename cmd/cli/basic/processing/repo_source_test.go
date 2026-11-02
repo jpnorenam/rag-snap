@@ -64,3 +64,32 @@ func TestGiteaRepoNamespaceDistinguishesHosts(t *testing.T) {
 		t.Fatalf("namespaces for the same owner/repo on different hosts collide: %q", a)
 	}
 }
+
+func TestRepoWebURLs(t *testing.T) {
+	tests := []struct {
+		name, got, want string
+	}{
+		{
+			"github nested file",
+			GitHubWebURL("canonical", "k8s-snap", "main", "docs/install.md"),
+			"https://github.com/canonical/k8s-snap/blob/main/docs/install.md",
+		},
+		{
+			"github branch with slash and space in path",
+			GitHubWebURL("canonical", "k8s-snap", "release/1.30", "docs/my guide.md"),
+			"https://github.com/canonical/k8s-snap/blob/release/1.30/docs/my%20guide.md",
+		},
+		{
+			"gitea file",
+			GiteaWebURL("https://opendev.org", "openstack", "nova", "master", "doc/source/index.rst"),
+			"https://opendev.org/openstack/nova/src/branch/master/doc/source/index.rst",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.got != tt.want {
+				t.Errorf("got %q, want %q", tt.got, tt.want)
+			}
+		})
+	}
+}
