@@ -300,7 +300,9 @@ export default function SearchScreen() {
               <li key={`${r.base}-${r.source_id}-${i}`} className="search-result">
                 <div className="search-result__header">
                   <span className="search-result__rank u-text--muted">{i + 1}</span>
-                  <strong className="search-result__source">{r.source_id}</strong>
+                  <strong className="search-result__source">
+                    <SearchCitation result={r} />
+                  </strong>
                   <span className="p-chip u-no-margin--bottom">
                     <span className="p-chip__value">{r.base}</span>
                   </span>
@@ -309,8 +311,8 @@ export default function SearchScreen() {
                   </span>
                 </div>
                 <p className="search-result__body">{r.content}</p>
-                {/* Source ID stays plain text until the knowledge-detail route
-                    lands (Change 2 flips it to a link). */}
+                {/* The header shows the citation label (linked when a link was
+                    recorded at ingest); the footer keeps the source ID. */}
                 <p
                   className="search-result__footer p-text--small u-text--muted"
                   title={r.created_at}
@@ -324,4 +326,19 @@ export default function SearchScreen() {
       </section>
     </main>
   );
+}
+
+// SearchCitation renders a hit's citation label, as an external link when the
+// source has one; hits from daemons without citations fall back to the source ID.
+export function SearchCitation({ result }: { result: SearchResult }) {
+  const label = result.citation?.label || result.source_id;
+  const href = result.citation?.href;
+  if (href && /^https?:\/\//i.test(href)) {
+    return (
+      <a href={href} target="_blank" rel="noopener noreferrer">
+        {label}
+      </a>
+    );
+  }
+  return <>{label}</>;
 }

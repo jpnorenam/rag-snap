@@ -1,20 +1,7 @@
 "use client";
 
 import type { QAItem } from "@/lib/types";
-
-// SourceChunk is provenance for one answer. The batch results the daemon
-// publishes today carry no per-question sources (chat.BatchResult is
-// {id, question, answer}), so this is rendered only when present — a forward-
-// compatible shape for when the API gains provenance (a separate change).
-export interface SourceChunk {
-  knowledge_base?: string;
-  source_id?: string;
-  score?: number;
-}
-
-// QAItemWithSources extends the review contract's QAItem with the optional
-// provenance the review surface renders when available.
-type QAItemWithSources = QAItem & { sources?: SourceChunk[] };
+import SourcesList from "@/components/common/SourcesList";
 
 interface Props {
   item: QAItem;
@@ -27,17 +14,16 @@ const NO_CONTEXT_ANSWER =
 
 // QACard renders one question/answer pair. A failed or empty answer (or the
 // fixed no-context response) is shown with a caution treatment rather than
-// blank. The applied routing domain and the sources render only when the item
-// carries them.
+// blank. The applied routing domain and the cited sources render only when the
+// item carries them (results files written before citations have no sources).
 export default function QACard({ item, index }: Props) {
-  const withSources = item as QAItemWithSources;
   const domain = item.domain?.trim() ?? "";
   const answer = item.answer?.trim() ?? "";
   const isEmpty = answer === "";
   const isNoContext = answer === NO_CONTEXT_ANSWER;
   const caution = isEmpty || isNoContext;
   const classes = ["qa-card", caution ? "qa-card--caution" : ""].filter(Boolean).join(" ");
-  const sources = withSources.sources ?? [];
+  const sources = item.sources ?? [];
 
   return (
     <article className={classes} id={`qa-${index + 1}`}>
@@ -63,17 +49,13 @@ export default function QACard({ item, index }: Props) {
       {sources.length > 0 && (
         <details className="qa-card__sources">
           <summary>Sources ({sources.length})</summary>
-          <ul className="qa-card__sources-list">
-            {sources.map((s, i) => (
-              <li key={i}>
-                {s.knowledge_base && <span className="p-chip"><span className="p-chip__value">{s.knowledge_base}</span></span>}
-                {s.source_id && <span className="u-text--muted p-text--small"> {s.source_id}</span>}
-                {typeof s.score === "number" && (
-                  <span className="u-text--muted p-text--small"> · score {s.score.toFixed(3)}</span>
-                )}
-              </li>
-            ))}
-          </ul>
+          {/* Batch answers carry no [n] markers, so only the labels are listed. */}
+          <SourcesList
+            sources={sources}
+            showMarkers={false}
+            showLabel={false}
+            className="qa-card__sources-list"
+          />
         </details>
       )}
     </article>

@@ -38,6 +38,10 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 	if session.Model != "" {
 		fmt.Printf("Using model %v (via ragd)\n", session.Model)
 	}
+	if len(bases) > 0 {
+		fmt.Printf("Active knowledge bases: %s\n", strings.Join(bases, ", "))
+		fmt.Printf("  > Use `%s` to change them\n", cmdUseKnowledge)
+	}
 	fmt.Println("Type your prompt, then ENTER to submit. CTRL-C to quit.")
 
 	// Track the active bases locally so the /use-knowledge menu can pre-select
@@ -332,7 +336,7 @@ func formatRemoteSearchResults(hits []apiclient.SearchHit) string {
 
 		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", i+1, hit.Score, hit.Base, knowledge.LabelTag(hit.Label))
 		fmt.Fprintln(&b, color.New(color.Bold).Sprint(header))
-		fmt.Fprintf(&b, "    source: %s   created: %s\n", hit.SourceID, hit.CreatedAt)
+		fmt.Fprintf(&b, "    source: %s   created: %s\n", knowledge.SourceLine(hit.Citation.Label, hit.Citation.Href, hit.SourceID), hit.CreatedAt)
 		fmt.Fprintln(&b, color.HiBlackString("    "+strings.Repeat("─", 56)))
 		b.WriteString(hit.Content)
 		b.WriteString("\n")
@@ -372,9 +376,17 @@ func remotePromptTurn(ctx context.Context, session *apiclient.ChatSession, promp
 		case string(TokenThink):
 			haltSpinner()
 			fmt.Print(color.BlueString(msg.Content))
+		case "sources":
+			// The retrieved set arrives before the tokens; the cited subset
+			// arrives on "done", which is what the Sources block shows.
 		case "done":
 			haltSpinner()
 			fmt.Println()
+			if msg.Unsourced {
+				fmt.Println(color.YellowString(noSourcesNotice))
+			} else {
+				fmt.Print(formatSourcesBlock(citedFromStore(msg.Sources)))
+			}
 			return nil
 		case "error":
 			haltSpinner()

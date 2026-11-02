@@ -48,10 +48,26 @@ var idPattern = regexp.MustCompile(`^[a-f0-9]{8,}$`)
 
 // Turn is one exchange in a saved conversation: a user prompt or an assistant
 // reply, as plain text. Reasoning/<think> spans are stripped from assistant
-// content before it reaches the store.
+// content before it reaches the store. An assistant turn carries the sources its
+// answer cited; chats saved before sources were recorded have none.
 type Turn struct {
-	Role    string `json:"role"` // "user" or "assistant"
-	Content string `json:"content"`
+	Role    string   `json:"role"` // "user" or "assistant"
+	Content string   `json:"content"`
+	Sources []Source `json:"sources,omitempty"`
+}
+
+// Source is a document an assistant turn cited: the "[n]" marker number it
+// carries in the turn's content and its citation. It mirrors the chat
+// package's CitedSource field for field, so the store stays free of the chat
+// and knowledge packages.
+type Source struct {
+	Marker  int    `json:"marker"`
+	Key     string `json:"key"`
+	Label   string `json:"label"`
+	Href    string `json:"href,omitempty"`
+	Locator string `json:"locator,omitempty"`
+	Base    string `json:"base"`
+	Tag     string `json:"tag"`
 }
 
 // Chat is a saved conversation with everything needed to resume it.

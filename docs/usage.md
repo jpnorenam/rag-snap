@@ -331,13 +331,14 @@ overlapping chunks, embedded, and stored in OpenSearch. Provide the document eit
 or a URL.
 
 ```
-rag-cli.rag knowledge ingest <knowledge_base_name> <source_id> (--file <path> | --url <url>)
+rag-cli.rag knowledge ingest <knowledge_base_name> <source_id> (--file <path> [--uri <url>] | --url <url>)
 ```
 
 | Flag | Short | Required | Description |
 |---|---|---|---|
 | `--file` | `-f` | one of three | Local file path (PDF, HTML, plain text, …) |
 | `--url` | `-u` | one of three | URL of a static HTML page to fetch and extract |
+| `--uri` | | No | Web link (absolute `http://`/`https://`) for a `--file` source. Recorded as the source's `source_uri` and used as the link when chat answers and search results cite the document. Not allowed with `--url`, which records its URL automatically. |
 | `--batch` | `-B` | one of three | YAML batch config file — ingest multiple documents at once |
 | `--format` | | No | Input format. Use `rfp` to ingest a CSV of question/answer/source rows (requires `--file`). Default auto-detects via Tika. |
 | `--label` | `-l` | No | Knowledge label for this source. Defaults to the base's default label (see `knowledge label`). Not allowed with `--batch` — set per-job `label:` fields in the YAML instead. |
@@ -346,6 +347,13 @@ rag-cli.rag knowledge ingest <knowledge_base_name> <source_id> (--file <path> | 
 `<source_id>` is a human-readable identifier you choose (e.g. `snap-docs`, `rag-wiki`). It is used
 to reference the source in `metadata`, `forget`, and search results. It must be unique within the
 cluster.
+
+**Source links for citations.** Chat answers, `answer batch` results, and search results cite the
+documents they came from (see [Citations](#citations)). A cited document gets a clickable link
+only when one was recorded at ingest: `--url` records its URL, GitHub/Gitea batch jobs record each
+file's web URL on its branch, and `--file` records the `--uri` you pass. Sources ingested before
+links were recorded keep working — they are cited by title, file name, or source ID — and gain a
+link if you re-ingest them with `--force` (adding `--uri` for files).
 
 **Example — ingest a local PDF**
 
@@ -481,6 +489,7 @@ jobs:
       - .md
       - .txt
     label: <label>            # optional; knowledge label for the job's sources
+    uri: <https-url>          # file only — web link recorded for citations
 ```
 
 | Field | Applies to | Required | Description |
@@ -493,6 +502,7 @@ jobs:
 | `path` | repo types | No | Restrict ingestion to files under this subdirectory (e.g. `docs/`). Omit to process the entire repository. |
 | `extensions` | repo types | Yes* | List of file extensions to ingest (e.g. `.md`, `.rst`, `.txt`). At least one extension is required — files that do not match are skipped. |
 | `label` | all | No | Knowledge label stamped onto the job's sources and chunks. Defaults to the target base's default label (see `knowledge label`). |
+| `uri` | `file` | No | Absolute `http://`/`https://` link recorded as the source's `source_uri`, used when citations link to the document. `url` jobs record their URL and repo jobs record each file's web URL automatically. |
 
 **Example config — all four job types**
 
@@ -586,12 +596,15 @@ rag-cli.rag knowledge search <query> [--bases <name,...>] [--top <k>]
 $ rag-cli.rag knowledge search "how does vector search work"
 
 --- Result 1 (score: 0.9821, index: rag-kb-default) [CANONICAL] ---
-  Source: rag-wiki
+  Source: Retrieval-augmented generation — https://en.wikipedia.org/wiki/Retrieval-augmented_generation (rag-wiki)
   Date:   2025-06-02T14:22:10Z
   Vector search (also called semantic search) finds documents by comparing high-dimensional …
 
 Total: 10 results
 ```
+
+The `Source:` line shows the document's [citation](#citations): its title or file name, its link
+when one was recorded at ingest, and the source ID in parentheses when it differs from the label.
 
 **Example — search across multiple bases**
 
@@ -1010,6 +1023,10 @@ Type your prompt, then ENTER to submit. CTRL-C to quit.
 »
 ```
 
+Every session starts with the `default` knowledge base active — including when the CLI runs
+through the `ragd` daemon, where the banner reads `Active knowledge bases: default`. Use
+`/use-knowledge` to switch or add bases.
+
 | Action | Effect |
 |---|---|
 | Type a prompt, press Enter | Send to the LLM (with RAG context if available) |
@@ -1129,16 +1146,49 @@ Each time you send a prompt, the following happens automatically:
    ranked by relevance.
 
 3. Context injection
-   The top-10 chunks are prepended to your prompt before it is sent to the
-   LLM. The model is instructed to cite sources and to explicitly say when
-   the context is insufficient rather than fabricate an answer.
+   The top chunks are prepended to your prompt before it is sent to the
+   LLM, each tagged with its document's citation marker ([1], [2], …).
+   The model is instructed to end each paragraph with the markers of the
+   documents it relied on, and to explicitly say when the context is
+   insufficient rather than fabricate an answer.
 
-4. History
+4. Citation check
+   After the answer streams, its markers are checked against the documents
+   that were retrieved (see Citations below).
+
+5. History
    Only your original prompt (not the augmented one) is saved in the
    conversation history, keeping the history clean for subsequent rewrites.
 ```
 
 When no knowledge base is reachable, the client falls back to plain chat with no retrieval step.
+
+#### Citations
+
+Every grounded answer cites the documents it came from. Chunks of the same document share one
+marker, and a document keeps its marker for the whole session — `[1]` means the same document in
+every turn, and after the chat is saved and resumed. After the answer, a dimmed **Sources** block
+lists the cited documents:
+
+```
+Sources
+  [1] Snapcraft interfaces reference — https://snapcraft.io/docs/supported-interfaces
+  [2] snap-docs
+```
+
+Each source is shown by its document title (or file name, or source ID when neither is usable),
+followed by its link when one was recorded at ingest (see
+[source links](#knowledge-ingest)). Markers the model invents — numbers that match no retrieved
+document — are removed from the answer.
+
+**Uncited answers are flagged.** When a knowledge base is active and the answer cites none of the
+retrieved documents, the answer is kept, and instead of a Sources block the REPL prints
+`No relevant sources: this answer cites none of the retrieved documents.` Treat such an answer
+with care: nothing ties it to your knowledge bases. Chatting with no active knowledge base prints
+neither; the citation instructions are only sent with retrieved context, and any `[n]` marker in
+such an answer refers to nothing and is removed from the history. Bracketed numbers inside code
+(`arr[1]`) or glued to a word are never treated as markers. With
+`--verbose`, each turn also prints how every retrieved hit's citation was resolved.
 
 #### Reasoning models (DeepSeek R1, QwQ, …)
 
@@ -1227,16 +1277,21 @@ Type your prompt, then ENTER to submit. CTRL-C to quit.
       network:
       network-bind:
 
-  (source: snap-docs, score: 0.9743)
+  [1]
+
+  Sources
+    [1] Snapcraft interfaces reference — https://snapcraft.io/docs/supported-interfaces
 
 » And for hardware serial ports?
 
   For serial port access the snap needs the `serial-port` interface, which
-  requires manual connection by the user:
+  requires manual connection by the user [1][2]:
 
     sudo snap connect mysnap:serial-port
 
-  (source: snap-docs, score: 0.9512)
+  Sources
+    [1] Snapcraft interfaces reference — https://snapcraft.io/docs/supported-interfaces
+    [2] serial-port-guide.pdf
 
 » exit
 Closing chat
@@ -1427,7 +1482,17 @@ Results are written to `batch-results-YYYYMMDD-HHMMSS.json` in the current worki
       "id": "security-policy",
       "question": "What is the data retention policy?",
       "answer": "Data is retained for 90 days by default, configurable up to 7 years for compliance tiers.",
-      "domain": "C*"
+      "domain": "C*",
+      "sources": [
+        {
+          "marker": 1,
+          "key": "data-retention-policy",
+          "label": "Data Retention Policy",
+          "href": "https://example.com/policies/data-retention.pdf",
+          "base": "compliance",
+          "tag": "canonical"
+        }
+      ]
     }
   ]
 }
@@ -1439,6 +1504,16 @@ Two fields record how each answer was produced, and both are omitted when they d
 |---|---|---|
 | `prompt` | A `prompt_ref` resolved | The `answer_system_prompt` variant that drove the run, as `variant@version`. Absent for the built-in default prompt and for an inline `prompt`. |
 | `results[].domain` | The question matched a `domains` entry | The `match` pattern of the entry that applied, which identifies exactly one entry. Absent when the manifest carried no `domains` block, or when the question matched no entry. |
+
+Every result also carries `sources`: the documents its answer cited, in first-cited order. The
+model cites retrieved documents with `[1]`-style markers; those markers are validated and then
+removed from `answer`, so the prose is ready to paste into a deliverable and the citations live in
+their own field. Each source has its `marker` number within that answer, the document `key` (its
+source ID), a human-readable `label`, an `href` link when one was recorded at ingest (see
+[source links](#knowledge-ingest)), the knowledge `base`, and its knowledge-label `tag`. Unlike chat,
+batch answers stay strict because they feed procurement documents: an answer whose model output
+cited none of the retrieved documents is withheld, so `answer` is the fixed no-answer response and
+`sources` is empty, as it is when retrieval returned nothing.
 
 > **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run)
 > prints the error and moves on. All answers collected before the failure are still written to the

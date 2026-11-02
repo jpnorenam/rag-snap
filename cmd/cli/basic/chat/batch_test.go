@@ -1,9 +1,11 @@
 package chat
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -102,7 +104,7 @@ func TestBuildRAGPromptNoDomainNoID(t *testing.T) {
 	const ragContext = "[CANONICAL] Ceph replicates objects across OSDs."
 	const question = "Describe the storage replication approach."
 
-	got := buildRAGPrompt(ragContext, "", "", question)
+	got := buildRAGPrompt(ragContext, "", "", question, false)
 	if want := preDomainRoutingTurn(ragContext, question); got != want {
 		t.Errorf("buildRAGPrompt with no domain and no id =\n%q\nwant\n%q", got, want)
 	}
@@ -171,7 +173,7 @@ func TestBuildRAGPrompt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildRAGPrompt(ragContext, tt.domainContext, tt.id, "SR-IOV")
+			got := buildRAGPrompt(ragContext, tt.domainContext, tt.id, "SR-IOV", false)
 			if got != tt.want {
 				t.Errorf("buildRAGPrompt =\n%q\nwant\n%q", got, tt.want)
 			}
@@ -301,8 +303,39 @@ questions:
 func TestBuildRAGPromptLabelsTheDomainContext(t *testing.T) {
 	// Generated prompts tell the answering model that text under this label is
 	// guidance, not a source, so the label must actually appear in the turn.
-	got := buildRAGPrompt("passages", "In-country support: address the support model.", "T4-ii", "Is support local?")
+	got := buildRAGPrompt("passages", "In-country support: address the support model.", "T4-ii", "Is support local?", true)
 	if !strings.Contains(got, RequirementDomainLabel+": In-country support") {
 		t.Errorf("the domain context is not introduced by %q:\n%s", RequirementDomainLabel, got)
+	}
+}
+
+func TestBatchResultCarriesSourcesAndMarkerFreeAnswer(t *testing.T) {
+	q := BatchQuestion{ID: "SEC-1", Question: "Is FIPS supported?"}
+	retrieved := retrievedSources("fips.pdf", "pro.md")
+
+	r := batchResultFor(q, "SEC*", "The solution provides FIPS 140-3 certified modules. [1][7][2]", retrieved, false)
+	if r.Answer != "The solution provides FIPS 140-3 certified modules." {
+		t.Errorf("answer = %q, want marker-free prose", r.Answer)
+	}
+	if got := markers(r.Sources); !reflect.DeepEqual(got, []int{1, 2}) {
+		t.Errorf("sources markers = %v, want [1 2] (invented [7] dropped)", got)
+	}
+	if r.Domain != "SEC*" || r.ID != "SEC-1" {
+		t.Errorf("result lost its id/domain: %+v", r)
+	}
+}
+
+func TestBatchResultUncitedAnswerIsWithheld(t *testing.T) {
+	q := BatchQuestion{Question: "Is FIPS supported?"}
+	r := batchResultFor(q, "", "The solution provides FIPS modules.", retrievedSources("fips.pdf"), false)
+	if r.Answer != noContextAnswer {
+		t.Errorf("answer = %q, want the no-answer response", r.Answer)
+	}
+	if r.Sources == nil || len(r.Sources) != 0 {
+		t.Errorf("sources = %#v, want an empty (non-nil) list", r.Sources)
+	}
+	data, _ := json.Marshal(r)
+	if !strings.Contains(string(data), `"sources":[]`) {
+		t.Errorf("JSON = %s, want an empty sources array", data)
 	}
 }

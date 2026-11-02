@@ -36,6 +36,13 @@ func GiteaRepoNamespace(baseURL, owner, repo string) string {
 	return fmt.Sprintf("%s/%s/%s", host, owner, repo)
 }
 
+// GiteaWebURL returns the browsable link to a file at a branch on a Gitea
+// instance.
+func GiteaWebURL(baseURL, owner, repo, branch, path string) string {
+	return fmt.Sprintf("%s/%s/%s/src/branch/%s/%s", strings.TrimSuffix(baseURL, "/"),
+		escapeSegments(owner), escapeSegments(repo), escapeSegments(branch), escapeSegments(path))
+}
+
 // ListGiteaRepoFiles returns all files in a Gitea repository matching the given
 // extensions and optional path prefix, plus whether the upstream tree listing
 // was truncated. It resolves the branch to a commit SHA then fetches the full
@@ -94,6 +101,7 @@ func ListGiteaRepoFiles(baseURL, owner, repo, branch, pathFilter string, extensi
 			Path:     item.Path,
 			RawURL:   rawURL,
 			SourceID: RepoSourceID(GiteaRepoNamespace(baseURL, owner, repo), item.Path),
+			WebURL:   GiteaWebURL(baseURL, owner, repo, branch, item.Path),
 		})
 	}
 	return entries, treeResp.Truncated, nil

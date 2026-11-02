@@ -34,7 +34,9 @@ func renderTranscript(turns []chatstore.Turn) {
 		if t.Role == "assistant" {
 			label = "Assistant"
 		}
-		fmt.Printf("%s\n%s\n\n", color.HiBlackString("— %s —", label), t.Content)
+		fmt.Printf("%s\n%s\n", color.HiBlackString("— %s —", label), t.Content)
+		fmt.Print(formatSourcesBlock(citedFromStore(t.Sources)))
+		fmt.Println()
 	}
 }
 
@@ -89,7 +91,7 @@ func saveDirectChat(store *chatstore.Store, chatID, title, model string, session
 		Title: strings.TrimSpace(title),
 		Model: model,
 		Bases: activeBaseNames(session),
-		Turns: historyToTurns(messages),
+		Turns: historyToTurns(messages, session.AnswerSources),
 	})
 	if err != nil {
 		if errors.Is(err, chatstore.ErrEmpty) {
@@ -133,6 +135,7 @@ func resumeDirectChat(store *chatstore.Store, systemPrompt string, session *Sess
 		fmt.Printf("Note: skipping knowledge base(s) that no longer exist: %s\n", strings.Join(dropped, ", "))
 	}
 
+	restoreCitations(session, saved.Turns)
 	renderTranscript(saved.Turns)
 	fmt.Printf("Resumed %q. Continue the conversation below.\n", saved.Title)
 	return turnsToHistory(systemPrompt, saved.Turns), saved.ID, true
@@ -208,17 +211,41 @@ func relativeTime(t time.Time) string {
 // the system prompt is freshly resolved on resume, so a customization applies to
 // resumed sessions the same way it applies to new ones. Assistant <think> spans
 // are stripped by the store on save, so callers need not pre-clean here.
-func historyToTurns(messages []openai.ChatCompletionMessageParamUnion) []chatstore.Turn {
+// answerSources holds the cited sources of each assistant message, in order
+// (see Session.AnswerSources); the k-th assistant turn gets answerSources[k].
+func historyToTurns(messages []openai.ChatCompletionMessageParamUnion, answerSources [][]CitedSource) []chatstore.Turn {
 	turns := make([]chatstore.Turn, 0, len(messages))
+	answer := 0
 	for _, m := range messages {
 		switch {
 		case m.OfUser != nil:
 			turns = append(turns, chatstore.Turn{Role: "user", Content: m.OfUser.Content.OfString.Or("")})
 		case m.OfAssistant != nil:
-			turns = append(turns, chatstore.Turn{Role: "assistant", Content: m.OfAssistant.Content.OfString.Or("")})
+			turn := chatstore.Turn{Role: "assistant", Content: m.OfAssistant.Content.OfString.Or("")}
+			if answer < len(answerSources) {
+				turn.Sources = sourcesToStore(answerSources[answer])
+			}
+			answer++
+			turns = append(turns, turn)
 		}
 	}
 	return turns
+}
+
+// restoreCitations rebuilds a session's citation state from saved turns: the
+// per-answer sources a later save writes back, and a registry seeded so a
+// previously cited document keeps its marker and a new one numbers after them.
+func restoreCitations(session *Session, turns []chatstore.Turn) {
+	session.AnswerSources = nil
+	session.Citations = NewCitationRegistry()
+	for _, t := range turns {
+		if t.Role != "assistant" {
+			continue
+		}
+		sources := citedFromStore(t.Sources)
+		session.AnswerSources = append(session.AnswerSources, sources)
+		session.Citations.Seed(sources)
+	}
 }
 
 // turnsToHistory rebuilds a message list from a system prompt and saved turns,
@@ -236,4 +263,46 @@ func turnsToHistory(systemPrompt string, turns []chatstore.Turn) []openai.ChatCo
 		}
 	}
 	return messages
+}
+
+// sourcesToStore converts cited sources to their saved-chat form.
+func sourcesToStore(sources []CitedSource) []chatstore.Source {
+	if len(sources) == 0 {
+		return nil
+	}
+	out := make([]chatstore.Source, len(sources))
+	for i, s := range sources {
+		out[i] = chatstore.Source{
+			Marker:  s.Marker,
+			Key:     s.Key,
+			Label:   s.Label,
+			Href:    s.Href,
+			Locator: s.Locator,
+			Base:    s.Base,
+			Tag:     s.Tag,
+		}
+	}
+	return out
+}
+
+// citedFromStore converts saved-chat (or wire) sources back to cited sources.
+func citedFromStore(sources []chatstore.Source) []CitedSource {
+	if len(sources) == 0 {
+		return nil
+	}
+	out := make([]CitedSource, len(sources))
+	for i, s := range sources {
+		out[i] = CitedSource{
+			Marker: s.Marker,
+			Citation: knowledge.Citation{
+				Key:     s.Key,
+				Label:   s.Label,
+				Href:    s.Href,
+				Locator: s.Locator,
+				Base:    s.Base,
+				Tag:     s.Tag,
+			},
+		}
+	}
+	return out
 }

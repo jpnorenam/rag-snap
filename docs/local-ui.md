@@ -32,7 +32,8 @@ rag-cli.rag ui
 
 In the browser, type a question and press **Enter**. The UI opens a websocket to the daemon,
 which streams the model's answer back token by token. If you keep knowledge bases, select them
-from the chips at the top of the page to ground answers in your documents.
+from the chips at the top of the page to ground answers in your documents; the `default` base,
+when it exists, starts selected, as it does in the CLI.
 
 > For obtaining a Bedrock API key step by step, see the [Bedrock guide](bedrock_guide.md).
 
@@ -73,13 +74,34 @@ unavailable the indicator silently falls back to polling, so it keeps working wi
 banner as long as the REST API is reachable. This mirrors the CLI, where the same operations are
 driven from commands like `rag-cli.rag k ingest …`.
 
+### Chat and search: citations
+
+Grounded chat answers cite the documents they came from. As an answer streams, each `[1]`-style
+marker at the end of a paragraph renders as a small numbered **source chip**: hover it (or reach it
+with the keyboard) for the document's name, and activate it to open the document in a new tab when
+a link was recorded at ingest. A document keeps its number for the whole conversation. When the
+answer finishes, a **Sources** list under it names every cited document, linked where possible, with
+the knowledge base it came from. Resumed chats show the same chips and Sources lists they were saved
+with; chats saved before citations existed show plain answers.
+
+When a knowledge base is active and the answer cites none of the retrieved documents, the answer is
+kept, and where the Sources list would be a muted line reads *No relevant sources: this answer cites
+none of the retrieved documents.* With no knowledge base active neither is shown, and any stray `[n]`
+marker in such an answer is dropped rather than shown.
+
+On the **Search** page each result's header shows the document's citation — its title or file name,
+linked when a link was recorded — with the source ID kept in the footer.
+
 ### Knowledge bases: ingesting sources
 
 The **Knowledge bases** section manages bases and their sources in the browser. Opening a base
 shows its sources; **Ingest document** ingests a single source, with four modes:
 
 - **Upload file** / **From URL** — a document upload or a static page crawl, with a source
-  identifier (prefilled from the filename) and an optional knowledge label.
+  identifier (prefilled from the filename) and an optional knowledge label. An upload also takes an
+  optional **Source URL** — where the document lives on the web (an absolute `http(s)` URL) — which
+  citations link to; a URL ingest records its URL automatically, and so does each file of a
+  repository ingest.
 - **GitHub repo** / **Gitea repo** — browser parity with the repository job types of
   `rag-cli.rag k ingest --batch`. Give the repository (`owner/repo` for GitHub, the full URL for
   Gitea), an optional branch (defaults to the repository's default branch), an optional path
@@ -217,8 +239,10 @@ rather than shown blank, and **Export JSON** downloads the results in the same f
 writes. A question that was routed through a `domains` entry shows **Domain** with that entry's
 pattern above its answer — this is the authoritative record of what applied, taken from the run
 itself rather than recomputed. Nothing is shown for a question that matched no entry, or for a
-results file written before domain routing existed. (Per-question source provenance is not shown
-yet — the batch API does not return it.)
+results file written before domain routing existed. A **Sources** disclosure under the answer lists
+the documents it cited, by name and linked where a link was recorded; batch answers carry no
+`[1]` markers in their text, so the sources live only in this list. Results files written before
+citations existed show no sources.
 
 ---
 

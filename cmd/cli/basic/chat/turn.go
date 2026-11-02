@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
@@ -24,6 +25,21 @@ const (
 // StreamFunc receives streamed model output as it is produced. Returning a
 // non-nil error aborts streaming (e.g. the client disconnected).
 type StreamFunc func(kind TokenKind, content string) error
+
+// SourcesFunc receives the documents retrieved for a turn, before the first
+// token is streamed, so a client can resolve citation markers as they arrive.
+// Returning a non-nil error aborts the turn.
+type SourcesFunc func(sources []CitedSource) error
+
+// TurnResult is the outcome of one answered prompt once its citations have
+// been validated.
+type TurnResult struct {
+	// Sources are the documents the answer cited, in first-cited order.
+	Sources []CitedSource
+	// Unsourced reports that retrieval supplied context but the answer cited
+	// none of it. The answer is kept; clients flag it as having no sources.
+	Unsourced bool
+}
 
 // NewInferenceClient builds an OpenAI-compatible client for baseURL, applying
 // CHAT_API_KEY when set.
@@ -110,13 +126,14 @@ func (ls *LiveSession) Model() string { return ls.params.Model }
 // record. It is called before the session's websocket is driven.
 func (ls *LiveSession) Restore(turns []chatstore.Turn, chatID string) {
 	ls.params.Messages = turnsToHistory(ls.systemPrompt, turns)
+	restoreCitations(ls.session, turns)
 	ls.chatID = chatID
 }
 
 // Turns returns the conversation so far as store turns (system prompt excluded),
 // ready to persist.
 func (ls *LiveSession) Turns() []chatstore.Turn {
-	return historyToTurns(ls.params.Messages)
+	return historyToTurns(ls.params.Messages, ls.session.AnswerSources)
 }
 
 // SetPromptRef records the provenance reference of the session's resolved system
@@ -163,25 +180,33 @@ func (ls *LiveSession) ActiveBases() []string {
 // REPL's handlePrompt: the same rewrite → retrieve → augment → stream pipeline.
 // Retrieval augmentation is applied only when a knowledge client and at least
 // one active base are present; with no active bases the prompt is answered
-// without retrieval.
-func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc) error {
+// without retrieval. When retrieval supplied context, emitSources receives the
+// retrieved documents before streaming starts, and the returned TurnResult
+// carries the validated citations (see citeAnswer).
+func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc, emitSources SourcesFunc) (TurnResult, error) {
 	hasRAG := ls.session.KnowledgeClient != nil && len(ls.session.ActiveIndexes) > 0
 
 	lexicalQuery := text
 	ragContext := ""
+	var retrieved []CitedSource
 	if hasRAG {
 		lexicalQuery = rewriteSearchQuery(ls.client, ls.params.Model, ls.params.Messages, text, ls.verbose)
-		ragContext = retrieveContext(ls.session, text, lexicalQuery, ls.verbose)
+		ragContext, retrieved = retrieveContext(ls.session, text, lexicalQuery, ls.verbose)
+	}
+	if len(retrieved) > 0 && emitSources != nil {
+		if err := emitSources(retrieved); err != nil {
+			return TurnResult{}, err
+		}
 	}
 
 	llmPrompt := text
 	if ragContext != "" {
-		llmPrompt = buildRAGPrompt(ragContext, "", "", text)
+		llmPrompt = buildRAGPrompt(ragContext, "", "", text, true)
 	} else if hasRAG {
 		// A base is active but retrieval returned nothing: inject an explicit
 		// empty-context note so the grounding rules apply and the model does
 		// not answer from parametric knowledge (matching the REPL).
-		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", "", "", text)
+		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", "", "", text, false)
 	}
 
 	// Send the augmented prompt to the API but keep only the original prompt in
@@ -196,14 +221,28 @@ func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc)
 	stream := ls.client.Chat.Completions.NewStreaming(ctx, apiParams)
 	appendParam, err := streamTurn(stream, emit)
 	if err != nil {
-		return err
+		return TurnResult{}, err
+	}
+
+	// Validate the streamed answer's citations: history keeps the normalized
+	// answer, which is flagged unsourced when it cited nothing it was given.
+	var result TurnResult
+	if appendParam != nil {
+		content, cited, uncited := citeAnswer(appendParam.OfAssistant.Content.OfString.Or(""), retrieved)
+		result = TurnResult{Sources: cited, Unsourced: uncited}
+		if uncited && ls.verbose {
+			fmt.Println("unsourced: no valid citations")
+		}
+		msg := openai.AssistantMessage(content)
+		appendParam = &msg
 	}
 
 	ls.params.Messages = append(ls.params.Messages, openai.UserMessage(text))
 	if appendParam != nil {
 		ls.params.Messages = append(ls.params.Messages, *appendParam)
+		ls.session.AnswerSources = append(ls.session.AnswerSources, result.Sources)
 	}
-	return nil
+	return result, nil
 }
 
 // streamTurn consumes the streaming completion, forwarding each delta through

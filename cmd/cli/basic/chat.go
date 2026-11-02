@@ -47,8 +47,10 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 	}
 
 	// Prefer a running daemon: it owns the session, backends, and secrets.
+	// The session starts with the default base active, matching the direct REPL.
 	if dc := daemonClient(cmd.Context); dc != nil {
-		return chat.RemoteClient(dc, llmModelName, nil, cmd.temperature, cmd.prompt)
+		defaultBase, _ := knowledge.KnowledgeBaseNameFromIndex(knowledge.DefaultIndexName())
+		return chat.RemoteClient(dc, llmModelName, []string{defaultBase}, cmd.temperature, cmd.prompt)
 	}
 
 	// Named prompt variants live in the daemon; a daemonless run cannot resolve

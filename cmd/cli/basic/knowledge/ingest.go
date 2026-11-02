@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
+	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/processing"
@@ -26,8 +29,12 @@ type IngestOptions struct {
 	// SourceID is the stable identifier used by forget and metadata.
 	SourceID string
 	// MetadataPath is stored as SourceMetadata.FilePath — the original URL for
-	// crawled sources, otherwise the file path.
+	// crawled sources, the repo-relative path for repo files, otherwise the
+	// file path. It is never a staging temp path.
 	MetadataPath string
+	// SourceURI is the canonical http(s) link a citation points at, stored as
+	// SourceMetadata.SourceURI. Empty when no URL is known.
+	SourceURI string
 	// TargetIndex is the full index name of the destination knowledge base.
 	TargetIndex string
 	// Label is the explicit label for this source. When empty, the base's
@@ -57,6 +64,14 @@ func (c *OpenSearchClient) IngestSource(ctx context.Context, tikaURL string, opt
 	metadataPath := opts.MetadataPath
 	if metadataPath == "" {
 		metadataPath = opts.FilePath
+	}
+	if opts.SourceURI != "" && !IsHTTPURL(opts.SourceURI) {
+		return fmt.Errorf("source URI %q must be an absolute http(s) URL", opts.SourceURI)
+	}
+	// Metadata indexes created before citations existed lack the source_uri
+	// keyword mapping; add it before the first write.
+	if err := c.CreateSourcesIndex(ctx); err != nil {
+		return fmt.Errorf("ensuring sources metadata index: %w", err)
 	}
 
 	// Resolve the source's label: explicit > base default > naming convention.
@@ -94,8 +109,9 @@ func (c *OpenSearchClient) IngestSource(ctx context.Context, tikaURL string, opt
 	now := time.Now().UTC().Format(DateFormat)
 	meta := SourceMetadata{
 		SourceID:      opts.SourceID,
-		FileName:      filepath.Base(opts.FilePath),
+		FileName:      OriginalFileName(metadataPath),
 		FilePath:      metadataPath,
+		SourceURI:     opts.SourceURI,
 		Checksum:      result.Checksum,
 		IndexName:     opts.TargetIndex,
 		ChunkCount:    len(result.Chunks),
@@ -135,4 +151,27 @@ func (c *OpenSearchClient) IngestSource(ctx context.Context, tikaURL string, opt
 		return fmt.Errorf("updating source status: %w", err)
 	}
 	return nil
+}
+
+// OriginalFileName derives the recorded file name from the source's original
+// input rather than the staged file Tika read: the base name of a path, the
+// last path segment of a URL, or empty when neither yields a real name.
+func OriginalFileName(metadataPath string) string {
+	var name string
+	if IsHTTPURL(metadataPath) {
+		u, err := url.Parse(metadataPath)
+		if err != nil {
+			return ""
+		}
+		name = path.Base(strings.TrimSuffix(u.Path, "/"))
+		if unescaped, err := url.PathUnescape(name); err == nil {
+			name = unescaped
+		}
+	} else {
+		name = filepath.Base(metadataPath)
+	}
+	if name == "." || name == "/" || name == "" || processing.IsTempFileName(name) {
+		return ""
+	}
+	return name
 }

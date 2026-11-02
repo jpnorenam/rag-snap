@@ -34,6 +34,17 @@ function slugify(filename: string): string {
     .replace(/^-+|-+$/g, "");
 }
 
+// isHttpUrl reports whether text is an absolute http(s) URL with a host — the
+// only form the daemon accepts as a source URI.
+export function isHttpUrl(text: string): boolean {
+  try {
+    const u = new URL(text);
+    return (u.protocol === "http:" || u.protocol === "https:") && u.host !== "";
+  } catch {
+    return false;
+  }
+}
+
 // normalizeExtensions parses a comma/space-separated extension list into the
 // dotted, lowercased, deduplicated form the daemon filters on.
 export function normalizeExtensions(text: string): string[] {
@@ -53,6 +64,7 @@ export function normalizeExtensions(text: string): string[] {
 export default function IngestModal({ name, defaultLabel, onStarted, onClose }: Props) {
   const titleId = useId();
   const urlId = useId();
+  const sourceUriId = useId();
   const sourceId = useId();
   const repoSourceId = useId();
   const branchId = useId();
@@ -65,6 +77,8 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
   const [mode, setMode] = useState<Mode>("upload");
   const [file, setFile] = useState<File | null>(null);
   const [url, setUrl] = useState("");
+  const [sourceUri, setSourceUri] = useState("");
+  const [sourceUriError, setSourceUriError] = useState<string | null>(null);
   const [sid, setSid] = useState("");
   const [sidTouched, setSidTouched] = useState(false);
   const [repoSource, setRepoSource] = useState("");
@@ -145,8 +159,14 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
     setError(null);
     setSidError(null);
     setLabelError(null);
+    setSourceUriError(null);
     if (mode === "upload" && !file) {
       setError("Choose a file to ingest.");
+      return;
+    }
+    const trimmedSourceUri = sourceUri.trim();
+    if (mode === "upload" && trimmedSourceUri && !isHttpUrl(trimmedSourceUri)) {
+      setSourceUriError("Enter an absolute http(s) URL, e.g. https://example.com/spec.pdf.");
       return;
     }
     if (mode === "url" && !/^https?:\/\//.test(url.trim())) {
@@ -169,7 +189,14 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
     try {
       let op: OperationView;
       if (mode === "upload") {
-        op = await ingestFile(name, file as File, sid.trim(), force, trimmedLabel || undefined);
+        op = await ingestFile(
+          name,
+          file as File,
+          sid.trim(),
+          force,
+          trimmedLabel || undefined,
+          trimmedSourceUri || undefined
+        );
       } else if (mode === "url") {
         op = await ingestUrl(name, url.trim(), sid.trim(), force, trimmedLabel || undefined);
       } else {
@@ -262,6 +289,32 @@ export default function IngestModal({ name, defaultLabel, onStarted, onClose }: 
                 onFile={chooseFile}
               />
               {error && <p className="p-form-validation__message">{error}</p>}
+            </div>
+          )}
+
+          {mode === "upload" && (
+            <div className={`p-form__group ${sourceUriError ? "p-form-validation is-error" : ""}`}>
+              <label htmlFor={sourceUriId}>Source URL (optional)</label>
+              <input
+                id={sourceUriId}
+                type="url"
+                value={sourceUri}
+                autoComplete="off"
+                placeholder="https://example.com/spec.pdf"
+                aria-invalid={sourceUriError ? true : undefined}
+                onChange={(e) => {
+                  setSourceUri(e.target.value);
+                  setSourceUriError(null);
+                }}
+              />
+              {sourceUriError ? (
+                <p className="p-form-validation__message">{sourceUriError}</p>
+              ) : (
+                <p className="p-form-help-text">
+                  Where this document lives on the web. Chat answers and search results link to it
+                  when they cite the document.
+                </p>
+              )}
             </div>
           )}
 

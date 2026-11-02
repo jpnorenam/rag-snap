@@ -76,3 +76,6 @@ hackathon-ux-harness-kit*/
 /*.txt
 /*.yaml
 !/rest-api.yaml
+
+# IDE
+/.idea/

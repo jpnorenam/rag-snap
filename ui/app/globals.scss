@@ -428,6 +428,66 @@ $sidebar-accent: #e95420; // Ubuntu orange
   }
 }
 
+// Citation marker chip ([n] in an answer): a compact inline p-chip showing the
+// marker number; links to the source when it has one.
+.md__cite {
+  margin: 0 0 0 0.15rem;
+  padding: 0 0.4rem;
+  vertical-align: baseline;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  text-decoration: none;
+
+  .p-chip__value {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+// --- sources list ---
+// The documents an answer cited (components/common/SourcesList.tsx), shown
+// under a chat answer and inside a batch result's Sources disclosure.
+.sources-list {
+  font-size: 0.875rem;
+}
+
+.sources-list__label {
+  display: block;
+  margin-bottom: 0.25rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--vf-color-text-muted);
+}
+
+.sources-list__items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.sources-list__item {
+  margin: 0;
+  padding: 0.1rem 0;
+  word-break: break-word;
+}
+
+.sources-list__marker {
+  margin-right: 0.4rem;
+  color: var(--vf-color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.chat-message__sources {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--vf-color-border-default);
+}
+
+.chat-message__unsourced {
+  margin-bottom: 0;
+  color: var(--vf-color-text-muted);
+}
+
 .chat-message__think {
   margin-bottom: 0.5rem;
   padding: 0.5rem 0.75rem;
