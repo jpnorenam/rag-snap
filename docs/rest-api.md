@@ -270,7 +270,8 @@ SOCK=/var/snap/rag-cli/common/ragd/unix.socket
 # Discover the API: version, auth state, and feature extensions
 curl --unix-socket "$SOCK" http://ragd/
 
-# Server info: effective (secret-free) config summary and backend readiness
+# Server info: snap version and build commit, effective (secret-free) config
+# summary, and backend readiness
 curl --unix-socket "$SOCK" http://ragd/1.0
 
 # List knowledge bases (sync)
@@ -335,7 +336,7 @@ websocket URL to dial for streamed tokens and `<think>` blocks.
 | Method & path | Kind | Purpose |
 |---|---|---|
 | `GET /` | sync | API discovery: version, auth state, `api_extensions` |
-| `GET /1.0` | sync | Server info: config summary + backend readiness |
+| `GET /1.0` | sync | Server info: snap `version` and build `commit`, config summary, backend readiness |
 | `GET /1.0/operations`, `GET /1.0/operations/{id}` | sync | List / inspect operations |
 | `GET /1.0/operations/{id}/wait` | sync | Long-poll an operation to completion |
 | `DELETE /1.0/operations/{id}` | sync | Cancel a cancellable operation |

@@ -47,6 +47,12 @@ the docs in a new tab. The active section is marked with an orange left-border i
 browser tab title tracks the section you are on. On narrow windows the rail collapses to an
 icon-only strip; hover an icon for its label.
 
+The very bottom of the rail shows the running build: the snap version and the commit it was built
+from, e.g. `v0.0.9 · cd3ac8925556`. A `-dirty` suffix means the snap was built from a tree with
+uncommitted changes, and `dev` means ragd isn't running from the snap. Include it when reporting a
+problem. It's hidden when the rail collapses; the **ragd** card on the Status page shows the same
+information.
+
 ### Background operations
 
 Long-running work the daemon performs on your behalf — ingesting documents, running an answer
@@ -153,8 +159,8 @@ always shown, never colour alone), its endpoint, and its own details:
   init` prints them) *and* the models OpenSearch actually has **deployed**. If a configured model
   is not deployed, the card says so — that combination breaks retrieval, and without this you would
   not find out until a search failed. Fix it with `rag-cli.rag knowledge init`.
-- **Inference** shows the LLM it serves, **Tika** its version, and **ragd** its API version and
-  listeners.
+- **Inference** shows the LLM it serves, **Tika** its version, and **ragd** its snap version, the
+  commit it was built from, its API version, and its listeners.
 
 The daemon probes the services when you ask, not on a timer: the page checks on load and on
 **Refresh**, and shows when it last checked. An unreachable service degrades on its own card,

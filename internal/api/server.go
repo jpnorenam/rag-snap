@@ -13,6 +13,7 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
+	"github.com/jpnorenam/rag-snap/internal/buildinfo"
 	"github.com/jpnorenam/rag-snap/internal/chatstore"
 	"github.com/jpnorenam/rag-snap/internal/webui"
 )
@@ -409,19 +410,26 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 // Return server information.
 //
 // Server metadata plus a read-only, secret-free summary of effective config and
-// backend readiness for diagnostics.
+// backend readiness for diagnostics. "version" is the installed snap version
+// ("dev" outside a snap) and "commit" the source commit the daemon was built
+// from (a "-dirty" suffix marks uncommitted changes; omitted when unknown).
 //
 //	Responses:
 //	  200: syncResponse
 //	  403: errorResponse
 func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
-	respondSync(w, map[string]any{
+	info := map[string]any{
+		"version":        buildinfo.Version(),
 		"api_version":    apiVersion,
 		"api_extensions": s.extensions(),
 		"auth":           s.authState(r),
 		"backends":       s.backends.snapshot(),
 		"config":         s.configSummary(),
-	})
+	}
+	if c := buildinfo.Commit(); c != "" {
+		info["commit"] = c
+	}
+	respondSync(w, info)
 }
 
 // extensions returns the advertised feature list for this daemon.

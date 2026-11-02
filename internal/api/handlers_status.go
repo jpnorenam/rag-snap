@@ -13,6 +13,7 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
+	"github.com/jpnorenam/rag-snap/internal/buildinfo"
 )
 
 // Service states reported by GET /1.0/status. A service is "not configured" when no
@@ -54,10 +55,11 @@ type serviceStatus struct {
 	// Inference detail.
 	LLMModel string `json:"llm_model,omitempty"`
 
-	// Tika detail.
+	// Tika and ragd detail: the service's version (for ragd, the snap version).
 	Version string `json:"version,omitempty"`
 
 	// ragd detail.
+	Commit     string     `json:"commit,omitempty"`
 	APIVersion string     `json:"api_version,omitempty"`
 	Listeners  *listeners `json:"listeners,omitempty"`
 }
@@ -311,6 +313,8 @@ func (s *Server) ragdStatus() serviceStatus {
 
 	return serviceStatus{
 		State:      serviceRunning,
+		Version:    buildinfo.Version(),
+		Commit:     buildinfo.Commit(),
 		APIVersion: apiVersion,
 		Listeners:  l,
 	}
