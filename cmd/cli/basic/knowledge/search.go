@@ -71,12 +71,12 @@ func (c *OpenSearchClient) hybridSearch(
 	}
 
 	path := fmt.Sprintf("/%s/_search?search_pipeline=%s", indexName, searchPipelineName)
-	req, err := c.newAuthenticatedRequest(http.MethodGet, path, bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return nil, fmt.Errorf("executing search request: %w", err)
 	}

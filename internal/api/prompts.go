@@ -204,7 +204,7 @@ func (p *promptStore) resolve() chat.PromptConfig {
 	return cfg
 }
 
-// resolveSlot resolves one generation slot honouring an explicit variant
+// resolveSlot resolves one generation slot honoring an explicit variant
 // selection over the active pointer. An empty selection uses the active pointer
 // (or the built-in default); the reserved name "default" forces the built-in
 // default regardless of the active pointer. A named selection that does not

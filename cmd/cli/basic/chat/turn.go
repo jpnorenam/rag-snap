@@ -167,10 +167,9 @@ func (ls *LiveSession) ActiveBases() []string {
 func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc) error {
 	hasRAG := ls.session.KnowledgeClient != nil && len(ls.session.ActiveIndexes) > 0
 
-	lexicalQuery := text
 	ragContext := ""
 	if hasRAG {
-		lexicalQuery = rewriteSearchQuery(ls.client, ls.params.Model, ls.params.Messages, text, ls.verbose)
+		lexicalQuery := rewriteSearchQuery(ls.client, ls.params.Model, ls.params.Messages, text, ls.verbose)
 		ragContext = retrieveContext(ls.session, text, lexicalQuery, ls.verbose)
 	}
 
@@ -186,7 +185,7 @@ func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc)
 
 	// Send the augmented prompt to the API but keep only the original prompt in
 	// history, mirroring the REPL's handlePrompt.
-	apiMessages := make([]openai.ChatCompletionMessageParamUnion, len(ls.params.Messages))
+	apiMessages := make([]openai.ChatCompletionMessageParamUnion, len(ls.params.Messages), len(ls.params.Messages)+1)
 	copy(apiMessages, ls.params.Messages)
 	apiMessages = append(apiMessages, openai.UserMessage(llmPrompt))
 
@@ -207,7 +206,7 @@ func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc)
 }
 
 // streamTurn consumes the streaming completion, forwarding each delta through
-// emit (labelled think vs answer based on <think> blocks), and returns the
+// emit (labeled think vs answer based on <think> blocks), and returns the
 // assistant message to append to history. It mirrors the REPL's processStream
 // but writes to a callback instead of the terminal.
 func streamTurn(stream *ssestream.Stream[openai.ChatCompletionChunk], emit StreamFunc) (*openai.ChatCompletionMessageParamUnion, error) {

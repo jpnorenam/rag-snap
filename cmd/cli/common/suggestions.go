@@ -6,6 +6,7 @@ import (
 	"github.com/canonical/go-snapctl/env"
 )
 
+// SuggestServerStartup suggests retrying once the server is ready.
 func SuggestServerStartup() string {
 	return "Try again when the server is ready."
 }
@@ -20,10 +21,12 @@ func daemonServiceName() string {
 	return instanceName + ".ragd"
 }
 
+// SuggestServerLogs returns the command that shows the ragd daemon logs.
 func SuggestServerLogs() string {
 	return fmt.Sprintf("Run \"snap logs %s\" to see the server logs.", daemonServiceName())
 }
 
+// SuggestStartServer returns the command that starts the ragd daemon.
 func SuggestStartServer() string {
 	return fmt.Sprintf("Run \"sudo snap start %s\" to start the server.", daemonServiceName())
 }
@@ -39,8 +42,8 @@ func SuggestSetModelID(key, value string) string {
 	return fmt.Sprintf("Run \"sudo %s.rag set --package %s=%q\" to configure it.", instanceName, key, value)
 }
 
+// SuggestServiceManagement lists the snap commands that manage the snap's services.
 func SuggestServiceManagement() string {
-
 	instanceName := env.SnapInstanceName()
 	if instanceName == "" { // not a snap
 		instanceName = "<snap-instance-name>"

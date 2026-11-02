@@ -9,7 +9,7 @@
 //
 // ragd exposes knowledge management, hybrid search, interactive chat, and batch
 // answering over a local unix socket. Every JSON response uses a uniform
-// sync/async/error envelope; long-running work is modelled as operations with a
+// sync/async/error envelope; long-running work is modeled as operations with a
 // companion events websocket. Local access is authenticated by socket peer
 // credentials (root or a member of the configured group); there is no
 // per-route authorization.

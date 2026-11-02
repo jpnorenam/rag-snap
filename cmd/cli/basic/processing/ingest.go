@@ -119,7 +119,7 @@ func extractMarkdown(tika *TikaClient, filePath string) (string, error) {
 }
 
 // checksumAndSize computes the SHA-256 hex digest and file size.
-func checksumAndSize(filePath string) (string, int64, error) {
+func checksumAndSize(filePath string) (checksum string, size int64, err error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return "", 0, err

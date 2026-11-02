@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+// Default models registered by `knowledge init`, and the model group they
+// are registered under.
 const (
 	DefaultSentenceTransformerName    = "huggingface/sentence-transformers/msmarco-distilbert-base-tas-b"
 	defaultSentenceTransformerVersion = "1.0.2"
@@ -56,12 +58,12 @@ func (c *OpenSearchClient) findModelGroup(ctx context.Context, name string) (str
 		return "", fmt.Errorf("error marshaling search query: %w", err)
 	}
 
-	req, err := c.newAuthenticatedRequest(http.MethodGet, "/_plugins/_ml/model_groups/_search", bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, "/_plugins/_ml/model_groups/_search", bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return "", fmt.Errorf("error executing search request: %w", err)
 	}
@@ -100,12 +102,12 @@ func (c *OpenSearchClient) createModelGroup(ctx context.Context, name string) (s
 		return "", fmt.Errorf("error marshaling request body: %w", err)
 	}
 
-	req, err := c.newAuthenticatedRequest(http.MethodPost, "/_plugins/_ml/model_groups/_register", bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, "/_plugins/_ml/model_groups/_register", bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return "", fmt.Errorf("error executing register request: %w", err)
 	}
@@ -319,12 +321,12 @@ func (c *OpenSearchClient) findModelInGroup(
 		return "", fmt.Errorf("error marshaling search query: %w", err)
 	}
 
-	req, err := c.newAuthenticatedRequest(http.MethodGet, "/_plugins/_ml/models/_search", bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, "/_plugins/_ml/models/_search", bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return "", fmt.Errorf("error executing search request: %w", err)
 	}
@@ -380,12 +382,12 @@ func (c *OpenSearchClient) ListDeployedModels(ctx context.Context) ([]DeployedMo
 		return nil, fmt.Errorf("error marshaling search query: %w", err)
 	}
 
-	req, err := c.newAuthenticatedRequest(http.MethodPost, "/_plugins/_ml/models/_search", bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, "/_plugins/_ml/models/_search", bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return nil, fmt.Errorf("error executing search request: %w", err)
 	}
@@ -417,12 +419,12 @@ func (c *OpenSearchClient) ListDeployedModels(ctx context.Context) ([]DeployedMo
 
 // getModelState retrieves the current state of a model.
 func (c *OpenSearchClient) getModelState(ctx context.Context, modelID string) (string, error) {
-	req, err := c.newAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/_plugins/_ml/models/%s", modelID), nil)
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, fmt.Sprintf("/_plugins/_ml/models/%s", modelID), nil)
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return "", fmt.Errorf("error getting model: %w", err)
 	}
@@ -463,12 +465,12 @@ func (c *OpenSearchClient) registerModel(
 		return "", fmt.Errorf("error marshaling request body: %w", err)
 	}
 
-	req, err := c.newAuthenticatedRequest(http.MethodPost, "/_plugins/_ml/models/_register", bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, "/_plugins/_ml/models/_register", bytes.NewReader(bodyBytes))
 	if err != nil {
 		return "", fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return "", fmt.Errorf("error executing register request: %w", err)
 	}
@@ -498,12 +500,12 @@ func (c *OpenSearchClient) registerModel(
 
 // deployModel deploys a registered model.
 func (c *OpenSearchClient) deployModel(ctx context.Context, modelID string) error {
-	req, err := c.newAuthenticatedRequest(http.MethodPost, fmt.Sprintf("/_plugins/_ml/models/%s/_deploy", modelID), nil)
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, fmt.Sprintf("/_plugins/_ml/models/%s/_deploy", modelID), nil)
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return fmt.Errorf("error executing deploy request: %w", err)
 	}
@@ -530,12 +532,12 @@ func (c *OpenSearchClient) waitForTaskAndGetModelID(ctx context.Context, taskID 
 			return "", fmt.Errorf("timeout waiting for task %s to complete", taskID)
 		}
 
-		req, err := c.newAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/_plugins/_ml/tasks/%s", taskID), nil)
+		req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, fmt.Sprintf("/_plugins/_ml/tasks/%s", taskID), nil)
 		if err != nil {
 			return "", fmt.Errorf("error creating request: %w", err)
 		}
 
-		resp, err := c.client.Client.Perform(req.WithContext(ctx))
+		resp, err := c.client.Client.Perform(req)
 		if err != nil {
 			return "", fmt.Errorf("error getting task status: %w", err)
 		}
@@ -574,12 +576,12 @@ func (c *OpenSearchClient) waitForModelState(ctx context.Context, modelID, desir
 			return fmt.Errorf("timeout waiting for model %s to reach state %s", modelID, desiredState)
 		}
 
-		req, err := c.newAuthenticatedRequest(http.MethodGet, fmt.Sprintf("/_plugins/_ml/models/%s", modelID), nil)
+		req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, fmt.Sprintf("/_plugins/_ml/models/%s", modelID), nil)
 		if err != nil {
 			return fmt.Errorf("error creating request: %w", err)
 		}
 
-		resp, err := c.client.Client.Perform(req.WithContext(ctx))
+		resp, err := c.client.Client.Perform(req)
 		if err != nil {
 			return fmt.Errorf("error getting model status: %w", err)
 		}

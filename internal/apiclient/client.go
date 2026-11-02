@@ -95,14 +95,14 @@ func (c *Client) SocketPath() string { return c.socketPath }
 func (c *Client) trusted() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	env, err := c.do(ctx, http.MethodGet, "/", "", nil)
+	envlp, err := c.do(ctx, http.MethodGet, "/", "", nil)
 	if err != nil {
 		return false
 	}
 	var root struct {
 		Auth string `json:"auth"`
 	}
-	if err := json.Unmarshal(env.Metadata, &root); err != nil {
+	if err := json.Unmarshal(envlp.Metadata, &root); err != nil {
 		return false
 	}
 	return root.Auth == "trusted"
@@ -110,16 +110,16 @@ func (c *Client) trusted() bool {
 
 // Sync issues a request expecting a sync response and unmarshals its metadata
 // into out (when non-nil). It returns an error for error envelopes.
-func (c *Client) Sync(ctx context.Context, method, path string, body any, out any) error {
-	env, err := c.doJSON(ctx, method, path, body)
+func (c *Client) Sync(ctx context.Context, method, path string, body, out any) error {
+	envlp, err := c.doJSON(ctx, method, path, body)
 	if err != nil {
 		return err
 	}
-	if env.Type == responseTypeError {
-		return apiError(env)
+	if envlp.Type == responseTypeError {
+		return apiError(envlp)
 	}
-	if out != nil && len(env.Metadata) > 0 {
-		return json.Unmarshal(env.Metadata, out)
+	if out != nil && len(envlp.Metadata) > 0 {
+		return json.Unmarshal(envlp.Metadata, out)
 	}
 	return nil
 }
@@ -127,17 +127,17 @@ func (c *Client) Sync(ctx context.Context, method, path string, body any, out an
 // Async issues a request expecting an async response and returns the operation
 // URL. It returns an error for error envelopes.
 func (c *Client) Async(ctx context.Context, method, path string, body any) (string, error) {
-	env, err := c.doJSON(ctx, method, path, body)
+	envlp, err := c.doJSON(ctx, method, path, body)
 	if err != nil {
 		return "", err
 	}
-	if env.Type == responseTypeError {
-		return "", apiError(env)
+	if envlp.Type == responseTypeError {
+		return "", apiError(envlp)
 	}
-	if env.Operation == "" {
-		return "", fmt.Errorf("expected an async operation but got a %q response", env.Type)
+	if envlp.Operation == "" {
+		return "", fmt.Errorf("expected an async operation but got a %q response", envlp.Type)
 	}
-	return env.Operation, nil
+	return envlp.Operation, nil
 }
 
 // doJSON encodes body as JSON (when non-nil) and performs the request.
@@ -195,19 +195,19 @@ func (c *Client) doRaw(ctx context.Context, method, path string, body io.Reader,
 }
 
 func decodeEnvelope(r io.Reader) (*envelope, error) {
-	var env envelope
-	if err := json.NewDecoder(r).Decode(&env); err != nil {
+	var envlp envelope
+	if err := json.NewDecoder(r).Decode(&envlp); err != nil {
 		return nil, fmt.Errorf("decoding ragd response: %w", err)
 	}
-	return &env, nil
+	return &envlp, nil
 }
 
 // apiError converts an error envelope into a Go error.
-func apiError(env *envelope) error {
-	if env.Error != "" {
-		return fmt.Errorf("ragd: %s", env.Error)
+func apiError(envlp *envelope) error {
+	if envlp.Error != "" {
+		return fmt.Errorf("ragd: %s", envlp.Error)
 	}
-	return fmt.Errorf("ragd returned error code %d", env.ErrorCode)
+	return fmt.Errorf("ragd returned error code %d", envlp.ErrorCode)
 }
 
 const (

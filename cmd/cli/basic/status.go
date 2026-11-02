@@ -20,6 +20,8 @@ type statusCommand struct {
 	format string
 }
 
+// StatusCommand builds the `status` command, which reports the state of the
+// configured services and models.
 func StatusCommand(ctx *common.Context) *cobra.Command {
 	var cmd statusCommand
 	cmd.Context = ctx
@@ -49,7 +51,7 @@ func (cmd *statusCommand) run(_ *cobra.Command, _ []string) error {
 
 	switch cmd.format {
 	case "json":
-		statusText, err = cmd.statusJson()
+		statusText, err = cmd.statusJSON()
 		if err != nil {
 			return fmt.Errorf("error getting json status: %w", err)
 		}
@@ -77,23 +79,24 @@ func (cmd *statusCommand) statusYaml() (string, error) {
 	}
 	yamlStr, err := yaml.Marshal(statusStr)
 	if err != nil {
-		return "", fmt.Errorf("error marshalling yaml: %w", err)
+		return "", fmt.Errorf("error marshaling yaml: %w", err)
 	}
 	return string(yamlStr), nil
 }
 
-func (cmd *statusCommand) statusJson() (string, error) {
+func (cmd *statusCommand) statusJSON() (string, error) {
 	statusStr, err := cmd.statusStruct()
 	if err != nil {
 		return "", fmt.Errorf("error getting status: %w", err)
 	}
 	jsonStr, err := json.MarshalIndent(statusStr, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("error marshalling json: %w", err)
+		return "", fmt.Errorf("error marshaling json: %w", err)
 	}
 	return string(jsonStr), nil
 }
 
+// Status is the machine-readable report printed by `status --format`.
 type Status struct {
 	Models    map[string]string `json:"models" yaml:"models"`
 	Services  map[string]string `json:"services" yaml:"services"`
@@ -119,7 +122,7 @@ func (cmd *statusCommand) statusStruct() (*Status, error) {
 		statusStr.Services[serviceApp] = service.Current
 	}
 
-	endpoints, err := serverApiUrls(cmd.Context)
+	endpoints, err := serverAPIURLs(cmd.Context)
 	if err != nil {
 		return nil, fmt.Errorf("error getting server api endpoints: %w", err)
 	}

@@ -22,44 +22,60 @@ linters:
     - prealloc       # suggest slice pre-allocation
     - usetesting     # use t.Setenv/t.TempDir etc. instead of os equivalents in tests
 
+  settings:
+    govet:
+      enable:
+        - shadow        # catch variable shadowing
+
+    revive:
+      rules:
+        - name: exported
+          arguments:
+            - disableStutteringCheck  # allow e.g. KnowledgeClient.KnowledgeBase
+        - name: var-naming
+        - name: indent-error-flow
+        - name: error-return
+        - name: error-strings      # error strings must not be capitalised
+        - name: if-return
+        - name: increment-decrement
+        - name: range
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+      disabled-checks:
+        - commentedOutCode   # commented-out code is sometimes intentional in early dev
+
+    misspell:
+      locale: US
+      # The REST API's operation status text is "Cancelled"/"Cancelling"
+      # (LXD-style), and clients match on it; keep that spelling throughout.
+      ignore-rules:
+        - cancelled
+        - cancelling
+        # Domain names in the RFP analysis package (analysis.Catalogue, the
+        # OpenStack "flavour" offerings and ParseOpenStackFlavour).
+        - catalogue
+        - catalogued
+        - uncatalogued
+        - flavour
+        - flavours
+
   exclusions:
     rules:
       # Relax errcheck for defer Close() – already idiomatic in this codebase
       - linters: [errcheck]
         text: "Error return value of `.*\\.Close\\b.*` is not checked"
 
+      # `if err := f(); err != nil` re-declaring an outer err is idiomatic Go;
+      # keep shadow for every other name.
+      - linters: [govet]
+        text: 'shadow: declaration of "err" shadows'
+
       # Don't enforce context-aware HTTP/net helpers in tests
       - path: "_test\\.go"
         linters: [noctx]
-
-linters-settings:
-  govet:
-    enable:
-      - shadow        # catch variable shadowing
-
-  revive:
-    rules:
-      - name: exported
-        arguments:
-          - disableStutteringCheck  # allow e.g. KnowledgeClient.KnowledgeBase
-      - name: var-naming
-      - name: indent-error-flow
-      - name: error-return
-      - name: error-strings      # error strings must not be capitalised
-      - name: if-return
-      - name: increment-decrement
-      - name: range
-
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - style
-    disabled-checks:
-      - commentedOutCode   # commented-out code is sometimes intentional in early dev
-      - hugeParam          # not worth the noise for a CLI tool
-
-  misspell:
-    locale: US
 
 formatters:
   enable:

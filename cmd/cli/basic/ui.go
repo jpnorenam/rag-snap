@@ -92,7 +92,7 @@ func (cmd *uiCommand) run(_ *cobra.Command, _ []string) error {
 // failing silently (task 5.3).
 func (cmd *uiCommand) reportDisabled() error {
 	return fmt.Errorf(
-		"the local UI is disabled.\n\nEnable it with:\n  sudo %s set api.loopback.enabled=true\n  sudo snap restart %s.ragd\n\nThen run `%s ui` again.",
+		"the local UI is disabled.\n\nEnable it with:\n  sudo %s set api.loopback.enabled=true\n  sudo snap restart %s.ragd\n\nThen run `%s ui` again",
 		snapName(), snapName(), snapName(),
 	)
 }
@@ -143,5 +143,5 @@ func openBrowser(rawURL string) {
 	default:
 		return
 	}
-	_ = exec.Command(cmd, args...).Start()
+	_ = exec.CommandContext(context.Background(), cmd, args...).Start()
 }

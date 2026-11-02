@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -51,7 +52,7 @@ func (t *TikaClient) Extract(filePath string) (string, error) {
 	}
 	defer file.Close()
 
-	req, err := http.NewRequest(http.MethodPut, t.baseURL+"/tika", file)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, t.baseURL+"/tika", file)
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)
 	}
@@ -85,7 +86,7 @@ func (t *TikaClient) ExtractHTML(filePath string) (string, error) {
 	}
 	defer file.Close()
 
-	req, err := http.NewRequest(http.MethodPut, t.baseURL+"/tika", file)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, t.baseURL+"/tika", file)
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)
 	}
@@ -118,7 +119,7 @@ func (t *TikaClient) ExtractMetadata(filePath string) (*TikaMetadata, error) {
 	}
 	defer file.Close()
 
-	req, err := http.NewRequest(http.MethodPut, t.baseURL+"/meta", file)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, t.baseURL+"/meta", file)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}

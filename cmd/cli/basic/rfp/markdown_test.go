@@ -158,7 +158,7 @@ func TestRenderSheetsMarkdownSkipsEmptyTablesAndLabelsUnnamedOnes(t *testing.T) 
 		t.Errorf("a table with no rows should not be rendered at all:\n%s", out)
 	}
 	if !strings.Contains(out, "(unnamed)") {
-		t.Errorf("a table with no sheet name should still be labelled:\n%s", out)
+		t.Errorf("a table with no sheet name should still be labeled:\n%s", out)
 	}
 }
 
@@ -172,7 +172,7 @@ func TestRenderSheetsMarkdownSeparatesMultipleSheets(t *testing.T) {
 	iOne := strings.Index(out, "## Sheet: One")
 	iTwo := strings.Index(out, "## Sheet: Two")
 	if iOne < 0 || iTwo < 0 {
-		t.Fatalf("both sheets should be labelled:\n%s", out)
+		t.Fatalf("both sheets should be labeled:\n%s", out)
 	}
 	if iOne > iTwo {
 		t.Error("sheets should be rendered in the order given")

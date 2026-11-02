@@ -2,6 +2,7 @@ package processing
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,7 +29,12 @@ type WebMetadata struct {
 func CrawlURL(url string) (filePath string, meta *WebMetadata, cleanup func(), err error) {
 	stopProgress := common.StartProgressSpinner("Fetching page")
 
-	resp, httpErr := http.Get(url) //nolint:gosec // URL comes from authenticated CLI input
+	req, httpErr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, http.NoBody) //nolint:gosec // URL comes from authenticated CLI input
+	if httpErr != nil {
+		stopProgress()
+		return "", nil, nil, fmt.Errorf("fetching %s: %w", url, httpErr)
+	}
+	resp, httpErr := http.DefaultClient.Do(req)
 	if httpErr != nil {
 		stopProgress()
 		return "", nil, nil, fmt.Errorf("fetching %s: %w", url, httpErr)
@@ -82,7 +88,7 @@ func CrawlURL(url string) (filePath string, meta *WebMetadata, cleanup func(), e
 		return "", nil, nil, fmt.Errorf(
 			"extracted only %d characters of text from %s (raw HTML was %d bytes)\n"+
 				"The page likely requires JavaScript to render its content.\n"+
-				"Try rendering it in a browser, saving the page as HTML, then using --file instead.",
+				"Try rendering it in a browser, saving the page as HTML, then using --file instead",
 			len(contentText), url, len(bodyBytes),
 		)
 	}
@@ -100,7 +106,7 @@ func CrawlURL(url string) (filePath string, meta *WebMetadata, cleanup func(), e
 	if tmpErr != nil {
 		return "", nil, nil, fmt.Errorf("creating temp file: %w", tmpErr)
 	}
-	cleanupFn := func() { os.Remove(tmpFile.Name()) }
+	cleanupFn := func() { _ = os.Remove(tmpFile.Name()) }
 
 	if _, writeErr := io.WriteString(tmpFile, buf.String()); writeErr != nil {
 		tmpFile.Close()

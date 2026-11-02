@@ -106,7 +106,7 @@ func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputP
 	fmt.Println()
 
 	// Phase one.
-	stop = common.StartProgressSpinner("Analysing (triage)")
+	stop = common.StartProgressSpinner("Analyzing (triage)")
 	triage, err := client.TriageWith(context.Background(), conveyance, catalogue, instructions)
 	stop()
 	if err != nil {
@@ -415,8 +415,8 @@ func printCheckResult(r chat.CheckResult) {
 		return
 	}
 
-	// Defects and warnings are labelled in words, not only by position or colour, so
-	// the distinction survives a terminal without colour and a copy-paste into a ticket.
+	// Defects and warnings are labeled in words, not only by position or color, so
+	// the distinction survives a terminal without color and a copy-paste into a ticket.
 	if defects := r.Defects(); len(defects) > 0 {
 		fmt.Printf("\n  %d defect(s) — these would fail a run or contribute nothing:\n", len(defects))
 		for _, f := range defects {

@@ -29,6 +29,7 @@ func IsDeprecated(key string) bool {
 	return slices.Contains(deprecatedConfig, key)
 }
 
+// Group returns the cobra command group the config commands belong to.
 func Group(title string) *cobra.Group {
 	return &cobra.Group{
 		ID:    groupID,

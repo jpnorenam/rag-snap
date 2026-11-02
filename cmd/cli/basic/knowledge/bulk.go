@@ -61,13 +61,13 @@ func (c *OpenSearchClient) bulkIndex(ctx context.Context, indexName string, docu
 	}
 
 	path := fmt.Sprintf("/_bulk?pipeline=%s", ingestPipelineName)
-	req, err := c.newAuthenticatedRequest(http.MethodPost, path, &buf)
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, &buf)
 	if err != nil {
 		return nil, fmt.Errorf("creating bulk request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/x-ndjson")
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return nil, fmt.Errorf("bulk request failed: %w", err)
 	}

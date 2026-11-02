@@ -40,7 +40,7 @@ func TestHandlerServesIndex(t *testing.T) {
 		t.Fatalf("Handler: %v", err)
 	}
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", http.NoBody))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET / status = %d, want 200", rec.Code)
 	}
@@ -81,7 +81,7 @@ func TestHandlerServesExportedRoutePage(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status/", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/status/", http.NoBody))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /status/ status = %d, want 200", rec.Code)
 	}
@@ -101,7 +101,7 @@ func TestHandlerSPAFallback(t *testing.T) {
 		t.Fatalf("Handler: %v", err)
 	}
 	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/some/client/route", nil))
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/some/client/route", http.NoBody))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("deep-link status = %d, want 200 (SPA fallback)", rec.Code)
 	}

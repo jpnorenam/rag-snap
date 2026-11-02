@@ -17,6 +17,8 @@ import (
 // comma-separated string ("kw1, kw2") or a YAML sequence ([kw1, kw2]).
 type KeywordList []string
 
+// UnmarshalYAML accepts either a comma-separated scalar or a sequence of
+// keywords, trimming whitespace and dropping empty entries.
 func (kl *KeywordList) UnmarshalYAML(value *yaml.Node) error {
 	switch value.Kind {
 	case yaml.ScalarNode:
@@ -206,7 +208,7 @@ func batchSystemPrompt(manifest *BatchManifest, prompts PromptConfig) string {
 		return prompts.AnswerSystemPrompt
 	}
 	// Append the non-negotiable source rules so custom prompts cannot
-	// accidentally bypass [CANONICAL]/[UPSTREAM] grounding behaviour.
+	// accidentally bypass [CANONICAL]/[UPSTREAM] grounding behavior.
 	return manifest.Prompt + "\n\n" + prompts.SourceRules
 }
 
@@ -240,7 +242,7 @@ func LoadBatchManifest(path string) (*BatchManifest, error) {
 // RunBatch runs each question in the manifest through the RAG+LLM pipeline and
 // returns the structured results. It is presentation-free: progress is reported
 // through hooks rather than printed, and nothing is written to disk, so both the
-// CLI and the daemon can drive it. The run honours ctx cancellation between
+// CLI and the daemon can drive it. The run honors ctx cancellation between
 // questions. When a question retrieves no grounding context, its answer is the
 // fixed no-context response rather than an ungrounded generation.
 func RunBatch(
@@ -416,7 +418,7 @@ func ProcessBatchChat(
 	if err != nil {
 		return fmt.Errorf("marshaling results: %w", err)
 	}
-	if err := os.WriteFile(filename, data, 0644); err != nil {
+	if err := os.WriteFile(filename, data, 0o644); err != nil {
 		return fmt.Errorf("writing results file: %w", err)
 	}
 

@@ -25,7 +25,7 @@ func TestReadTextSourceRouting(t *testing.T) {
 	}{
 		{"markdown", "README.md", []byte("# Title\n\nBody\n"), true},
 		{"markdown upper-case extension", "NOTES.MD", []byte("# Title\n"), true},
-		{"plain text", "LICENSE.txt", []byte("Some licence text\n"), true},
+		{"plain text", "LICENSE.txt", []byte("Some license text\n"), true},
 		{"pdf goes to tika", "guide.pdf", []byte("%PDF-1.7"), false},
 		{"html goes to tika", "page.html", []byte("<p>hi</p>"), false},
 		{"non-UTF-8 markdown goes to tika", "latin1.md", []byte("caf\xe9\n"), false},

@@ -39,7 +39,7 @@ type batchDomainJSON struct {
 }
 
 // batchManifestBody re-shapes a loaded manifest into the daemon's JSON request
-// body. Every manifest field the run honours has to be carried here, or the
+// body. Every manifest field the run honors has to be carried here, or the
 // daemon-backed path silently runs a different manifest than the direct path.
 func batchManifestBody(manifest *chat.BatchManifest, temperature float64) batchManifestJSON {
 	questions := make([]batchQuestionJSON, len(manifest.Questions))
@@ -171,7 +171,7 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 	if err != nil {
 		return fmt.Errorf("marshaling results: %w", err)
 	}
-	if err := os.WriteFile(filename, data, 0644); err != nil {
+	if err := os.WriteFile(filename, data, 0o644); err != nil {
 		return fmt.Errorf("writing results file: %w", err)
 	}
 	fmt.Printf("\nResults saved to %s\n", filename)

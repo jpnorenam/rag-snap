@@ -74,7 +74,7 @@ func triageSchema() map[string]any {
 		"type": "object",
 		"properties": map[string]any{
 			"title":  map[string]any{"type": "string", "description": "The RFP's title as stated in the document."},
-			"issuer": map[string]any{"type": "string", "description": "The organisation issuing the RFP, as stated."},
+			"issuer": map[string]any{"type": "string", "description": "The organization issuing the RFP, as stated."},
 			// The shortfall decision compares each section's estimate against what extraction
 			// produced for it, so both fields are required: left optional, a live run omitted
 			// them and the breakdown came out empty. An id_prefix may be "" for a section
@@ -127,7 +127,7 @@ This is a triage pass. Its purpose is to tell a human operator what was found, a
 
 - Identify the RFP and who issued it.
 - List every section, sheet or part that groups requirements, with the question-id prefix its rows use where the document uses one.
-- Count the ANSWERABLE QUESTIONS, not the rows. A single cell or row frequently packs several distinct questions together, separated by bullet markers (_ - •), newlines, or a "?" mid-text, and each of those is one answerable question. A sheet of 15 rows whose cells each hold two or three questions has roughly 35-45 questions, not 15. Count as carefully as you can and do not round to a comfortable number: this count is compared against a later extraction to detect whether that extraction was cut short, so counting rows would make a badly under-split extraction look complete. Count a demand wherever it appears: a row's evidence, validation-proof, acceptance-criteria or deliverables column can make demands the requirement column does not, and each of those counts too. Columns that only label, number, categorise or score a row do not, and neither do answer-field columns the respondent fills in (compliance status, product or component, licence inclusion, cross-reference, comments): those hold one answer, not further questions.
+- Count the ANSWERABLE QUESTIONS, not the rows. A single cell or row frequently packs several distinct questions together, separated by bullet markers (_ - •), newlines, or a "?" mid-text, and each of those is one answerable question. A sheet of 15 rows whose cells each hold two or three questions has roughly 35-45 questions, not 15. Count as carefully as you can and do not round to a comfortable number: this count is compared against a later extraction to detect whether that extraction was cut short, so counting rows would make a badly under-split extraction look complete. Count a demand wherever it appears: a row's evidence, validation-proof, acceptance-criteria or deliverables column can make demands the requirement column does not, and each of those counts too. Columns that only label, number, categorize or score a row do not, and neither do answer-field columns the respondent fills in (compliance status, product or component, license inclusion, cross-reference, comments): those hold one answer, not further questions.
 - Say whether cells pack several questions together, and describe the separator used, so the extraction pass knows to split them.
 - Say whether the RFP requires OpenStack to be addressed, and give the evidence.
 - Say whether each question expects more than one field to be filled, and name those fields.
@@ -161,7 +161,7 @@ func (c *Client) TriageWith(ctx context.Context, conv *Conveyance, cat *Catalogu
 	}
 
 	// Validated locally rather than trusted to the schema, because structured output
-	// is honoured per model. An estimate of zero is the one field whose absence would
+	// is honored per model. An estimate of zero is the one field whose absence would
 	// silently disable the later shortfall check, so it is treated as missing.
 	var missing []string
 	if t.EstimatedQuestions <= 0 {

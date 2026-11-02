@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -145,7 +146,7 @@ func giteaBranchCommit(baseURL, owner, repo, branch, token string) (string, erro
 
 // giteaGET performs an authenticated GET request to a Gitea instance.
 func giteaGET(rawURL, token string) (io.ReadCloser, error) {
-	req, err := http.NewRequest(http.MethodGet, rawURL, nil) //nolint:gosec // URL is constructed from validated user input
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, rawURL, http.NoBody) //nolint:gosec // URL is constructed from validated user input
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}

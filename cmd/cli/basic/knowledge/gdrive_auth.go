@@ -54,7 +54,7 @@ func resolveClientCredentials(cfg storage.Config) (clientID, clientSecret string
 
 	if clientID == "" || clientSecret == "" {
 		return "", "", fmt.Errorf(
-			"Google Drive OAuth2 credentials are not configured\n" +
+			"OAuth2 credentials for Google Drive are not configured\n" +
 				"  Run: sudo rag set gdrive.client.id=<client-id>\n" +
 				"       sudo rag set gdrive.client.secret=<client-secret>\n" +
 				"  Or set GOOGLE_DRIVE_CLIENT_ID / GOOGLE_DRIVE_CLIENT_SECRET environment variables",
@@ -90,7 +90,7 @@ func driveTokenCachePath() (string, error) {
 		}
 		dir = filepath.Join(home, ".config", "rag-cli")
 	}
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("creating token cache directory: %w", err)
 	}
 	return filepath.Join(dir, "gdrive-token.json"), nil
@@ -111,7 +111,7 @@ func loadCachedDriveToken() (*DriveToken, error) {
 	var tok DriveToken
 	if err := json.Unmarshal(data, &tok); err != nil {
 		// Corrupted cache — treat as missing so we re-authenticate cleanly.
-		return nil, nil
+		return nil, nil //nolint:nilerr // a corrupt cache is deliberately treated as no cached token
 	}
 	return &tok, nil
 }
@@ -125,7 +125,7 @@ func saveDriveToken(tok *DriveToken) error {
 	if err != nil {
 		return fmt.Errorf("marshaling token: %w", err)
 	}
-	return os.WriteFile(path, data, 0600)
+	return os.WriteFile(path, data, 0o600)
 }
 
 // tokenResponse covers both success and error payloads from the token endpoint.
@@ -164,7 +164,8 @@ func openBrowser(rawURL string) {
 	default:
 		return
 	}
-	_ = exec.Command(cmd, args...).Start()
+	// The browser outlives this call, so it is started without a cancelable context.
+	_ = exec.CommandContext(context.Background(), cmd, args...).Start()
 }
 
 // driveFlowTimeout bounds how long a loopback OAuth flow waits for the user to
@@ -223,7 +224,7 @@ func startDriveOAuthFlow(clientID, clientSecret string) (*DriveOAuthFlow, error)
 	}
 
 	// Bind to a random free port on loopback.
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, fmt.Errorf("starting local callback server: %w", err)
 	}
@@ -255,7 +256,7 @@ func startDriveOAuthFlow(clientID, clientSecret string) (*DriveOAuthFlow, error)
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", f.handleCallback)
 	f.srv = &http.Server{Handler: mux}
-	go f.srv.Serve(ln) //nolint:errcheck
+	go f.srv.Serve(ln) //nolint:errcheck // Serve returns ErrServerClosed on Close; nothing to handle
 
 	return f, nil
 }
@@ -281,7 +282,7 @@ func (f *DriveOAuthFlow) handleCallback(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprint(w, "<html><body><h2>Authentication successful!</h2><p>You may close this window and return to the application.</p></body></html>")
+	_, _ = fmt.Fprint(w, "<html><body><h2>Authentication successful!</h2><p>You may close this window and return to the application.</p></body></html>")
 	f.resultCh <- callbackResult{code: code}
 }
 

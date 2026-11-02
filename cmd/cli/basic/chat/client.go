@@ -73,7 +73,9 @@ func FindModelName(baseURL string) (string, error) {
 	return modelPage.Data[0].ID, nil
 }
 
-func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaClient *knowledge.KapaClient, embeddingModelID string, llmModelName string, prompts PromptConfig, temperature float64, verbose bool) error {
+// Client runs the interactive chat REPL against the inference server at
+// baseURL, grounding answers in the given knowledge sources.
+func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaClient *knowledge.KapaClient, embeddingModelID, llmModelName string, prompts PromptConfig, temperature float64, verbose bool) error {
 	fmt.Printf("Using inference server at %v\n", baseURL)
 
 	// Check if server is reachable
@@ -143,7 +145,7 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 		return fmt.Errorf("error initializing readline: %w", err)
 	}
 	defer func() { rl.Close() }()
-	//rl.CaptureExitSignal() // Should readline capture and handle the exit signal? - Can be used to interrupt the chat response stream.
+	// rl.CaptureExitSignal() // Should readline capture and handle the exit signal? - Can be used to interrupt the chat response stream.
 	log.SetOutput(rl.Stderr())
 
 	// The configured prompt is sent unconditionally — retrieval availability
@@ -175,11 +177,10 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 		prompt, err := rl.Readline()
 		clearSlashHints()
 		if errors.Is(err, readline.ErrInterrupt) {
-			if len(prompt) == 0 {
+			if prompt == "" {
 				break
-			} else {
-				continue
 			}
+			continue
 		} else if err == io.EOF {
 			break
 		}
@@ -214,8 +215,8 @@ func Client(baseURL string, knowledgeClient *knowledge.OpenSearchClient, kapaCli
 			continue
 		}
 
-		if len(prompt) > 0 {
-			rl.SaveHistory(prompt)
+		if prompt != "" {
+			_ = rl.SaveHistory(prompt) // best effort: readline history is a convenience
 			params, err = handlePrompt(client, params, prompt, session, verbose)
 			if err != nil {
 				return err
@@ -244,7 +245,8 @@ func handshake(baseURL string) error {
 			port = "80"
 		}
 	}
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 5*time.Second)
+	dialer := net.Dialer{Timeout: 5 * time.Second}
+	conn, err := dialer.DialContext(context.Background(), "tcp", net.JoinHostPort(host, port))
 	if errors.Is(err, syscall.ECONNREFUSED) {
 		return fmt.Errorf("connection refused\n\n%s\n%s",
 			common.SuggestServerStartup(),
@@ -295,10 +297,9 @@ func checkServer(client openai.Client, modelName string) error {
 					return fmt.Errorf("api: %s\n\nSet the CHAT_API_KEY environment variable to authenticate", apiError.Error())
 				}
 				return fmt.Errorf("api: %s", apiError.Error())
-			} else {
-				return fmt.Errorf("%s\n\n%s", err,
-					common.SuggestServerLogs())
 			}
+			return fmt.Errorf("%s\n\n%s", err,
+				common.SuggestServerLogs())
 		}
 
 		return nil
@@ -359,10 +360,9 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 
 	// Rewrite the query for richer BM25 matching using conversation context.
 	// On the first turn (no history) this returns the original prompt.
-	lexicalQuery := prompt
 	ragContext := ""
 	if hasContext {
-		lexicalQuery = rewriteSearchQuery(client, params.Model, params.Messages, prompt, verbose)
+		lexicalQuery := rewriteSearchQuery(client, params.Model, params.Messages, prompt, verbose)
 		// Retrieve RAG context from knowledge base (no-op when unavailable).
 		ragContext = retrieveContext(session, prompt, lexicalQuery, verbose)
 	}
@@ -380,7 +380,7 @@ func handlePrompt(client openai.Client, params openai.ChatCompletionNewParams, p
 
 	// Build a temporary copy of the message history so the augmented prompt
 	// is sent to the API but only the original prompt is kept in history.
-	apiMessages := make([]openai.ChatCompletionMessageParamUnion, len(params.Messages))
+	apiMessages := make([]openai.ChatCompletionMessageParamUnion, len(params.Messages), len(params.Messages)+1)
 	copy(apiMessages, params.Messages)
 	apiMessages = append(apiMessages, openai.UserMessage(llmPrompt))
 
@@ -423,10 +423,6 @@ func processStream(stream *ssestream.Stream[openai.ChatCompletionChunk]) (*opena
 		chunk := stream.Current()
 		acc.AddChunk(chunk)
 
-		if _, ok := acc.JustFinishedContent(); ok {
-			//fmt.Println("\nContent stream finished")
-		}
-
 		// if using tool calls
 		if tool, ok := acc.JustFinishedToolCall(); ok {
 			fmt.Printf("Tool call stream finished %d: %s %s", tool.Index, tool.Name, tool.Arguments)
@@ -440,17 +436,16 @@ func processStream(stream *ssestream.Stream[openai.ChatCompletionChunk]) (*opena
 		if len(chunk.Choices) > 0 {
 			lastChunk := chunk.Choices[0].Delta.Content
 
-			if strings.Contains(lastChunk, "<think>") {
+			switch {
+			case strings.Contains(lastChunk, "<think>"):
 				thinking = true
 				fmt.Printf("%s", color.BlueString(lastChunk))
-			} else if strings.Contains(lastChunk, "</think>") {
+			case strings.Contains(lastChunk, "</think>"):
 				thinking = false
 				fmt.Printf("%s", color.BlueString(lastChunk))
-
-			} else if thinking {
+			case thinking:
 				fmt.Printf("%s", color.BlueString(lastChunk))
-
-			} else {
+			default:
 				fmt.Printf("%s", lastChunk)
 			}
 		}
@@ -478,9 +473,8 @@ func processStream(stream *ssestream.Stream[openai.ChatCompletionChunk]) (*opena
 }
 
 func filterInput(r rune) (rune, bool) {
-	switch r {
 	// block CtrlZ feature
-	case readline.CharCtrlZ:
+	if r == readline.CharCtrlZ {
 		return r, false
 	}
 	return r, true

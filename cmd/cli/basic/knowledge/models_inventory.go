@@ -91,12 +91,12 @@ func (c *OpenSearchClient) ListModels(ctx context.Context, embeddingModelID, rer
 		return nil, fmt.Errorf("error marshaling search query: %w", err)
 	}
 
-	req, err := c.newAuthenticatedRequest(http.MethodGet, "/_plugins/_ml/models/_search", bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, "/_plugins/_ml/models/_search", bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return nil, fmt.Errorf("error listing models: %w", err)
 	}
@@ -134,12 +134,12 @@ func (c *OpenSearchClient) ListModels(ctx context.Context, embeddingModelID, rer
 // UndeployModel releases a model from the ML nodes' memory, leaving it
 // registered so it can be deployed again without re-downloading it.
 func (c *OpenSearchClient) UndeployModel(ctx context.Context, modelID string) error {
-	req, err := c.newAuthenticatedRequest(http.MethodPost, fmt.Sprintf("/_plugins/_ml/models/%s/_undeploy", modelID), nil)
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, fmt.Sprintf("/_plugins/_ml/models/%s/_undeploy", modelID), nil)
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return fmt.Errorf("error undeploying model: %w", err)
 	}
@@ -159,12 +159,12 @@ func (c *OpenSearchClient) UndeployModel(ctx context.Context, modelID string) er
 func (c *OpenSearchClient) DeleteModel(ctx context.Context, modelID string) error {
 	_ = c.UndeployModel(ctx, modelID)
 
-	req, err := c.newAuthenticatedRequest(http.MethodDelete, fmt.Sprintf("/_plugins/_ml/models/%s", modelID), nil)
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodDelete, fmt.Sprintf("/_plugins/_ml/models/%s", modelID), nil)
 	if err != nil {
 		return fmt.Errorf("error creating request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return fmt.Errorf("error deleting model: %w", err)
 	}

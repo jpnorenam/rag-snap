@@ -21,7 +21,7 @@ func daemonClient(ctx *common.Context) *apiclient.Client {
 }
 
 // waitWithProgress drives an async operation to completion, rendering a spinner
-// labelled with the operation's progress metadata. done/total field names vary
+// labeled with the operation's progress metadata. done/total field names vary
 // per operation (e.g. sources_done/sources_total, questions_done/questions_total);
 // pass the pair to surface. An empty totalKey shows a static label.
 func waitWithProgress(client *apiclient.Client, opURL, label, doneKey, totalKey string) (*apiclient.Operation, error) {

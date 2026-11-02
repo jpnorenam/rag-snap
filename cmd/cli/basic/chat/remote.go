@@ -71,7 +71,7 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 		prompt, err := rl.Readline()
 		clearSlashHints()
 		if errors.Is(err, readline.ErrInterrupt) {
-			if len(prompt) == 0 {
+			if prompt == "" {
 				break
 			}
 			continue
@@ -137,10 +137,10 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 			continue
 		}
 
-		if len(prompt) == 0 {
+		if prompt == "" {
 			continue
 		}
-		rl.SaveHistory(prompt)
+		_ = rl.SaveHistory(prompt) // best effort: readline history is a convenience
 		if err := remotePromptTurn(ctx, session, prompt); err != nil {
 			return err
 		}
@@ -194,7 +194,7 @@ func remoteSetActiveBases(ctx context.Context, dc *apiclient.Client, session *ap
 // remoteSelectBasesMenu lists knowledge bases from the daemon and presents the
 // interactive multi-select menu, pre-selecting the currently active set. The
 // boolean is false when the user cancelled (Ctrl+C / Esc).
-func remoteSelectBasesMenu(ctx context.Context, dc *apiclient.Client, current []string) ([]string, bool, error) {
+func remoteSelectBasesMenu(ctx context.Context, dc *apiclient.Client, current []string) (chosen []string, ok bool, err error) {
 	stop := common.StartProgressSpinner("Fetching knowledge bases")
 	bases, err := dc.ListKnowledge(ctx)
 	stop()
@@ -222,9 +222,9 @@ func remoteSelectBasesMenu(ctx context.Context, dc *apiclient.Client, current []
 				Value(&selected),
 		),
 	)
-	if err := form.Run(); err != nil {
+	if form.Run() != nil {
 		// User cancelled (Ctrl+C / Esc) — keep existing context.
-		return nil, false, nil
+		return nil, false, nil //nolint:nilerr // a form error means the user cancelled, not a failure
 	}
 	return selected, true, nil
 }
@@ -341,7 +341,7 @@ func formatRemoteSearchResults(hits []apiclient.SearchHit) string {
 }
 
 // remotePromptTurn sends one prompt and renders streamed frames until the
-// terminal "done" frame, colouring <think> content like the direct REPL. A
+// terminal "done" frame, coloring <think> content like the direct REPL. A
 // spinner covers the server-side retrieval phase (query rewrite + search) that
 // precedes the first token, so the wait shows activity like direct mode does;
 // it is stopped as soon as the first frame arrives.

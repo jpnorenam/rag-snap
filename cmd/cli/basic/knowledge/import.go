@@ -100,11 +100,11 @@ func extractTarGz(src, destDir string) error {
 
 		switch hdr.Typeflag {
 		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0755); err != nil {
+			if err := os.MkdirAll(target, 0o755); err != nil {
 				return err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 				return err
 			}
 			out, err := os.Create(target)
@@ -189,13 +189,13 @@ func synthesizeSourcesFromIndex(ctx context.Context, client *OpenSearchClient, t
 	}
 
 	path := fmt.Sprintf("/%s/_search", targetIndex)
-	req, err := client.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(body))
+	req, err := client.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(body))
 	if err != nil {
 		return 0, fmt.Errorf("building aggregation request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := client.client.Client.Perform(req.WithContext(ctx))
+	resp, err := client.client.Client.Perform(req)
 	if err != nil {
 		return 0, fmt.Errorf("running aggregation: %w", err)
 	}

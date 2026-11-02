@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -33,9 +34,7 @@ func RepoSourceID(namespace, path string) string {
 // Accepts "owner/repo" or "https://github.com/owner/repo[/...]".
 func ParseGitHubSource(source string) (owner, repo string, err error) {
 	source = strings.TrimSuffix(source, "/")
-	if strings.HasPrefix(source, "https://github.com/") {
-		source = strings.TrimPrefix(source, "https://github.com/")
-	}
+	source = strings.TrimPrefix(source, "https://github.com/")
 	parts := strings.SplitN(source, "/", 3)
 	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
 		return "", "", fmt.Errorf("invalid GitHub source %q: expected \"owner/repo\" or \"https://github.com/owner/repo\"", source)
@@ -116,7 +115,7 @@ func FetchRepoFile(rawURL, filePath, token string) (tempPath string, cleanup fun
 	if err != nil {
 		return "", nil, fmt.Errorf("creating temp file: %w", err)
 	}
-	cleanupFn := func() { os.Remove(tmpFile.Name()) }
+	cleanupFn := func() { _ = os.Remove(tmpFile.Name()) }
 
 	n, copyErr := io.Copy(tmpFile, io.LimitReader(body, MaxIngestFileSize+1))
 	if closeErr := tmpFile.Close(); closeErr != nil {
@@ -157,8 +156,8 @@ func fetchDefaultBranch(owner, repo, token string) (string, error) {
 }
 
 // githubGET performs an authenticated GET to the GitHub API or raw.githubusercontent.com.
-func githubGET(url, token string) (io.ReadCloser, error) {
-	req, err := http.NewRequest(http.MethodGet, url, nil) //nolint:gosec // URL is constructed from validated user input
+func githubGET(rawURL, token string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, rawURL, http.NoBody) //nolint:gosec // URL is constructed from validated user input
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}

@@ -1,5 +1,6 @@
 package constants
 
+// PCI vendor IDs, Debian architecture names, and the snapd snap storage path.
 const (
 	PciVendorAmd    = 0x1002
 	PciVendorIntel  = 0x8086

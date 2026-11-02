@@ -579,7 +579,7 @@ func TestAnswerBuildRejectsUnsupportedType(t *testing.T) {
 
 // multipartFile builds a multipart/form-data body with a single file field
 // plus optional extra form fields, returning the body and its Content-Type.
-func multipartFile(t *testing.T, filename, content string, fields map[string]string) (*bytes.Buffer, string) {
+func multipartFile(t *testing.T, filename, content string, fields map[string]string) (body *bytes.Buffer, contentType string) {
 	t.Helper()
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)

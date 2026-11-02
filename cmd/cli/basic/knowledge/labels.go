@@ -91,14 +91,14 @@ func (c *OpenSearchClient) SetDefaultLabel(ctx context.Context, indexName, label
 
 // GetDefaultLabel returns the base's effective default label and whether it is
 // stored in the index _meta (true) or derived from the naming convention (false).
-func (c *OpenSearchClient) GetDefaultLabel(ctx context.Context, indexName string) (string, bool, error) {
+func (c *OpenSearchClient) GetDefaultLabel(ctx context.Context, indexName string) (label string, stored bool, err error) {
 	path := fmt.Sprintf("/%s/_mapping", indexName)
-	req, err := c.newAuthenticatedRequest(http.MethodGet, path, nil)
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return "", false, fmt.Errorf("creating mapping request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return "", false, fmt.Errorf("getting index mapping: %w", err)
 	}
@@ -184,12 +184,12 @@ func (c *OpenSearchClient) updateLabelByQuery(ctx context.Context, indexName, la
 	}
 
 	path := fmt.Sprintf("/%s/_update_by_query?conflicts=proceed", indexName)
-	req, err := c.newAuthenticatedRequest(http.MethodPost, path, bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return 0, fmt.Errorf("creating update request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return 0, fmt.Errorf("updating labels: %w", err)
 	}
@@ -217,12 +217,12 @@ func (c *OpenSearchClient) putMapping(ctx context.Context, indexName string, bod
 	}
 
 	path := fmt.Sprintf("/%s/_mapping", indexName)
-	req, err := c.newAuthenticatedRequest(http.MethodPut, path, bytes.NewReader(bodyBytes))
+	req, err := c.newAuthenticatedRequest(ctx, http.MethodPut, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("creating mapping request: %w", err)
 	}
 
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.client.Client.Perform(req)
 	if err != nil {
 		return fmt.Errorf("updating index mapping: %w", err)
 	}

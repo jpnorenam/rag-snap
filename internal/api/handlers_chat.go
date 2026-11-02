@@ -20,7 +20,7 @@ const chatIdleTimeout = 30 * time.Minute
 
 // chatStartRequest is the body of POST /1.0/chat. All fields are optional: the
 // model falls back to config/server lookup, and the active bases and
-// temperature default to the chat REPL's behaviour. Resume, when set, seeds the
+// temperature default to the chat REPL's behavior. Resume, when set, seeds the
 // session from the saved chat with that id (its transcript and active bases).
 type chatStartRequest struct {
 	Model       string   `json:"model,omitempty"`
@@ -85,12 +85,12 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 	// is started, and so its saved bases seed the active set below.
 	var resumed *chatstore.Chat
 	if req.Resume != "" {
-		chat, err := s.chats.Get(req.Resume)
+		saved, err := s.chats.Get(req.Resume)
 		if err != nil {
 			respondChatStoreError(w, err)
 			return
 		}
-		resumed = &chat
+		resumed = &saved
 	}
 
 	baseURL := s.clients.openAIURL()
@@ -124,7 +124,7 @@ func (s *Server) handleChatStart(w http.ResponseWriter, r *http.Request) {
 
 	// Resolved once, here: the session keeps the prompts it started with, so a
 	// customization saved mid-conversation applies to the *next* session rather
-	// than shifting this one's behaviour under the user. The configured prompt
+	// than shifting this one's behavior under the user. The configured prompt
 	// is sent unconditionally — retrieval availability never swaps in a hidden
 	// substitute, so what the prompts API shows is what runs. An explicit
 	// req.Prompt selects a named variant for this session only; an unknown one

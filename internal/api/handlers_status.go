@@ -279,7 +279,7 @@ func tikaVersion(ctx context.Context, baseURL string) (string, error) {
 	}
 	versionURL := fmt.Sprintf("%s://%s/version", u.Scheme, u.Host)
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, versionURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, versionURL, http.NoBody)
 	if err != nil {
 		return "", err
 	}
