@@ -59,6 +59,8 @@ func (f *fakeJudge) Judge(ctx context.Context, in JudgeInput) (Judgment, error) 
 	switch in.ID {
 	case "FAIL":
 		return Judgment{}, errors.New("gemini unreachable")
+	case "UNUSABLE":
+		return Judgment{}, &UnusableJudgeError{Err: errors.New("the Gemini API rejected the API key")}
 	case "RED":
 		return Judgment{Confidence: 2, Rating: RatingRed, Issues: []string{IssueOtherCustomer}, Comment: `Remove "the Customer A RFI".`}, nil
 	}
@@ -96,6 +98,8 @@ func judgedBatchCtx(ctx context.Context, t *testing.T, ids []string, judge *Batc
 		switch {
 		case strings.Contains(string(system), "RAG query optimizer"):
 			writeMessageStream(w, "", `{"anchors":[],"expansion":[]}`, "end_turn", "")
+		case strings.Contains(string(messages), "EMPTY"):
+			writeMessageStream(w, "", "", "end_turn", "")
 		case strings.Contains(string(messages), "MARKDOWN"):
 			writeMessageStream(w, "", "The platform is **fully** supported.", "end_turn", "")
 		default:
@@ -191,6 +195,91 @@ func TestRunBatchJudgesEveryAnswerInOrder(t *testing.T) {
 		if in.ID == "NO-CONTEXT" {
 			t.Error("the gap must not reach the consistency pass")
 		}
+		if in.ID == "FAIL" {
+			t.Error("a row the judge could not assess must not reach the consistency pass")
+		}
+	}
+}
+
+func TestRunBatchJudgeProgressCountsAgainstTheWholeRun(t *testing.T) {
+	ids := []string{"A", "B", "C", "D", "E"}
+	var totals []int
+	hooks := BatchHooks{OnJudged: func(_ int, _ Judgment, _, total int) { totals = append(totals, total) }}
+	if _, err := judgedBatch(t, ids, &BatchJudge{Judge: &fakeJudge{}, Concurrency: 2}, hooks); err != nil {
+		t.Fatal(err)
+	}
+	for _, total := range totals {
+		if total != len(ids) {
+			t.Fatalf("progress totals = %v, want %d throughout", totals, len(ids))
+		}
+	}
+}
+
+func TestRunBatchStopsCallingAnUnusableJudge(t *testing.T) {
+	judge := &fakeJudge{}
+	out, err := judgedBatch(t, []string{"UNUSABLE", "A", "B"}, &BatchJudge{Judge: judge, Concurrency: 1}, BatchHooks{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := judge.calls.Load(); got != 1 {
+		t.Errorf("judge called %d times; after a rejected key it must not be called again", got)
+	}
+	for _, r := range out.Results[1:] {
+		if r.Judgment == nil || r.Judgment.Judged() || !strings.Contains(r.Judgment.Error, "rejected the API key") {
+			t.Errorf("%s = %+v, want not judged with the key error", r.ID, r.Judgment)
+		}
+	}
+	if out.Judge.Consistency || judge.consistencyIn != nil {
+		t.Errorf("the consistency pass must not run against an unusable judge: %+v", out.Judge)
+	}
+}
+
+func TestRunBatchFiresNoJudgeHookAfterCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var mu sync.Mutex
+	returned := false
+	hooks := BatchHooks{
+		OnResult: func(i, _ int, _ BatchResult) {
+			if i == 1 {
+				cancel()
+			}
+		},
+		OnJudged: func(int, Judgment, int, int) {
+			mu.Lock()
+			defer mu.Unlock()
+			if returned {
+				t.Error("OnJudged fired after RunBatch returned")
+			}
+		},
+	}
+	judge := &fakeJudge{block: make(chan struct{})}
+	_, err := judgedBatchCtx(ctx, t, []string{"A", "B", "C"}, &BatchJudge{Judge: judge, Concurrency: 1}, hooks)
+	mu.Lock()
+	returned = true
+	mu.Unlock()
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	time.Sleep(50 * time.Millisecond) // any straggler would fire here
+}
+
+func TestGapRuleCoversRewordedAndJudgedRefusals(t *testing.T) {
+	if !isGapAnswer("  the provided context does not contain enough information to answer this question ") {
+		t.Error("a re-cased, unpunctuated no-context sentence is still the gap answer")
+	}
+	j := applyLocalChecks(Judgment{Confidence: 1, Rating: RatingRed, Issues: []string{IssueGap}}, "The context does not cover this requirement.")
+	if j.Rating != RatingRed || j.Comment == "" {
+		t.Errorf("a refusal the judge calls a gap = %+v, want red with a comment", j)
+	}
+}
+
+func TestDunderIdentifiersAreNotBold(t *testing.T) {
+	if got := markdownFindings("Packages need an __init__.py and a __main__ module."); len(got) != 0 {
+		t.Errorf("findings = %v, want none for Python identifiers", got)
+	}
+	if got := markdownFindings("This is __fully supported__ today."); !slices.Contains(got, "bold") {
+		t.Errorf("findings = %v, want bold", got)
 	}
 }
 
@@ -503,5 +592,45 @@ func TestSplitOpener(t *testing.T) {
 	}
 	if _, rest := splitOpener("Supported. One. Two. Three. Four. Five."); countSentences(rest) != 5 {
 		t.Error("the answer proper should count five sentences")
+	}
+}
+
+func TestRunBatchTreatsAnEmptyAnswerAsAFailure(t *testing.T) {
+	judge := &fakeJudge{}
+	var failed []string
+	hooks := BatchHooks{OnError: func(_, _ int, q BatchQuestion, err error) { failed = append(failed, q.ID+": "+err.Error()) }}
+	out, err := judgedBatch(t, []string{"OK1", "EMPTY"}, &BatchJudge{Judge: judge, Concurrency: 1}, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Results) != 1 || len(failed) != 1 || !strings.Contains(failed[0], "empty answer") {
+		t.Errorf("results = %+v, failures = %v; an empty answer must be a failed question", out.Results, failed)
+	}
+	if got := judge.calls.Load(); got != 1 {
+		t.Errorf("judge called %d times; an empty answer is not worth a judge call", got)
+	}
+}
+
+func TestRunBatchBoundsTheJudgeBacklog(t *testing.T) {
+	judge := &fakeJudge{block: make(chan struct{})}
+	var answered atomic.Int32
+	hooks := BatchHooks{OnResult: func(int, int, BatchResult) { answered.Add(1) }}
+	ids := make([]string, 3*judgeBacklogPerCall)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("Q%d", i)
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		if got := answered.Load(); got > judgeBacklogPerCall+1 {
+			t.Errorf("%d answered while the judge was stuck; the backlog bound is %d", got, judgeBacklogPerCall)
+		}
+		close(judge.block)
+	}()
+	out, err := judgedBatch(t, ids, &BatchJudge{Judge: judge, Concurrency: 1}, hooks)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Results) != len(ids) || out.Judge.NotJudged != 0 {
+		t.Errorf("once the judge catches up every answer is judged: %+v", out.Judge)
 	}
 }

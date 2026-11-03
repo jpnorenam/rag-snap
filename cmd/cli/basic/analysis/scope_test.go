@@ -123,7 +123,7 @@ func TestParseSheetList(t *testing.T) {
 	if want := "[2 3 4 HW-SW Read Me 7]"; fmt.Sprint(got) != want {
 		t.Errorf("got %v, want %s", got, want)
 	}
-	for _, bad := range []string{"5-2", "0-3"} {
+	for _, bad := range []string{"5-2", "0-3", "2-2000000000"} {
 		if _, err := ParseSheetList(bad); err == nil {
 			t.Errorf("%q should be rejected", bad)
 		}
@@ -156,6 +156,21 @@ func TestSheetInventoryFollowsTheTabList(t *testing.T) {
 	inv, _ = sheetInventory(tables, nil)
 	if len(inv) != 3 || inv[1].Position != 2 {
 		t.Errorf("without a tab list each table is a sheet, got %+v", inv)
+	}
+}
+
+func TestSheetInventoryKeepsTabPositionsWhenANameDiffers(t *testing.T) {
+	tables := []rfp.SheetTable{
+		{Name: "Requirements ", Rows: [][]string{{"ID"}, {"a"}}},
+		{Name: "Sizing &amp; BoQ", Rows: [][]string{{"ID"}, {"b"}}},
+		{Name: "Stray", Rows: [][]string{{"ID"}, {"c"}}},
+	}
+	inv, tableSheet := sheetInventory(tables, []string{"Intro", "Chart", "Requirements", "Sizing & BoQ"})
+	if len(inv) != 5 || inv[2].Name != "Requirements" || inv[2].DataRows != 1 || inv[3].DataRows != 1 {
+		t.Fatalf("tabs must keep their positions despite whitespace and escaping, got %+v", inv)
+	}
+	if inv[4].Position != 5 || inv[4].Name != "Stray" || fmt.Sprint(tableSheet) != "[2 3 4]" {
+		t.Errorf("a table matching no tab goes after the tabs, got %+v, %v", inv, tableSheet)
 	}
 }
 
@@ -227,7 +242,7 @@ func TestConveyScopedWorkbook(t *testing.T) {
 	if got := fmt.Sprint(scopesOf(report.Sheets)); got != "[context answer answer exclude]" {
 		t.Errorf("report scopes = %s", got)
 	}
-	if !conv.HasContextSheets() || fmt.Sprint(conv.contextSheetNames()) != "[Read Me]" {
+	if !conv.HasContextSheets() || fmt.Sprint(conv.sheetNames(ScopeContext)) != "[Read Me]" {
 		t.Error("the conveyance should know it carries a context-only sheet")
 	}
 }
@@ -325,9 +340,19 @@ func TestAttributeSectionsCountsContextSheetQuestionsApart(t *testing.T) {
 		{ID: "HW-02", Question: "b"},
 		{ID: "X", Question: "c", Source: "Read Me (context only — background, no questions to extract)"},
 	}
-	got := attributeSections(tr, qs, []string{"Read Me"})
+	got := attributeSections(tr, qs, []string{"Read Me"}, []string{"1 Hardware"})
 	if len(got) != 2 || got[0].Produced != 2 || got[1].Name != "(from a context-only sheet)" || got[1].Produced != 1 {
 		t.Errorf("attribution = %+v", got)
+	}
+}
+
+func TestContextSheetDoesNotClaimALongerAnsweredSheet(t *testing.T) {
+	q := chat.BatchQuestion{Source: "Release Notes Matrix / row 4"}
+	if fromContextSheet(q, []string{"Notes"}, []string{"Release Notes Matrix"}) {
+		t.Error("a question from the answered sheet must not count as from the context sheet")
+	}
+	if !fromContextSheet(chat.BatchQuestion{Source: "Notes"}, []string{"Notes"}, []string{"Release Notes Matrix"}) {
+		t.Error("a question from the context sheet itself must count")
 	}
 }
 

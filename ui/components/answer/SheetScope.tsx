@@ -26,15 +26,17 @@ export function scopeNeedsAnswer(sheets: SheetInfo[], scope: Record<number, Shee
 }
 
 // scopeRequest turns the chosen settings into the triage request's "sheets" field,
-// naming every tab by position. Undefined when every tab is answered, so an untouched
-// workbook sends no scope at all.
+// naming every tab by its name. Not by position: the server matches a key against tab
+// names first, so in a workbook with tabs named "1" or "2" a position key could pick a
+// different tab. Undefined when every tab is answered, so an untouched workbook sends
+// no scope at all.
 export function scopeRequest(
   sheets: SheetInfo[],
   scope: Record<number, SheetScopeValue>
 ): Record<string, SheetScopeValue> | undefined {
   if (sheets.every((s) => (scope[s.position] ?? "answer") === "answer")) return undefined;
   const out: Record<string, SheetScopeValue> = {};
-  for (const s of sheets) out[String(s.position)] = scope[s.position] ?? "answer";
+  for (const s of sheets) out[s.name] = scope[s.position] ?? "answer";
   return out;
 }
 

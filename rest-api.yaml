@@ -451,8 +451,9 @@ paths:
                 inventory: per sheet its 1-based position in workbook order, its name and its data-row
                 count. Synchronous; makes no model call and needs no API key, and stages nothing. A
                 CSV is one sheet; a PDF or DOCX returns an empty list with its format, since sheet
-                scope does not apply to it. Unsupported file types are a 400; a spreadsheet that
-                cannot be converted because the tika service is unavailable is a 500 saying so.
+                scope does not apply to it. Unsupported file types, and a spreadsheet with no tables
+                or a CSV that does not parse, are a 400; a spreadsheet that cannot be converted
+                because the tika service is unavailable is a 500 saying so.
             operationId: answerAnalyzeSheets
             responses:
                 "200":

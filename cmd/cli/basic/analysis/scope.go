@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"fmt"
+	"html"
 	"strconv"
 	"strings"
 
@@ -168,6 +169,10 @@ func Scoped(sheets []SheetInfo) bool {
 	return false
 }
 
+// maxSheetPosition bounds a position range, far above any real workbook, so a typo
+// such as "2-2000000000" is an error rather than a two-billion-item list.
+const maxSheetPosition = 1000
+
 // ParseSheetList parses a CLI sheet list: comma-separated names, positions and
 // position ranges such as "2-7". A range is recognised only when both ends are
 // numbers, so a sheet named "HW-SW" stays a name.
@@ -181,6 +186,9 @@ func ParseSheetList(s string) ([]string, error) {
 		if lo, hi, ok := parseRange(item); ok {
 			if lo < 1 || hi < lo {
 				return nil, &SheetScopeError{Problem: fmt.Sprintf("sheet range %q is not a range of positions from 1", item)}
+			}
+			if hi > maxSheetPosition {
+				return nil, &SheetScopeError{Problem: fmt.Sprintf("sheet range %q goes past position %d", item, maxSheetPosition)}
 			}
 			for n := lo; n <= hi; n++ {
 				out = append(out, strconv.Itoa(n))
@@ -234,49 +242,47 @@ func ScopeFromLists(answer, context string) (SheetScope, error) {
 }
 
 // sheetInventory groups converted tables into the workbook's sheets. names is the
-// workbook's sheet list in tab order; when it is available and accounts for every
-// table, positions follow it, so a sheet Tika emitted no table for keeps its tab number.
-// Otherwise each table is its own sheet, in the order converted. tableSheet maps each
-// table to its index in the returned inventory.
+// workbook's sheet list in tab order; when it is available, positions follow it, so a
+// sheet Tika emitted no table for keeps its tab number. Table names are matched to tab
+// names ignoring case, surrounding whitespace and HTML escaping, which is what Tika's
+// rendering changes. A table matching no tab becomes its own sheet after the tabs, so
+// one odd name never renumbers the others. Without a tab list each table is its own
+// sheet, in the order converted. tableSheet maps each table to its index in the
+// returned inventory.
 func sheetInventory(tables []rfp.SheetTable, names []string) (inv []SheetInfo, tableSheet []int) {
 	tableSheet = make([]int, len(tables))
 	byName := make(map[string]int, len(names))
 	for i, n := range names {
-		if _, dup := byName[n]; !dup {
-			byName[n] = i
+		if _, dup := byName[sheetKey(n)]; !dup {
+			byName[sheetKey(n)] = i
 		}
 	}
-	useNames := len(names) > 0
-	for _, t := range tables {
-		if _, ok := byName[t.Name]; !ok {
-			useNames = false
-			break
-		}
+	inv = make([]SheetInfo, len(names), len(names)+len(tables))
+	for i, n := range names {
+		inv[i] = SheetInfo{Position: i + 1, Name: n}
 	}
-
-	if useNames {
-		inv = make([]SheetInfo, len(names))
-		for i, n := range names {
-			inv[i] = SheetInfo{Position: i + 1, Name: n}
-		}
-		for ti, t := range tables {
-			si := byName[t.Name]
-			tableSheet[ti] = si
-			inv[si].DataRows += dataRows(t)
-		}
-		return inv, tableSheet
-	}
-
-	inv = make([]SheetInfo, len(tables))
 	for ti, t := range tables {
-		name := strings.TrimSpace(t.Name)
-		if name == "" {
-			name = fmt.Sprintf("Table %d", ti+1)
+		si, ok := byName[sheetKey(t.Name)]
+		if !ok {
+			name := strings.TrimSpace(t.Name)
+			if name == "" {
+				name = fmt.Sprintf("Table %d", ti+1)
+			}
+			si = len(inv)
+			inv = append(inv, SheetInfo{Position: si + 1, Name: name})
+			if len(names) > 0 && strings.TrimSpace(t.Name) != "" {
+				byName[sheetKey(t.Name)] = si // later tables of the same name join it
+			}
 		}
-		inv[ti] = SheetInfo{Position: ti + 1, Name: name, DataRows: dataRows(t)}
-		tableSheet[ti] = ti
+		tableSheet[ti] = si
+		inv[si].DataRows += dataRows(t)
 	}
 	return inv, tableSheet
+}
+
+// sheetKey is the form a sheet name is matched in.
+func sheetKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(html.UnescapeString(name)))
 }
 
 func dataRows(t rfp.SheetTable) int {

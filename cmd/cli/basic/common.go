@@ -2,10 +2,10 @@ package basic
 
 import (
 	"fmt"
-	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"net/url"
 	"os"
 
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"

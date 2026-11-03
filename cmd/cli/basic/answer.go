@@ -295,16 +295,13 @@ func (cmd *answerCommand) batchJudge(noJudge bool) *chat.BatchJudge {
 	if noJudge {
 		return nil
 	}
-	settings, err := analysis.LoadJudgeSettings(cmd.Config)
+	judge, settings, err := analysis.NewBatchJudge(cmd.Config, cmd.Verbose)
 	if err == nil {
-		var judge *analysis.Judge
-		if judge, err = analysis.NewJudge(settings, cmd.Verbose); err == nil {
-			if cmd.Verbose {
-				fmt.Printf("Judging answers with %s (reasoning %q, %d at a time)\n",
-					settings.Model, settings.Reasoning, settings.Concurrency)
-			}
-			return &chat.BatchJudge{Judge: judge, Concurrency: settings.Concurrency}
+		if cmd.Verbose {
+			fmt.Printf("Judging answers with %s (reasoning %q, %d at a time)\n",
+				settings.Model, settings.Reasoning, settings.Concurrency)
 		}
+		return judge
 	}
 	if !analysis.IsJudgeDisabled(err) {
 		fmt.Printf("Answers will not be judged: %v\n(Pass --no-judge, or set %s=false, to stop this notice.)\n\n",

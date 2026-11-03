@@ -296,7 +296,7 @@ func (c *Client) generateQuestions(ctx context.Context, conv *Conveyance, t *Tri
 				AnswerTokens: res.AnswerTokens,
 				Ceiling:      res.Ceiling,
 				Effort:       effort,
-				Sections:     attributeSections(t, questions, conv.contextSheetNames()),
+				Sections:     attributeSections(t, questions, conv.sheetNames(ScopeContext), conv.sheetNames(ScopeAnswer)),
 				Questions:    questions,
 			}
 		}
@@ -427,7 +427,7 @@ func trimAtWord(s string, limit int) string {
 // A question whose source names a context-only sheet is counted on its own line before
 // any section is tried: it should not exist, and folding it into a section would hide
 // that extraction ignored the scope.
-func attributeSections(t *Triage, questions []chat.BatchQuestion, contextSheets []string) []SectionCount {
+func attributeSections(t *Triage, questions []chat.BatchQuestion, contextSheets, otherSheets []string) []SectionCount {
 	if t == nil || len(t.Sections) == 0 {
 		return nil
 	}
@@ -438,7 +438,7 @@ func attributeSections(t *Triage, questions []chat.BatchQuestion, contextSheets 
 	}
 	unattributed, fromContext := 0, 0
 	for _, q := range questions {
-		if fromContextSheet(q, contextSheets) {
+		if fromContextSheet(q, contextSheets, otherSheets) {
 			fromContext++
 			continue
 		}
@@ -469,15 +469,22 @@ func attributeSections(t *Triage, questions []chat.BatchQuestion, contextSheets 
 	return out
 }
 
-// fromContextSheet reports whether a question's source names a context-only sheet.
-func fromContextSheet(q chat.BatchQuestion, contextSheets []string) bool {
+// fromContextSheet reports whether a question's source names a context-only sheet. The
+// longest sheet name the source contains decides, so a context sheet "Notes" does not
+// claim questions from an answered sheet "Release Notes Matrix".
+func fromContextSheet(q chat.BatchQuestion, contextSheets, otherSheets []string) bool {
 	source := strings.ToLower(q.Source)
-	for _, n := range contextSheets {
-		if n = strings.ToLower(strings.TrimSpace(n)); n != "" && strings.Contains(source, n) {
-			return true
+	longest := func(names []string) int {
+		best := 0
+		for _, n := range names {
+			if n = strings.ToLower(strings.TrimSpace(n)); n != "" && strings.Contains(source, n) {
+				best = max(best, len(n))
+			}
 		}
+		return best
 	}
-	return false
+	ctx := longest(contextSheets)
+	return ctx > 0 && ctx >= longest(otherSheets)
 }
 
 // attributeOne picks the section a question belongs to: the longest id prefix it carries,

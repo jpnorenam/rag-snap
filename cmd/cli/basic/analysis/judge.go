@@ -119,6 +119,21 @@ var errJudgeDisabled = fmt.Errorf("answer judging is turned off (%s=false)", Con
 // which is a choice rather than a fault and needs no notice.
 func IsJudgeDisabled(err error) bool { return errors.Is(err, errJudgeDisabled) }
 
+// NewBatchJudge loads the judge settings and builds the judge one batch run uses. The
+// error is IsJudgeDisabled when judging is turned off, and otherwise says why judging
+// cannot run. The CLI and the daemon both build their judge here.
+func NewBatchJudge(cfg storage.Config, verbose bool) (*chat.BatchJudge, JudgeSettings, error) {
+	settings, err := LoadJudgeSettings(cfg)
+	if err != nil {
+		return nil, JudgeSettings{}, err
+	}
+	judge, err := NewJudge(settings, verbose)
+	if err != nil {
+		return nil, settings, err
+	}
+	return &chat.BatchJudge{Judge: judge, Concurrency: settings.Concurrency}, settings, nil
+}
+
 // Judge assesses batch answers with Gemini. It implements chat.AnswerJudge.
 type Judge struct {
 	client   *Client
@@ -166,6 +181,14 @@ func (j *Judge) Judge(ctx context.Context, in chat.JudgeInput) (chat.Judgment, e
 		return raw, err
 	})
 	if err != nil {
+		// A rejected key or an unknown model fails every call alike, so the pool is
+		// told to stop rather than spend one failing call per answer. So does a quota
+		// error that outlasted every retry: the quota is spent, and each further row
+		// would only wait out the same backoff before failing.
+		var quota *QuotaError
+		if IsAuth(err) || IsModelNotFound(err) || errors.As(err, &quota) {
+			return chat.Judgment{}, &chat.UnusableJudgeError{Err: err}
+		}
 		return chat.Judgment{}, err
 	}
 	var resp verdictResponse

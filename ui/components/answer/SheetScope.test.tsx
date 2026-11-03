@@ -68,7 +68,20 @@ test("loading and failure states", () => {
 test("the request names every tab, or nothing when all are answered", () => {
   assert.equal(scopeRequest(tabs, {}), undefined);
   assert.equal(scopeRequest(tabs, { 2: "answer" }), undefined);
-  assert.deepEqual(scopeRequest(tabs, { 1: "context", 3: "exclude" }), { "1": "context", "2": "answer", "3": "exclude" });
+  assert.deepEqual(scopeRequest(tabs, { 1: "context", 3: "exclude" }), {
+    "Read Me": "context",
+    "1 Hardware": "answer",
+    "App B Sizing & BoQ": "exclude",
+  });
+});
+
+test("tabs with number names are sent by name, so a name never shadows a position", () => {
+  const numbered: SheetInfo[] = [
+    { position: 1, name: "Intro", data_rows: 1 },
+    { position: 2, name: "1", data_rows: 5 },
+    { position: 3, name: "2", data_rows: 5 },
+  ];
+  assert.deepEqual(scopeRequest(numbered, { 3: "exclude" }), { Intro: "answer", "1": "answer", "2": "exclude" });
 });
 
 const triage: Triage = {

@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -207,24 +208,52 @@ func applyGapRule(j Judgment) Judgment {
 }
 
 // isGapAnswer reports whether an answer is the fixed no-context response, whether
-// RunBatch emitted it or the answering model wrote it, as the prompt tells it to.
-func isGapAnswer(answer string) bool { return strings.TrimSpace(answer) == noContextAnswer }
+// RunBatch emitted it or the answering model wrote it, as the prompt tells it to. Case,
+// whitespace and the closing full stop are ignored, since a model echoing the sentence
+// does not always keep them.
+func isGapAnswer(answer string) bool {
+	norm := func(s string) string {
+		return strings.TrimRight(strings.Join(strings.Fields(strings.ToLower(s)), " "), ".")
+	}
+	return norm(answer) == norm(noContextAnswer)
+}
+
+// UnusableJudgeError marks a judge error that every later call would hit too, such as
+// a rejected API key or an unknown model. The pool stops calling the judge on the first
+// one and marks the remaining rows not judged with it.
+type UnusableJudgeError struct{ Err error }
+
+func (e *UnusableJudgeError) Error() string { return e.Err.Error() }
+func (e *UnusableJudgeError) Unwrap() error { return e.Err }
 
 // judgePool judges answers concurrently while the batch keeps answering. Verdicts are
 // stored by result index, so their order never depends on which call finishes first.
 type judgePool struct {
-	ctx      context.Context
-	judge    AnswerJudge
-	sem      chan struct{}
+	ctx   context.Context
+	judge AnswerJudge
+	sem   chan struct{}
+	// pending bounds the answers waiting for or under judgement. Each holds its
+	// retrieved context, so without a bound a judge slower than answering would keep
+	// the context of the whole backlog alive at once.
+	pending  chan struct{}
 	hooks    BatchHooks
 	wg       sync.WaitGroup
 	mu       sync.Mutex
 	verdicts map[int]Judgment
 	done     int
 	total    int
+	// unusable is the first UnusableJudgeError seen; once set, no further call is made.
+	unusable error
 }
 
-func newJudgePool(ctx context.Context, cfg *BatchJudge, hooks BatchHooks) *judgePool {
+// judgeBacklogPerCall is how many answers may wait per concurrent judge call before
+// answering pauses for the judge to catch up. The run cannot finish before judging
+// does, so the pause costs little; it caps memory at a few answers' context per call.
+const judgeBacklogPerCall = 4
+
+// newJudgePool builds a pool expecting one verdict per question. The total drops as
+// questions fail, so progress always counts against the answers the run will have.
+func newJudgePool(ctx context.Context, cfg *BatchJudge, hooks BatchHooks, questions int) *judgePool {
 	n := cfg.Concurrency
 	if n < 1 {
 		n = 1
@@ -233,39 +262,53 @@ func newJudgePool(ctx context.Context, cfg *BatchJudge, hooks BatchHooks) *judge
 		ctx:      ctx,
 		judge:    cfg.Judge,
 		sem:      make(chan struct{}, n),
+		pending:  make(chan struct{}, n*judgeBacklogPerCall),
 		hooks:    hooks,
 		verdicts: map[int]Judgment{},
+		total:    questions,
 	}
 }
 
 // record stores a verdict and reports progress. Hooks are called under the lock, so
-// a hook never runs concurrently with another judge hook.
+// a hook never runs concurrently with another judge hook. Once the run is cancelled
+// verdicts are still stored but no longer reported: the caller has stopped listening.
 func (p *judgePool) record(idx int, j Judgment) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.verdicts[idx] = j
 	p.done++
-	p.hooks.judged(idx, j, p.done, p.total)
+	if p.ctx.Err() == nil {
+		p.hooks.judged(idx, j, p.done, p.total)
+	}
 }
 
-// local records a verdict decided without a model call.
-func (p *judgePool) local(idx int, j Judgment) {
+// skip removes a question that produced no answer from the expected total.
+func (p *judgePool) skip() {
 	p.mu.Lock()
-	p.total++
-	p.mu.Unlock()
-	p.record(idx, j)
+	defer p.mu.Unlock()
+	p.total--
 }
 
-// submit queues one answer for judging and returns at once, so answering continues
-// while the judge works.
+// unusableErr returns the error that stopped judging, or nil.
+func (p *judgePool) unusableErr() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.unusable
+}
+
+// submit queues one answer for judging and returns, so answering continues while the
+// judge works. It blocks only when the backlog is full.
 func (p *judgePool) submit(idx int, in JudgeInput) {
-	p.mu.Lock()
-	p.total++
-	p.mu.Unlock()
-
+	select {
+	case p.pending <- struct{}{}:
+	case <-p.ctx.Done():
+		p.record(idx, Judgment{Error: "not judged: the run was cancelled"})
+		return
+	}
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
+		defer func() { <-p.pending }()
 		select {
 		case p.sem <- struct{}{}:
 		case <-p.ctx.Done():
@@ -274,8 +317,20 @@ func (p *judgePool) submit(idx int, in JudgeInput) {
 		}
 		defer func() { <-p.sem }()
 
+		if err := p.unusableErr(); err != nil {
+			p.record(idx, Judgment{Error: "not judged: " + err.Error()})
+			return
+		}
 		j, err := p.judge.Judge(p.ctx, in)
 		if err != nil {
+			var unusable *UnusableJudgeError
+			if errors.As(err, &unusable) {
+				p.mu.Lock()
+				if p.unusable == nil {
+					p.unusable = err
+				}
+				p.mu.Unlock()
+			}
 			p.record(idx, Judgment{Error: "judge call failed: " + err.Error()})
 			return
 		}
@@ -294,8 +349,11 @@ func (p *judgePool) wait() map[int]Judgment {
 // applyLocalChecks folds the mechanical checks into a model verdict: markdown the
 // prompt bans is recorded as a rule violation and caps the score at 4, because a
 // spreadsheet cell shows it as literal asterisks however good the content is.
+//
+// A refusal is recognised either by the fixed no-context sentence or by the judge
+// calling it a gap, which covers custom prompts that word their refusals their own way.
 func applyLocalChecks(j Judgment, answer string) Judgment {
-	if isGapAnswer(answer) {
+	if isGapAnswer(answer) || slices.Contains(j.Issues, IssueGap) {
 		return applyGapRule(j)
 	}
 	marks := markdownFindings(answer)
@@ -327,7 +385,7 @@ func applyConsistency(results []BatchResult, findings []ConsistencyFinding) ([]C
 		var rows []ConsistencyRow
 		for _, r := range f.Rows {
 			idx := r.Row - 2
-			if idx < 0 || idx >= len(results) || results[idx].Judgment == nil ||
+			if idx < 0 || idx >= len(results) || results[idx].Judgment == nil || !results[idx].Judgment.Judged() ||
 				slices.ContainsFunc(rows, func(x ConsistencyRow) bool { return x.Row == r.Row }) {
 				continue
 			}

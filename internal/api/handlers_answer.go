@@ -7,9 +7,14 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 )
+
+// judgedResultsInterval is how often a judged run republishes its results while the
+// verdicts arrive. Progress counters are published on every verdict.
+const judgedResultsInterval = 2 * time.Second
 
 // defaultBatchTemperature matches the CLI `answer batch` default: low sampling
 // temperature for deterministic, grounded answers.
@@ -241,8 +246,9 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 			// Verdicts land on the published results as they arrive, from the
 			// judge's goroutines, so the shared slice is guarded.
 			var (
-				mu   sync.Mutex
-				done []chat.BatchResult
+				mu          sync.Mutex
+				done        []chat.BatchResult
+				lastResults time.Time
 			)
 			publish := func(extra map[string]any) {
 				extra["results"] = append([]chat.BatchResult(nil), done...)
@@ -267,7 +273,16 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 					if idx < len(done) {
 						done[idx].Judgment = &j
 					}
-					publish(map[string]any{"judged_done": judged, "judged_total": judgeTotal})
+					progress := map[string]any{"judged_done": judged, "judged_total": judgeTotal}
+					// Copying every result on every verdict would send the whole run once
+					// per row, so the results are republished at most once per interval;
+					// the final metadata always carries all of them.
+					if time.Since(lastResults) < judgedResultsInterval {
+						op.UpdateMetadata(progress)
+						return
+					}
+					lastResults = time.Now()
+					publish(progress)
 				},
 			}
 			// kapa.ai retrieval is not yet wired into the daemon backend/client

@@ -2,6 +2,7 @@ package analysis
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -195,6 +196,10 @@ func TestJudgeGivesUpAfterBoundedRetries(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "after 3 retries") {
 		t.Errorf("error should say it retried: %v", err)
+	}
+	var unusable *chat.UnusableJudgeError
+	if !errors.As(err, &unusable) {
+		t.Errorf("a quota that outlasts every retry must stop the run's judging: %T", err)
 	}
 }
 
