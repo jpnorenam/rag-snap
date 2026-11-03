@@ -239,6 +239,9 @@ func (c *Client) generateQuestions(ctx context.Context, conv *Conveyance, t *Tri
 	system := Grounding() + operatorSection(instructions)
 
 	instruction := questionsInstruction
+	if conv.HasContextSheets() {
+		instruction += contextSheetsNote
+	}
 	if t != nil && t.CompoundCells {
 		instruction += "\n\nTriage found that cells in this document pack several questions together"
 		if sep := strings.TrimSpace(t.Separator); sep != "" {
@@ -293,7 +296,7 @@ func (c *Client) generateQuestions(ctx context.Context, conv *Conveyance, t *Tri
 				AnswerTokens: res.AnswerTokens,
 				Ceiling:      res.Ceiling,
 				Effort:       effort,
-				Sections:     attributeSections(t, questions),
+				Sections:     attributeSections(t, questions, conv.contextSheetNames()),
 				Questions:    questions,
 			}
 		}
@@ -324,6 +327,9 @@ func (c *Client) generateStrategy(
 	}
 	if t != nil && strings.TrimSpace(t.Notes) != "" {
 		fmt.Fprintf(&b, "\n\nTriage noted: %s", strings.TrimSpace(t.Notes))
+	}
+	if conv.HasContextSheets() {
+		b.WriteString(contextSheetsStrategyNote)
 	}
 
 	b.WriteString("\n\n" + questionIDDigest(questions))
@@ -417,7 +423,11 @@ func trimAtWord(s string, limit int) string {
 // gave no prefixes. Only when neither attributes a question to any section is a section
 // reported as unknown, and questions matching nothing are reported together so the
 // produced counts always add up.
-func attributeSections(t *Triage, questions []chat.BatchQuestion) []SectionCount {
+//
+// A question whose source names a context-only sheet is counted on its own line before
+// any section is tried: it should not exist, and folding it into a section would hide
+// that extraction ignored the scope.
+func attributeSections(t *Triage, questions []chat.BatchQuestion, contextSheets []string) []SectionCount {
 	if t == nil || len(t.Sections) == 0 {
 		return nil
 	}
@@ -426,8 +436,12 @@ func attributeSections(t *Triage, questions []chat.BatchQuestion) []SectionCount
 		prefix := strings.TrimRight(strings.TrimSpace(s.IDPrefix), "*")
 		out[i] = SectionCount{Name: s.Name, IDPrefix: prefix, Estimated: s.EstimatedQuestions}
 	}
-	unattributed := 0
+	unattributed, fromContext := 0, 0
 	for _, q := range questions {
+		if fromContextSheet(q, contextSheets) {
+			fromContext++
+			continue
+		}
 		if best := attributeOne(out, q); best >= 0 {
 			out[best].Produced++
 			continue
@@ -441,17 +455,29 @@ func attributeSections(t *Triage, questions []chat.BatchQuestion) []SectionCount
 			out[i].Produced = -1
 		}
 	}
-	if unattributed == len(questions) {
+	if unattributed == len(questions)-fromContext {
 		// Nothing could be attributed, so per-section counts would be invented.
 		for i := range out {
 			out[i].Produced = -1
 		}
-		return out
-	}
-	if unattributed > 0 {
+	} else if unattributed > 0 {
 		out = append(out, SectionCount{Name: "(matching no section's id prefix)", Produced: unattributed})
 	}
+	if fromContext > 0 {
+		out = append(out, SectionCount{Name: "(from a context-only sheet)", Produced: fromContext})
+	}
 	return out
+}
+
+// fromContextSheet reports whether a question's source names a context-only sheet.
+func fromContextSheet(q chat.BatchQuestion, contextSheets []string) bool {
+	source := strings.ToLower(q.Source)
+	for _, n := range contextSheets {
+		if n = strings.ToLower(strings.TrimSpace(n)); n != "" && strings.Contains(source, n) {
+			return true
+		}
+	}
+	return false
 }
 
 // attributeOne picks the section a question belongs to: the longest id prefix it carries,

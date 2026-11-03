@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 )
@@ -30,9 +31,12 @@ type batchManifestRequest struct {
 	PromptRef string `json:"prompt_ref,omitempty"`
 	// Domains routes questions to requirement domains by id, applied identically
 	// to the CLI's direct path.
-	Domains     []batchDomainRequest   `json:"domains,omitempty"`
-	Temperature *float64               `json:"temperature,omitempty"`
-	Questions   []batchQuestionRequest `json:"questions"`
+	Domains     []batchDomainRequest `json:"domains,omitempty"`
+	Temperature *float64             `json:"temperature,omitempty"`
+	// Judge set to false skips judging for this run. Absent or true judges the
+	// answers whenever the daemon can (see answer-judge).
+	Judge     *bool                  `json:"judge,omitempty"`
+	Questions []batchQuestionRequest `json:"questions"`
 }
 
 // batchQuestionRequest is a single question in a posted manifest.
@@ -101,7 +105,18 @@ func (req batchManifestRequest) toManifest() *chat.BatchManifest {
 // retrieval on completion. Each result under the operation metadata's "results"
 // key carries the question's "id", "question", "answer", and — when the
 // manifest's "domains" block routed it — the "domain" pattern that matched, so
-// the routing is auditable per answer. To derive a manifest from a document,
+// the routing is auditable per answer.
+//
+// Unless the request sets "judge" to false, the answers are judged by Gemini as they
+// are produced. A judged result carries a "judgment" (confidence, rating, issues,
+// comment — or an error when that row could not be judged), the metadata carries
+// "phase" ("answering" or "judging") with "judged_done" and "judged_total", and the
+// completed metadata carries a "judge" summary, including each cross-answer
+// "consistency_findings" entry once, with every row it names quoted, and the count
+// "consistency_discarded" of findings whose quotes did not check out. A verdict the
+// consistency check lowered carries "pre_consistency_confidence". When judging is wanted but the daemon
+// cannot judge, "judge_unavailable" says why and the run proceeds unjudged. Judging
+// never fails the operation. To derive a manifest from a document,
 // use the separate POST /1.0/answer/build endpoint (Tika extraction + optional
 // LLM refinement); this run endpoint accepts only a prepared manifest.
 //
@@ -204,43 +219,77 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 		resources["knowledge"] = bases
 	}
 
+	// Judging is resolved before the operation starts, like the prompts.
+	var judge *chat.BatchJudge
+	var judgeUnavailable string
+	if req.Judge == nil || *req.Judge {
+		judge, judgeUnavailable = s.batchJudge()
+	}
+
 	total := len(manifest.Questions)
 	op, err := s.ops.runTask(
 		fmt.Sprintf("Answering a batch of %d question(s)", total),
 		resources, true,
 		func(ctx context.Context, op *Operation) error {
-			op.UpdateMetadata(map[string]any{"questions_total": total, "questions_done": 0})
+			start := map[string]any{"questions_total": total, "questions_done": 0, "phase": "answering"}
+			if judgeUnavailable != "" {
+				start["judge_unavailable"] = judgeUnavailable
+			}
+			op.UpdateMetadata(start)
 			// Publish each answer as it completes so a client can render the
 			// Q&A pairs live, matching the direct-mode `answer batch` output.
-			var done []chat.BatchResult
+			// Verdicts land on the published results as they arrive, from the
+			// judge's goroutines, so the shared slice is guarded.
+			var (
+				mu   sync.Mutex
+				done []chat.BatchResult
+			)
+			publish := func(extra map[string]any) {
+				extra["results"] = append([]chat.BatchResult(nil), done...)
+				op.UpdateMetadata(extra)
+			}
 			hooks := chat.BatchHooks{
 				OnResult: func(i, total int, r chat.BatchResult) {
+					mu.Lock()
+					defer mu.Unlock()
 					done = append(done, r)
-					op.UpdateMetadata(map[string]any{
-						"questions_total": total,
-						"questions_done":  i + 1,
-						"results":         append([]chat.BatchResult(nil), done...),
-					})
+					publish(map[string]any{"questions_total": total, "questions_done": i + 1})
 				},
 				OnError: func(i, total int, _ chat.BatchQuestion, _ error) {
 					op.UpdateMetadata(map[string]any{"questions_total": total, "questions_done": i + 1})
 				},
+				OnAnswered: func(*chat.BatchOutput) {
+					op.UpdateMetadata(map[string]any{"phase": "judging", "questions_done": total})
+				},
+				OnJudged: func(idx int, j chat.Judgment, judged, judgeTotal int) {
+					mu.Lock()
+					defer mu.Unlock()
+					if idx < len(done) {
+						done[idx].Judgment = &j
+					}
+					publish(map[string]any{"judged_done": judged, "judged_total": judgeTotal})
+				},
 			}
 			// kapa.ai retrieval is not yet wired into the daemon backend/client
 			// config, so batch answers served over the REST API run without it.
-			out, err := chat.RunBatch(ctx, s.clients.chatBackend(), knowledgeClient, nil, embeddingModelID, manifest, prompts, temperature, hooks, s.ctx.Verbose)
+			out, err := chat.RunBatch(ctx, s.clients.chatBackend(), knowledgeClient, nil, embeddingModelID, manifest, prompts, temperature, judge, hooks, s.ctx.Verbose)
 			if err != nil {
 				return err
 			}
 			out.Prompt = promptRef
 			// Publish the structured results on the operation so a client can
 			// retrieve them once the operation completes.
-			op.UpdateMetadata(map[string]any{
+			final := map[string]any{
 				"generated_at": out.GeneratedAt,
 				"model":        out.Model,
 				"prompt":       out.Prompt,
 				"results":      out.Results,
-			})
+				"phase":        "done",
+			}
+			if out.Judge != nil {
+				final["judge"] = out.Judge
+			}
+			op.UpdateMetadata(final)
 			return nil
 		},
 	)

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/huh"
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/analysis"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/rfp"
@@ -47,7 +48,10 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 	var contextDocs []string
 	var instructions string
 	var instructionsFile string
+	var sheets string
+	var contextSheets string
 	var checkPath string
+	var noJudge bool
 
 	c := &cobra.Command{
 		Use:   "batch [manifest.yaml]",
@@ -64,12 +68,23 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			"to steer the analysis — granularity, scope, which questions to include — for example " +
 			"\"Split every matrix row into one question per requirement. Only the Annexure A compliance matrix.\" " +
 			"Instructions reach every analysis call, cannot remove the rules rag-cli appends to the prompt, and are " +
-			"recorded in the manifest's header. Analysis is off by default and sends " +
+			"recorded in the manifest's header. For a spreadsheet RFP, --sheets and --context-sheets choose its tabs exactly: " +
+			"--sheets lists the tabs to answer and --context-sheets the tabs sent only as background, by name or 1-based " +
+			"position, with ranges such as 2-7; once either is given, every unlisted tab is left out. " +
+			"Analysis is off by default and sends " +
 			"document content to Google under GEMINI_API_KEY; see 'rag get analysis.enabled'.\n\n" +
 			"Use --check <manifest.yaml> to validate a manifest without running it: routing reachability, " +
-			"unknown knowledge bases, duplicate ids, and whether the prompt still carries its rules.",
+			"unknown knowledge bases, duplicate ids, and whether the prompt still carries its rules.\n\n" +
+			"Every run is judged by Gemini unless judging is turned off: each answer is checked against the " +
+			"context it was written from and given a confidence score (1–5), a green/yellow/red rating, and a " +
+			"comment saying what to check or correct. The run ends with the red and yellow rows listed by " +
+			"spreadsheet row number. Judging needs GEMINI_API_KEY and a model (judge.model, or analysis.model); " +
+			"pass --no-judge to skip it for one run, or set judge.enabled=false to turn it off.",
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
+			if noJudge && (checkPath != "" || buildDoc != "") {
+				return fmt.Errorf("--no-judge applies to running a manifest")
+			}
 			if checkPath != "" {
 				return cmd.runCheck(checkPath)
 			}
@@ -79,10 +94,17 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 					if err != nil {
 						return err
 					}
-					return cmd.runAnalyze(buildDoc, contextDocs, outputPath, instr)
+					scope, err := analysis.ScopeFromLists(sheets, contextSheets)
+					if err != nil {
+						return err
+					}
+					return cmd.runAnalyze(buildDoc, contextDocs, outputPath, instr, scope)
 				}
 				if instructions != "" || instructionsFile != "" {
 					return fmt.Errorf("--instructions and --instructions-file apply to --build <document> --analyze")
+				}
+				if sheets != "" || contextSheets != "" {
+					return fmt.Errorf("--sheets and --context-sheets apply to --build <document> --analyze")
 				}
 				return cmd.runBuild(buildDoc, outputPath, previewOnly, noRefine)
 			}
@@ -94,6 +116,9 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			}
 			if instructions != "" || instructionsFile != "" {
 				return fmt.Errorf("--instructions and --instructions-file apply to --build <document> --analyze")
+			}
+			if sheets != "" || contextSheets != "" {
+				return fmt.Errorf("--sheets and --context-sheets apply to --build <document> --analyze")
 			}
 			if len(args) == 0 {
 				return fmt.Errorf("requires a manifest file argument, or use --build <document> to generate one")
@@ -110,7 +135,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			// returns the structured results, which we write to the same
 			// timestamped JSON file the direct path produces.
 			if dc := daemonClient(cmd.Context); dc != nil {
-				return cmd.runBatchRemote(dc, manifest, temperature)
+				return cmd.runBatchRemote(dc, manifest, temperature, noJudge)
 			}
 
 			// A prompt_ref names a stored variant, which only the daemon can
@@ -140,7 +165,7 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return chat.ProcessBatchChat(backend, knowledgeClient, kapaClient, embeddingModelID, manifest, chat.LoadPrompts(), temperature, cmd.Verbose)
+			return chat.ProcessBatchChat(backend, knowledgeClient, kapaClient, embeddingModelID, manifest, chat.LoadPrompts(), temperature, cmd.batchJudge(noJudge), cmd.Verbose)
 		},
 	}
 
@@ -153,7 +178,10 @@ func (cmd *answerCommand) batchCommand() *cobra.Command {
 	c.Flags().StringVar(&instructions, "instructions", "", "Instructions that steer the analysis, such as granularity or scope (\"split every row into one question per requirement\") — used with --build --analyze")
 	c.Flags().StringVar(&instructionsFile, "instructions-file", "", "Read the analysis instructions from a file under your home directory — used with --build --analyze")
 	c.MarkFlagsMutuallyExclusive("instructions", "instructions-file")
+	c.Flags().StringVar(&sheets, "sheets", "", "Spreadsheet tabs to answer, by name or 1-based position, comma-separated, ranges allowed (\"2-7\"); unlisted tabs are left out — used with --build --analyze")
+	c.Flags().StringVar(&contextSheets, "context-sheets", "", "Spreadsheet tabs to send only as background, with no questions taken from them, same syntax as --sheets — used with --build --analyze")
 	c.Flags().StringVar(&checkPath, "check", "", "Validate a manifest without running it, and exit non-zero if it carries defects")
+	c.Flags().BoolVar(&noJudge, "no-judge", false, "Skip judging the answers with Gemini for this run")
 	c.Flags().Float64Var(&temperature, "temperature", 0.1, "Sampling temperature (0.0–1.0); lower = more deterministic. Ignored with chat.api=anthropic")
 
 	return c
@@ -257,5 +285,30 @@ func (cmd *answerCommand) runBuild(docPath, outputPath string, previewOnly, noRe
 
 	fmt.Printf("\nManifest saved to %s  (%d questions)\n", outputPath, len(questions))
 	fmt.Printf("Run: %s answer batch %s\n", cliCommand(), outputPath)
+	return nil
+}
+
+// batchJudge builds the judge for a direct-mode run, or returns nil when the run is
+// not to be judged. Judging that is turned on but cannot run is one notice, never a
+// failure: the answers are what the run is for.
+func (cmd *answerCommand) batchJudge(noJudge bool) *chat.BatchJudge {
+	if noJudge {
+		return nil
+	}
+	settings, err := analysis.LoadJudgeSettings(cmd.Config)
+	if err == nil {
+		var judge *analysis.Judge
+		if judge, err = analysis.NewJudge(settings, cmd.Verbose); err == nil {
+			if cmd.Verbose {
+				fmt.Printf("Judging answers with %s (reasoning %q, %d at a time)\n",
+					settings.Model, settings.Reasoning, settings.Concurrency)
+			}
+			return &chat.BatchJudge{Judge: judge, Concurrency: settings.Concurrency}
+		}
+	}
+	if !analysis.IsJudgeDisabled(err) {
+		fmt.Printf("Answers will not be judged: %v\n(Pass --no-judge, or set %s=false, to stop this notice.)\n\n",
+			err, analysis.ConfJudgeEnabled)
+	}
 	return nil
 }

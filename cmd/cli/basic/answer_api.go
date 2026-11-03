@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
@@ -15,14 +14,16 @@ import (
 // batchManifestJSON mirrors the daemon's POST /1.0/answer/batch body. The CLI's
 // chat.BatchManifest is YAML-tagged, so we re-shape it for the JSON API.
 type batchManifestJSON struct {
-	Version        string              `json:"version,omitempty"`
-	Model          string              `json:"model,omitempty"`
-	KnowledgeBases []string            `json:"knowledge_bases,omitempty"`
-	Prompt         string              `json:"prompt,omitempty"`
-	PromptRef      string              `json:"prompt_ref,omitempty"`
-	Domains        []batchDomainJSON   `json:"domains,omitempty"`
-	Temperature    *float64            `json:"temperature,omitempty"`
-	Questions      []batchQuestionJSON `json:"questions"`
+	Version        string            `json:"version,omitempty"`
+	Model          string            `json:"model,omitempty"`
+	KnowledgeBases []string          `json:"knowledge_bases,omitempty"`
+	Prompt         string            `json:"prompt,omitempty"`
+	PromptRef      string            `json:"prompt_ref,omitempty"`
+	Domains        []batchDomainJSON `json:"domains,omitempty"`
+	Temperature    *float64          `json:"temperature,omitempty"`
+	// Judge is false to skip judging; absent leaves it to the daemon's configuration.
+	Judge     *bool               `json:"judge,omitempty"`
+	Questions []batchQuestionJSON `json:"questions"`
 }
 
 type batchQuestionJSON struct {
@@ -41,7 +42,7 @@ type batchDomainJSON struct {
 // batchManifestBody re-shapes a loaded manifest into the daemon's JSON request
 // body. Every manifest field the run honours has to be carried here, or the
 // daemon-backed path silently runs a different manifest than the direct path.
-func batchManifestBody(manifest *chat.BatchManifest, temperature float64) batchManifestJSON {
+func batchManifestBody(manifest *chat.BatchManifest, temperature float64, noJudge bool) batchManifestJSON {
 	questions := make([]batchQuestionJSON, len(manifest.Questions))
 	for i, q := range manifest.Questions {
 		questions[i] = batchQuestionJSON{
@@ -62,7 +63,12 @@ func batchManifestBody(manifest *chat.BatchManifest, temperature float64) batchM
 			}
 		}
 	}
+	var judge *bool
+	if noJudge {
+		judge = new(bool)
+	}
 	return batchManifestJSON{
+		Judge:          judge,
 		Version:        manifest.Version,
 		Model:          manifest.Model,
 		KnowledgeBases: manifest.KnowledgeBases,
@@ -95,10 +101,10 @@ func batchResultsFrom(op *apiclient.Operation) []chat.BatchResult {
 // runBatchRemote posts a prepared manifest to the daemon, waits for the async
 // operation with progress, and writes the structured results to the same
 // timestamped JSON file the direct path produces.
-func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.BatchManifest, temperature float64) error {
+func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.BatchManifest, temperature float64, noJudge bool) error {
 	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)
 
-	body := batchManifestBody(manifest, temperature)
+	body := batchManifestBody(manifest, temperature, noJudge)
 
 	opURL, err := dc.AnswerBatch(context.Background(), body)
 	if err != nil {
@@ -129,6 +135,7 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 		updateSpinner, stopSpinner = common.StartUpdatableSpinner(label)
 		spinning = true
 	}
+	judgeNoticed := false
 	printResults := func(op *apiclient.Operation) {
 		results := batchResultsFrom(op)
 		if printed < len(results) {
@@ -140,6 +147,21 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 				fmt.Printf("[%d/%d] Question: %s\n", printed+1, total, r.Question)
 				fmt.Printf("Answer: %s\n---\n", r.Answer)
 			}
+		}
+		if reason := op.MetadataString("judge_unavailable"); reason != "" && !judgeNoticed {
+			judgeNoticed = true
+			haltSpinner()
+			fmt.Printf("Answers will not be judged: %s\n(Pass --no-judge, or set judge.enabled=false, to stop this notice.)\n", reason)
+		}
+		if op.MetadataString("phase") == "judging" {
+			label := fmt.Sprintf("Judging answers %d/%d", op.MetadataInt("judged_done"), op.MetadataInt("judged_total"))
+			if spinning {
+				updateSpinner(label)
+			} else {
+				updateSpinner, stopSpinner = common.StartUpdatableSpinner(label)
+				spinning = true
+			}
+			return
 		}
 		if done := op.MetadataInt("questions_done"); done < total {
 			showSpinner(done)
@@ -160,6 +182,8 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 	out := chat.BatchOutput{
 		GeneratedAt: op.MetadataString("generated_at"),
 		Model:       op.MetadataString("model"),
+		Prompt:      op.MetadataString("prompt"),
+		Judge:       judgeSummaryFrom(op),
 		Results:     batchResultsFrom(op),
 	}
 	if len(out.Results) == 0 {
@@ -167,13 +191,30 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 	}
 
 	filename := fmt.Sprintf("batch-results-%s.json", time.Now().Format("20060102-150405"))
-	data, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling results: %w", err)
-	}
-	if err := os.WriteFile(filename, data, 0644); err != nil {
+	if err := chat.WriteBatchResults(filename, &out); err != nil {
 		return fmt.Errorf("writing results file: %w", err)
+	}
+	if summary := chat.FormatJudgeSummary(&out); summary != "" {
+		fmt.Printf("\n%s", summary)
 	}
 	fmt.Printf("\nResults saved to %s\n", filename)
 	return nil
+}
+
+// judgeSummaryFrom decodes the judge summary the daemon publishes on a judged run.
+// Returns nil when the run was not judged.
+func judgeSummaryFrom(op *apiclient.Operation) *chat.JudgeSummary {
+	raw, ok := op.Metadata["judge"]
+	if !ok || raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return nil
+	}
+	var s chat.JudgeSummary
+	if err := json.Unmarshal(b, &s); err != nil {
+		return nil
+	}
+	return &s
 }

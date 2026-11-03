@@ -50,6 +50,10 @@ func TestLiveSchemasAreAccepted(t *testing.T) {
 		"rfp_triage":    triageSchema(),
 		"rfp_questions": questionsSchema(),
 		"rfp_strategy":  strategySchema(),
+		// The judge schemas are the first to use integer minimum/maximum, so they
+		// are the ones most likely to meet a construct Gemini's subset rejects.
+		"answer_verdict":     verdictSchema(),
+		"answer_consistency": consistencySchema(),
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := liveSchema(t, c, name, schema); err != nil {

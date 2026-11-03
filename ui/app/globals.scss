@@ -2024,6 +2024,152 @@ $sidebar-accent: #e95420; // Ubuntu orange
   font-size: 0.875rem;
 }
 
+// The judge's verdict on a card: a left rule and badge per kind, with the icon
+// shape and the words carrying the rating so it never rests on colour alone.
+.qa-verdict {
+  margin-bottom: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-left: 3px solid var(--vf-color-border-default);
+  background-color: var(--vf-color-background);
+}
+
+.qa-verdict--ready {
+  border-left-color: var(--vf-color-border-positive);
+}
+
+.qa-verdict--review {
+  border-left-color: var(--vf-color-border-caution);
+}
+
+.qa-verdict--fix {
+  border-left-color: var(--vf-color-border-negative);
+}
+
+.qa-verdict__line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  font-size: 0.875rem;
+}
+
+.qa-verdict__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+
+.qa-verdict--ready .qa-verdict__icon {
+  color: var(--vf-color-border-positive);
+}
+
+.qa-verdict--review .qa-verdict__icon {
+  color: var(--vf-color-border-caution);
+}
+
+.qa-verdict--fix .qa-verdict__icon {
+  color: var(--vf-color-border-negative);
+}
+
+.qa-verdict--unjudged .qa-verdict__icon {
+  color: var(--vf-color-text-muted);
+}
+
+.qa-verdict__meta {
+  color: var(--vf-color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.qa-verdict__comment {
+  margin-top: 0.35rem;
+}
+
+.qa-verdict__issues {
+  margin-top: 0.25rem;
+  color: var(--vf-color-text-muted);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+// The judged run's summary strip: per-rating counts as filter toggles.
+.answer-judge {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.25rem;
+}
+
+.answer-judge__title {
+  font-size: 0.875rem;
+  color: var(--vf-color-text-muted);
+}
+
+// Cross-answer findings, each listed once for the run. Same frame as the judge strip
+// it follows; a broad finding says in words that it was applied to no row.
+.answer-consistency {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--vf-color-border-default);
+  border-radius: 0.25rem;
+}
+
+.answer-consistency__list {
+  list-style: none;
+  margin: 0.5rem 0 0.25rem;
+  padding: 0;
+}
+
+.answer-consistency__finding {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.5rem 0 0.5rem 0.75rem;
+  border-left: 3px solid var(--vf-color-border-caution);
+
+  & + & {
+    margin-top: 0.5rem;
+  }
+}
+
+.answer-consistency__finding--broad {
+  border-left-color: var(--vf-color-border-default);
+}
+
+.answer-consistency__rows {
+  font-size: 0.875rem;
+  color: var(--vf-color-text-muted);
+}
+
+.answer-consistency__row {
+  margin: 0;
+  padding: 0;
+}
+
+.answer-consistency__broad {
+  font-size: 0.875rem;
+  font-style: italic;
+}
+
+.answer-judge__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin: 0.5rem 0 0.25rem;
+
+  // A hidden rating is muted and struck through, so the off state survives
+  // without colour. Vanilla styles the pressed (shown) state itself.
+  .p-chip[aria-pressed="false"] {
+    color: var(--vf-color-text-muted);
+
+    .p-chip__lead,
+    .p-chip__value {
+      text-decoration: line-through;
+    }
+  }
+}
+
 .qa-card__sources-list {
   margin: 0.5rem 0 0;
   padding-left: 1rem;
@@ -2111,6 +2257,36 @@ $sidebar-accent: #e95420; // Ubuntu orange
   font-family: unquote(vanilla-framework.$font-monospace);
   font-size: 0.875rem;
   width: 100%;
+}
+
+// --- sheet scope ---
+// A spreadsheet RFP's tabs with a three-way setting each. The setting is always named
+// in words, in the radio label or the Use column; an excluded tab is also muted, so the
+// rows that will not be sent recede without colour carrying the meaning.
+.sheet-scope {
+  margin-bottom: 0.5rem;
+
+  td {
+    vertical-align: middle;
+  }
+}
+
+.sheet-scope__row--exclude td {
+  color: var(--vf-color-text-muted);
+}
+
+.sheet-scope__choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+
+  .p-radio--inline {
+    margin-right: 0;
+  }
+
+  .p-radio__label {
+    margin-bottom: 0;
+  }
 }
 
 // The operator's instructions on the triage step, kept as written.

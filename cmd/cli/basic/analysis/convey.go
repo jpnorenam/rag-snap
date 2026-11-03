@@ -89,12 +89,42 @@ type DocumentReport struct {
 	// whole document arrived.
 	Detail string `json:"detail,omitempty"`
 	Bytes  int64  `json:"bytes"`
+
+	// Sheets lists a converted spreadsheet's sheets with their scope, so the operator
+	// can see which tabs were answered, sent as context, or left out.
+	Sheets []SheetInfo `json:"sheets,omitempty"`
 }
 
 // Conveyance is a staged, ready-to-send document set together with its report.
 type Conveyance struct {
 	Documents []Document       `json:"-"`
 	Report    []DocumentReport `json:"report"`
+}
+
+// HasContextSheets reports whether any conveyed document carries a context-only sheet,
+// which the model calls must then be told about.
+func (c Conveyance) HasContextSheets() bool {
+	for _, r := range c.Report {
+		for _, s := range r.Sheets {
+			if s.Scope == ScopeContext {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// contextSheetNames lists the names of every context-only sheet conveyed.
+func (c Conveyance) contextSheetNames() []string {
+	var out []string
+	for _, r := range c.Report {
+		for _, s := range r.Sheets {
+			if s.Scope == ScopeContext {
+				out = append(out, s.Name)
+			}
+		}
+	}
+	return out
 }
 
 // TotalBytes is the conveyed size of the whole set.
@@ -126,9 +156,15 @@ func NewConverter(tikaURL string) *Converter {
 // It fails on the first document it cannot convey: a context document silently dropped
 // would change the generated manifest with no signal to the operator.
 func (c *Converter) ConveyAll(primaryPath string, contextPaths []string) (*Conveyance, error) {
+	return c.ConveyAllWith(primaryPath, contextPaths, nil)
+}
+
+// ConveyAllWith is ConveyAll with the operator's sheet scope, which applies to the
+// primary document only: context documents are conveyed whole.
+func (c *Converter) ConveyAllWith(primaryPath string, contextPaths []string, scope SheetScope) (*Conveyance, error) {
 	var out Conveyance
 
-	doc, report, err := c.Convey(primaryPath, RolePrimary)
+	doc, report, err := c.convey(primaryPath, RolePrimary, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +200,10 @@ func (c *Converter) ConveyAll(primaryPath string, contextPaths []string) (*Conve
 // are read as pure text with markup discarded — so uploading the original, or Tika's
 // HTML, would lose the table structure this conversion exists to keep.
 func (c *Converter) Convey(path string, role Role) (Document, DocumentReport, error) {
+	return c.convey(path, role, nil)
+}
+
+func (c *Converter) convey(path string, role Role, scope SheetScope) (Document, DocumentReport, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return Document{}, DocumentReport{}, fmt.Errorf("cannot access file: %w", err)
@@ -171,11 +211,20 @@ func (c *Converter) Convey(path string, role Role) (Document, DocumentReport, er
 	name := filepath.Base(path)
 	format := rfp.DetectFormat(path, "")
 
+	if len(scope) > 0 {
+		if err := scope.Validate(); err != nil {
+			return Document{}, DocumentReport{}, err
+		}
+		if format != "xlsx" {
+			return Document{}, DocumentReport{}, ErrScopeNotSpreadsheet(name)
+		}
+	}
+
 	switch format {
 	case "pdf":
 		return c.conveyPDF(path, name, role, info.Size())
 	case "xlsx", "csv":
-		return c.conveyTabular(path, name, format, role)
+		return c.conveyTabular(path, name, format, role, scope)
 	case "docx":
 		return c.conveyProse(path, name, format, role)
 	default:
@@ -229,55 +278,132 @@ func (c *Converter) conveyPDF(path, name string, role Role, size int64) (Documen
 	}, nil
 }
 
+// Inventory lists a document's sheets without conveying it: positions in workbook
+// order, names and data-row counts. It runs the same conversion conveyance does, so the
+// sheets an operator scopes are the sheets analysis sees. A PDF or DOCX has no sheets
+// and returns an empty list with its format.
+func (c *Converter) Inventory(path string) ([]SheetInfo, string, error) {
+	if _, err := os.Stat(path); err != nil {
+		return nil, "", fmt.Errorf("cannot access file: %w", err)
+	}
+	name := filepath.Base(path)
+	format := rfp.DetectFormat(path, "")
+	switch format {
+	case "xlsx", "csv":
+		tables, err := c.readTables(path, name, format)
+		if err != nil {
+			return nil, format, err
+		}
+		inv, _ := sheetInventory(tables, workbookSheetNames(path, format))
+		return inv, format, nil
+	case "pdf", "docx":
+		return []SheetInfo{}, format, nil
+	default:
+		return nil, format, fmt.Errorf(
+			"unsupported file type %q — analysis reads PDF, XLSX, CSV, DOCX", filepath.Ext(name))
+	}
+}
+
+// workbookSheetNames is the workbook's tab list, or nil when it cannot be read or the
+// document is not a workbook.
+func workbookSheetNames(path, format string) []string {
+	if format != "xlsx" {
+		return nil
+	}
+	names, err := rfp.XLSXSheetNames(path)
+	if err != nil {
+		return nil
+	}
+	return names
+}
+
 // conveyTabular converts a spreadsheet or CSV to Markdown tables, keeping every row,
-// every column and every sheet name.
-func (c *Converter) conveyTabular(path, name, format string, role Role) (Document, DocumentReport, error) {
+// every column and every sheet name of every sheet the scope does not exclude.
+func (c *Converter) conveyTabular(path, name, format string, role Role, scope SheetScope) (Document, DocumentReport, error) {
+	sheets, err := c.readTables(path, name, format)
+	if err != nil {
+		return Document{}, DocumentReport{}, err
+	}
+
+	inv, tableSheet := sheetInventory(sheets, workbookSheetNames(path, format))
+	if inv, err = ResolveScope(inv, scope); err != nil {
+		return Document{}, DocumentReport{}, err
+	}
+
+	// Excluded sheets are dropped and context-only ones relabelled before rendering, so
+	// the size checks and the staged text measure exactly what is sent.
+	kept := make([]rfp.SheetTable, 0, len(sheets))
+	rows := 0
+	for ti, t := range sheets {
+		switch inv[tableSheet[ti]].Scope {
+		case ScopeExclude:
+			continue
+		case ScopeContext:
+			t.Name = strings.TrimSpace(t.Name) + contextOnlyLabel
+		}
+		kept = append(kept, t)
+		rows += dataRows(t)
+	}
+
+	text := rfp.RenderSheetsMarkdown(kept)
+	if err := c.checkTextSize(name, text); err != nil {
+		return Document{}, DocumentReport{}, err
+	}
+
+	detail := fmt.Sprintf("converted to Markdown tables: %d sheet(s), %d data row(s), all columns kept",
+		len(sheets), rows)
+	if Scoped(inv) {
+		var answered, context, excluded int
+		for _, s := range inv {
+			switch s.Scope {
+			case ScopeAnswer:
+				answered++
+			case ScopeContext:
+				context++
+			default:
+				excluded++
+			}
+		}
+		detail = fmt.Sprintf("converted to Markdown tables: %d of %d sheet(s) answered, %d context only, %d excluded; %d data row(s) conveyed, all columns kept",
+			answered, len(inv), context, excluded, rows)
+	}
+
+	doc := Document{Filename: name, Format: format, Role: role, Path: PathConverted, Text: text}
+	return doc, DocumentReport{
+		Filename: name, Format: format, Path: PathConverted, Converted: true,
+		Detail: detail, Bytes: doc.Size(), Sheets: inv,
+	}, nil
+}
+
+// readTables converts a spreadsheet or CSV to its tables.
+func (c *Converter) readTables(path, name, format string) ([]rfp.SheetTable, error) {
 	var sheets []rfp.SheetTable
 
 	switch format {
 	case "csv":
 		var err error
 		if sheets, err = rfp.SheetsFromCSV(path); err != nil {
-			return Document{}, DocumentReport{}, err
+			return nil, err
 		}
 	case "xlsx":
 		if c.TikaURL == "" {
-			return Document{}, DocumentReport{}, fmt.Errorf(
-				"reading %s needs the tika service, which is not configured", name)
+			return nil, fmt.Errorf("reading %s needs the tika service, which is not configured", name)
 		}
 		tikaClient, err := processing.NewTikaClient(c.TikaURL)
 		if err != nil {
-			return Document{}, DocumentReport{}, fmt.Errorf("creating Tika client: %w", err)
+			return nil, fmt.Errorf("creating Tika client: %w", err)
 		}
 		htmlContent, err := tikaClient.ExtractHTML(path)
 		if err != nil {
-			return Document{}, DocumentReport{}, fmt.Errorf("tika extraction of %s failed: %w", name, err)
+			return nil, fmt.Errorf("tika extraction of %s failed: %w", name, err)
 		}
 		sheets = rfp.SheetsFromTikaHTML(htmlContent, path)
 	}
 
 	if len(sheets) == 0 {
-		return Document{}, DocumentReport{}, fmt.Errorf("no tables found in %s", name)
+		return nil, fmt.Errorf("no tables found in %s", name)
 	}
-
-	text := rfp.RenderSheetsMarkdown(sheets)
-	if err := c.checkTextSize(name, text); err != nil {
-		return Document{}, DocumentReport{}, err
-	}
-
-	rows := 0
-	for _, s := range sheets {
-		if len(s.Rows) > 0 {
-			rows += len(s.Rows) - 1 // exclude the header row
-		}
-	}
-	doc := Document{Filename: name, Format: format, Role: role, Path: PathConverted, Text: text}
-	return doc, DocumentReport{
-		Filename: name, Format: format, Path: PathConverted, Converted: true,
-		Detail: fmt.Sprintf("converted to Markdown tables: %d sheet(s), %d data row(s), all columns kept",
-			len(sheets), rows),
-		Bytes: doc.Size(),
-	}, nil
+	return sheets, nil
 }
 
 // conveyProse converts a word-processor document. Tables inside it are recovered as

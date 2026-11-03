@@ -2,6 +2,7 @@ package basic
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
@@ -25,7 +26,7 @@ func TestBatchManifestBodyCarriesDomainsAndSource(t *testing.T) {
 		},
 	}
 
-	data, err := json.Marshal(batchManifestBody(manifest, 0.1))
+	data, err := json.Marshal(batchManifestBody(manifest, 0.1, false))
 	if err != nil {
 		t.Fatalf("marshaling body: %v", err)
 	}
@@ -72,7 +73,7 @@ func TestBatchManifestBodyOmitsAbsentRouting(t *testing.T) {
 		Version:   "1.0",
 		Questions: []chat.BatchQuestion{{Question: "SR-IOV"}},
 	}
-	data, err := json.Marshal(batchManifestBody(manifest, 0.1))
+	data, err := json.Marshal(batchManifestBody(manifest, 0.1, false))
 	if err != nil {
 		t.Fatalf("marshaling body: %v", err)
 	}
@@ -127,5 +128,27 @@ func TestBatchResultsFromDecodesDomain(t *testing.T) {
 	}
 	if _, present := file.Results[1]["domain"]; present {
 		t.Error("unrouted result wrote a domain key; want it omitted")
+	}
+}
+
+// TestBatchManifestBodyCarriesNoJudge checks that --no-judge reaches the daemon as
+// judge:false, and that leaving it off leaves the decision to the daemon's config.
+func TestBatchManifestBodyCarriesNoJudge(t *testing.T) {
+	manifest := &chat.BatchManifest{Questions: []chat.BatchQuestion{{Question: "q"}}}
+
+	data, err := json.Marshal(batchManifestBody(manifest, 0.1, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"judge":false`) {
+		t.Errorf("--no-judge body = %s, want judge:false", data)
+	}
+
+	data, err = json.Marshal(batchManifestBody(manifest, 0.1, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), `"judge"`) {
+		t.Errorf("default body = %s, want no judge field", data)
 	}
 }

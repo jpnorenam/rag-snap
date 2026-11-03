@@ -209,6 +209,15 @@ The **Answer RFPs** section is browser parity with the CLI's `answer batch` (and
   with no routing.
   The wizard warns you before you navigate away with an unsaved manifest; cancelling while the
   document is being read or a column extracted just returns you to the previous step.
+
+  On the **analysis** path (see [Analysis](usage.md#instructions)), choosing a workbook (`.xlsx`) as
+  the RFP lists its tabs, with each tab's position and row count, under **Tabs to analyse**. Set each
+  tab to **Answer** (questions are taken from it, the default), **Context only** (sent as background,
+  such as a read-me or a sizing appendix, with no questions taken from it) or **Exclude** (not sent).
+  Listing the tabs makes no model call. Analysis cannot start with no tab set to Answer. The triage
+  step shows the tab scope beside your instructions, and a downloaded manifest records it in its
+  header, as `--sheets`/`--context-sheets` do on the CLI. If the tabs cannot be listed, for example
+  because Tika is down, the reason is shown and analysis still runs over every tab.
 - **Review results** — open a previously exported results JSON to review the answers without
   re-running anything.
 
@@ -219,6 +228,22 @@ pattern above its answer — this is the authoritative record of what applied, t
 itself rather than recomputed. Nothing is shown for a question that matched no entry, or for a
 results file written before domain routing existed. (Per-question source provenance is not shown
 yet — the batch API does not return it.)
+
+When the run was [judged](usage.md#judging-the-answers), each card shows the verdict between the
+question and the answer: a badge naming the rating in words and by icon shape (**Green · paste as
+is**, **Yellow · check or edit**, **Red · fix or answer**, or **Not judged** with the reason), the
+confidence score, the spreadsheet row (the first answer is row 2), and the judge's comment saying
+what to check or correct. Above the cards, a summary strip counts each rating; each count is a toggle
+that shows or hides that rating's cards, so you can work through red and yellow only. Cards keep their
+numbers and rows while filtered. While a judged run is finishing, the running view shows **Judging
+answers** with its own progress, and says up front when the daemon cannot judge and why. A results
+file with no verdicts renders as before, and **Export JSON** keeps the verdicts and the summary.
+
+Below the strip, **Consistency across answers** lists each cross-answer finding once: the rows it
+names, each a link to that card (clearing a rating filter that would hide it), and what conflicts.
+A finding too wide to be a contradiction is marked **Not applied to rows** and changes no card.
+A card whose score the check lowered shows it, for example *Confidence 3/5 (lowered from 5 by the
+consistency check)*.
 
 ---
 
