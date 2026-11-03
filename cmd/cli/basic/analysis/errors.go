@@ -30,16 +30,22 @@ const envRetiredKey = "ANALYSIS_API_KEY"
 // type so callers can offer the extraction path instead of reporting a hard failure:
 // analysis being unconfigured is an expected state, not a fault.
 type NotConfiguredError struct {
+	// Feature names what cannot run; empty means analysis.
+	Feature string
 	// Reasons lists every missing prerequisite, so an operator fixes them in one
 	// pass rather than discovering them one error at a time.
 	Reasons []string
 }
 
 func (e *NotConfiguredError) Error() string {
-	if len(e.Reasons) == 1 {
-		return "analysis is not configured: " + e.Reasons[0]
+	feature := e.Feature
+	if feature == "" {
+		feature = "analysis"
 	}
-	return "analysis is not configured:\n  - " + strings.Join(e.Reasons, "\n  - ")
+	if len(e.Reasons) == 1 {
+		return feature + " is not configured: " + e.Reasons[0]
+	}
+	return feature + " is not configured:\n  - " + strings.Join(e.Reasons, "\n  - ")
 }
 
 // IsNotConfigured reports whether err is a NotConfiguredError.

@@ -379,7 +379,7 @@ func TestRunBatchAnthropic(t *testing.T) {
 		failed = append(failed, q.ID)
 	}}
 
-	out, err := RunBatch(context.Background(), BackendConfig{API: APIAnthropic, BaseURL: f.URL}, nil, nil, "", manifest, DefaultPrompts(), 0.1, hooks, false)
+	out, err := RunBatch(context.Background(), BackendConfig{API: APIAnthropic, BaseURL: f.URL}, nil, nil, "", manifest, DefaultPrompts(), 0.1, nil, hooks, false)
 	if err != nil {
 		t.Fatal(err)
 	}

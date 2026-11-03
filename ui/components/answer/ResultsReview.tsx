@@ -1,9 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import QACard from "@/components/answer/QACard";
 import ConfirmModal from "@/components/common/ConfirmModal";
-import type { ParsedQAFile } from "@/lib/types";
+import {
+  filterByRating,
+  ratingFilterOf,
+  RATING_FILTERS,
+  toResultsFile,
+  type RatingFilter,
+} from "@/lib/results";
+import type { ConsistencyFinding, JudgeSummary, ParsedQAFile } from "@/lib/types";
 import { buildPayload, collaborateInWebUI, type FallbackReason } from "@/lib/handoff";
 
 interface Props {
@@ -53,19 +60,17 @@ export default function ResultsReview({
   const [notice, setNotice] = useState<Notice | null>(null);
   const [handingOff, setHandingOff] = useState(false);
   const [confirmExit, setConfirmExit] = useState(false);
+  // The ratings the reviewer is looking at. All of them until they narrow it.
+  const [shown, setShown] = useState<Set<RatingFilter>>(() => new Set(RATING_FILTERS));
   // Canceller for an in-flight handoff, torn down on unmount.
   const cancelHandoffRef = useRef<(() => void) | null>(null);
   // Auto-dismiss timer for a positive toast.
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const download = useCallback(() => {
-    // Re-emit the CLI's BatchOutput shape verbatim (generated_at, model,
-    // results) so the file round-trips with `answer batch` output.
-    const payload = {
-      generated_at: parsed.generated_at,
-      model: parsed.model,
-      results: parsed.items,
-    };
+    // Re-emit the CLI's BatchOutput shape verbatim so the file round-trips
+    // with `answer batch` output, verdicts and judge summary included.
+    const payload = toResultsFile(parsed);
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -135,7 +140,34 @@ export default function ResultsReview({
   useEffect(() => () => cancelHandoffRef.current?.(), []);
 
   const generatedAt = parsed.generated_at ? new Date(parsed.generated_at) : null;
-  const showJumpList = parsed.items.length > JUMP_LIST_THRESHOLD;
+  // Cards keep their original index through filtering, so a card's number and
+  // spreadsheet row never change with what is shown around it.
+  const visible = useMemo(
+    () => (parsed.judge ? filterByRating(parsed.items, shown) : parsed.items.map((item, i) => ({ item, i }))),
+    [parsed, shown]
+  );
+  const showJumpList = visible.length > JUMP_LIST_THRESHOLD;
+  // A row chosen from a consistency finding. Its card may be hidden by the rating
+  // filter, so the filter is cleared first and the scroll waits for the render.
+  const [jumpTo, setJumpTo] = useState<number | null>(null);
+  const jumpToRow = (row: number) => {
+    const item = parsed.items[row - 2];
+    if (!item) return;
+    if (!shown.has(ratingFilterOf(item))) setShown(new Set(RATING_FILTERS));
+    setJumpTo(row);
+  };
+  useEffect(() => {
+    if (jumpTo === null) return;
+    document.getElementById(`qa-${jumpTo - 1}`)?.scrollIntoView({ block: "start" });
+    setJumpTo(null);
+  }, [jumpTo, visible]);
+  const toggleRating = (r: RatingFilter) =>
+    setShown((prev) => {
+      const next = new Set(prev);
+      if (next.has(r)) next.delete(r);
+      else next.add(r);
+      return next;
+    });
 
   return (
     <>
@@ -205,9 +237,20 @@ export default function ResultsReview({
         </div>
       </div>
 
+      {parsed.judge && (
+        <JudgeStrip summary={parsed.judge} shown={shown} onToggle={toggleRating} />
+      )}
+      {parsed.judge && (
+        <ConsistencyList
+          findings={parsed.judge.consistency_findings ?? []}
+          discarded={parsed.judge.consistency_discarded ?? 0}
+          onJump={jumpToRow}
+        />
+      )}
+
       {showJumpList && (
         <nav className="answer-review__jump" aria-label="Jump to question">
-          {parsed.items.map((_, i) => (
+          {visible.map(({ i }) => (
             <a key={i} href={`#qa-${i + 1}`} className="answer-review__jump-link">
               {i + 1}
             </a>
@@ -216,9 +259,12 @@ export default function ResultsReview({
       )}
 
       <div className="answer-review__cards">
-        {parsed.items.map((item, i) => (
-          <QACard key={item.id ?? i} item={item} index={i} />
+        {visible.map(({ item, i }) => (
+          <QACard key={item.id ? `${item.id}-${i}` : i} item={item} index={i} />
         ))}
+        {visible.length === 0 && (
+          <p className="u-text--muted">No answers match the selected ratings.</p>
+        )}
       </div>
     </section>
 
@@ -244,5 +290,123 @@ export default function ResultsReview({
       </ConfirmModal>
     )}
     </>
+  );
+}
+
+const FILTER_LABELS: Record<RatingFilter, string> = {
+  red: "Red",
+  yellow: "Yellow",
+  green: "Green",
+  not_judged: "Not judged",
+};
+
+// JudgeStrip is the judged run's summary: the count per rating, each a toggle chip
+// that shows or hides that rating's cards. The chips stay neutral — a green "on"
+// chip reading "Red" would contradict the rating it names — and a note when the cross-answer
+// consistency pass did not complete.
+function JudgeStrip({
+  summary,
+  shown,
+  onToggle,
+}: {
+  summary: JudgeSummary;
+  shown: Set<RatingFilter>;
+  onToggle: (r: RatingFilter) => void;
+}) {
+  return (
+    <div className="answer-judge" role="group" aria-label="Filter answers by judge rating">
+      <p className="answer-judge__title u-no-margin--bottom">
+        Judged by {summary.model} — show:
+      </p>
+      <div className="answer-judge__chips">
+        {RATING_FILTERS.map((r) => {
+          const on = shown.has(r);
+          return (
+            <button
+              key={r}
+              type="button"
+              aria-pressed={on}
+              onClick={() => onToggle(r)}
+              className="p-chip u-no-margin--bottom"
+            >
+              <span className="p-chip__lead">{FILTER_LABELS[r]}</span>
+              <span className="p-chip__value">{summary[r]}</span>
+            </button>
+          );
+        })}
+      </div>
+      {!summary.consistency && (
+        <p className="u-text--muted p-text--small u-no-margin--bottom">
+          The cross-answer consistency check did not complete
+          {summary.consistency_error ? `: ${summary.consistency_error}` : ""}. Each answer was
+          still judged on its own.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// BROAD_ROWS_SHOWN caps the row buttons of a broad finding, which can name hundreds.
+const BROAD_ROWS_SHOWN = 8;
+
+// ConsistencyList shows each cross-answer finding once, for the run, rather than
+// repeated on every card it names. Row numbers jump to the card; a broad finding is
+// said in words to have been applied to no row.
+export function ConsistencyList({
+  findings,
+  discarded,
+  onJump,
+}: {
+  findings: ConsistencyFinding[];
+  discarded: number;
+  onJump: (row: number) => void;
+}) {
+  if (findings.length === 0 && discarded === 0) return null;
+  return (
+    <section className="answer-consistency" aria-labelledby="answer-consistency-title">
+      <h3 className="answer-judge__title u-no-margin--bottom" id="answer-consistency-title">
+        Consistency across answers
+      </h3>
+      {findings.length > 0 && (
+        <ul className="answer-consistency__list">
+          {findings.map((f, n) => {
+            const rows = f.broad ? f.rows.slice(0, BROAD_ROWS_SHOWN) : f.rows;
+            return (
+              <li key={n} className={["answer-consistency__finding", f.broad && "answer-consistency__finding--broad"].filter(Boolean).join(" ")}>
+                <span className="answer-consistency__rows">
+                  Rows{" "}
+                  {rows.map((r, k) => (
+                    <span key={r.row}>
+                      {k > 0 && ", "}
+                      <button
+                        type="button"
+                        className="p-button--link answer-consistency__row"
+                        onClick={() => onJump(r.row)}
+                        aria-label={`Go to row ${r.row}`}
+                      >
+                        {r.row}
+                      </button>
+                    </span>
+                  ))}
+                  {f.rows.length > rows.length && ` … and ${f.rows.length - rows.length} more`}
+                </span>
+                {f.broad && (
+                  <span className="answer-consistency__broad">
+                    Not applied to rows: {f.rows.length} rows is too broad to be a contradiction.
+                  </span>
+                )}
+                <span className="answer-consistency__comment">{f.comment}</span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      {discarded > 0 && (
+        <p className="u-text--muted p-text--small u-no-margin--bottom">
+          {discarded} finding{discarded === 1 ? " was" : "s were"} discarded: the phrases quoted were not in the answers
+          named.
+        </p>
+      )}
+    </section>
   );
 }

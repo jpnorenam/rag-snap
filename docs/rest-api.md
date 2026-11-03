@@ -478,6 +478,29 @@ sudo curl -s --unix-socket /var/snap/rag-cli/common/ragd/unix.socket -X DELETE \
 The config keys that *are* secrets — any key whose last segment is `secret`, `password`, or
 `token`, today `gdrive.client.secret` — are redacted on read: the key is listed and stays
 writable, but its value is replaced with `<redacted>`. They are write-only through the API.
+### `POST /1.0/answer/batch`
+
+Runs a prepared batch manifest, in the JSON shape of the CLI's YAML manifest, as an async
+operation. While it runs, the metadata carries `questions_total`, `questions_done`, and `results`,
+which grows as each answer is produced. On completion it adds `generated_at`, `model` and `prompt`.
+
+**Judging.** Unless the body sets `"judge": false`, each answer is judged by Gemini as it is
+produced, against the chunks it was grounded on (see [Judging the answers](usage.md#judging-the-answers)).
+A judged run adds the following to the metadata:
+
+| Key | When | Meaning |
+|---|---|---|
+| `phase` | Always | `answering`, then `judging` once every question is answered, then `done` |
+| `judged_done`, `judged_total` | Judged runs | Verdicts so far, against answers so far |
+| `results[].judgment` | Once that row is judged | `{confidence, rating, issues, comment}`, or `{error}` for a row that could not be judged |
+| `judge` | On completion of a judged run | `{model, green, yellow, red, not_judged, consistency, consistency_error?, consistency_findings?, consistency_discarded?}`. Each finding is `{rows: [{row, phrase}], comment, broad?}`, listed once for the run; a `broad` one was applied to no row. A verdict whose score the consistency check lowered carries `pre_consistency_confidence` |
+| `judge_unavailable` | Judging is on but cannot run | Why, for example a missing `GEMINI_API_KEY` in the daemon's service environment. The run proceeds unjudged |
+
+Results are published before their verdicts, so a client can show answers while they are judged.
+Judging never fails the operation. A daemon that will judge advertises `answer_judge` in
+`api_extensions`. Turning judging off with `judge.enabled=false` removes the entry and adds no
+`judge_unavailable`, since that is a choice, not a fault.
+
 ### `POST /1.0/answer/build`
 
 Derives a batch manifest from an uploaded RFP/RFI document. Accepts
@@ -514,6 +537,15 @@ the `min_length` filter fails the operation with a column-naming message so the
 client can pick a different column or lower the minimum without starting a batch
 run.
 
+### `POST /1.0/answer/analyze/sheets`
+
+Lists a document's sheets so a client can offer a tab scope before analysis.
+`multipart/form-data` with the document in `file`. Synchronous: returns `{format, sheets}`, where
+each sheet has `position` (1-based, workbook order), `name` and `data_rows`. It makes no model
+call, needs no API key and stages nothing. A CSV is one sheet; a PDF or DOCX returns an empty
+`sheets` list. An unsupported file type is a `400`; a workbook that cannot be converted because
+Tika is unavailable is a `500` saying so.
+
 ### `POST /1.0/answer/analyze`
 
 First of the two RFP-analysis passes. `multipart/form-data`: `file` is the RFP, and any
@@ -521,8 +553,16 @@ number of repeated `context` fields are supporting documents. An optional `instr
 field carries the operator's free-text instructions (granularity, scope, which questions to
 include). They are applied to every analysis call for the session, including generation,
 without being sent again. Over 4,000 characters is a `400` before any operation starts.
+An optional `sheets` field scopes a spreadsheet RFP's tabs: a JSON object mapping sheet names
+(matched ignoring case) or 1-based positions to `answer`, `context` or `exclude`, for example
+`{"1":"context","2":"answer","3":"answer"}`. Once any sheet is named, unnamed sheets are
+excluded. A malformed `sheets` value, or one sent with a primary document that is not an `.xlsx`,
+is a `400` before any operation starts. A sheet the workbook lacks, or a scope with nothing to
+answer, fails the operation before any model call, with a message listing the sheets.
 Runs as an async operation and publishes `analysis_token`, `expires_at`, `model`, `triage`,
-`report` and `instructions` (the instructions the session is working to, empty when none).
+`report`, `instructions` (the instructions the session is working to, empty when none) and,
+for a spreadsheet, `sheets`: every sheet with `position`, `name`, `data_rows` and its resolved
+`scope`. The scope is staged with the token, so generation applies it without it being sent again.
 
 `triage` is what the model found without generating anything: the RFP's identity, its
 section structure with the id prefix each section uses, an estimated question count,

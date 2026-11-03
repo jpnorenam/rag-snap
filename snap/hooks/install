@@ -82,6 +82,20 @@ snapctl set config.package.analysis.reasoning.strategy="high"
 snapctl set config.package.analysis.answer.words="100"
 snapctl set config.package.analysis.answer.limit="soft"
 
+# Register answer-judge keys. Every `answer batch` run is judged by Gemini: each answer
+# is checked against the context it was written from and given a confidence score,
+# rating and comment. It is ON by default — the Gemini agreement covers sending answers
+# and knowledge-base chunks — and needs GEMINI_API_KEY (same rules as above) plus a
+# model. judge.model empty falls back to analysis.model. Turn it off with:
+#   sudo rag set judge.enabled=false
+# judge.concurrency bounds the Gemini calls in flight; raise it on a higher quota tier.
+#
+# Keep this list in sync with the post-refresh hook.
+snapctl set config.package.judge.enabled="true"
+snapctl set config.package.judge.model=""
+snapctl set config.package.judge.reasoning="medium"
+snapctl set config.package.judge.concurrency="4"
+
 # Register the REST API daemon (ragd) socket keys. Members of api.socket.group
 # (plus root) may access the local unix socket; access is enforced by the daemon's
 # SO_PEERCRED check, not by the socket's file ownership (under strict confinement

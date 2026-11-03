@@ -1265,14 +1265,17 @@ compliance questionnaires, and documentation audits.
 
 Run a list of questions from a YAML manifest through the RAG+LLM pipeline non-interactively.
 Each question is answered in sequence, printed to the terminal, and the full set of results is
-written to a timestamped JSON file in the current working directory.
+written to a timestamped JSON file in the current working directory. Unless judging is turned off,
+every answer is then [judged by Gemini](#judging-the-answers) and the run ends with the rows a
+reviewer needs to look at.
 
 ```
-rag-cli.rag answer batch <manifest.yaml> [--temperature <float>]
+rag-cli.rag answer batch <manifest.yaml> [--temperature <float>] [--no-judge]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
+| `--no-judge` | off | Skip judging for this run. To turn judging off for every run, set `judge.enabled=false`. |
 | `--temperature` | `0.1` | Sampling temperature (0.0–1.0). The low default keeps answers grounded and consistent across runs. Raise it for more varied phrasing. Ignored with `chat.api=anthropic`: current Claude models reject sampling parameters. |
 
 #### YAML schema
@@ -1410,6 +1413,17 @@ Answer: The product targets 99.9% uptime with a 4-hour RTO and 1-hour RPO for bu
 Answer: The product holds SOC 2 Type II, ISO 27001, and FedRAMP Moderate certifications.
 ---
 
+Answers saved to batch-results-20250225-143022.json; judging them now.
+
+Judge (gemini-3.1-pro-preview): 1 green · 1 yellow · 1 red · 0 not judged
+Rows are spreadsheet rows; row 2 is the first answer.
+
+Red:
+  row 4 [certifications]  "FedRAMP Moderate" is not in the retrieved context; remove it or verify against compliance.pdf.
+
+Yellow:
+  row 3 [slo]  "4-hour RTO" is supported, but "1-hour RPO" is not; verify against sla.pdf.
+
 Results saved to batch-results-20250225-143022.json
 ```
 
@@ -1427,18 +1441,32 @@ Results are written to `batch-results-YYYYMMDD-HHMMSS.json` in the current worki
       "id": "security-policy",
       "question": "What is the data retention policy?",
       "answer": "Data is retained for 90 days by default, configurable up to 7 years for compliance tiers.",
-      "domain": "C*"
+      "domain": "C*",
+      "judgment": {
+        "confidence": 3,
+        "rating": "yellow",
+        "issues": ["unsupported_claim"],
+        "comment": "\"up to 7 years\" is not in the retrieved context; verify against retention.pdf."
+      }
     }
-  ]
+  ],
+  "judge": {
+    "model": "gemini-3.1-pro-preview",
+    "green": 0, "yellow": 1, "red": 0, "not_judged": 0,
+    "consistency": true
+  }
 }
 ```
 
-Two fields record how each answer was produced, and both are omitted when they do not apply:
+These fields record how each answer was produced and judged, and each is omitted when it does not apply:
 
 | Field | Present when | Description |
 |---|---|---|
 | `prompt` | A `prompt_ref` resolved | The `answer_system_prompt` variant that drove the run, as `variant@version`. Absent for the built-in default prompt and for an inline `prompt`. |
 | `results[].domain` | The question matched a `domains` entry | The `match` pattern of the entry that applied, which identifies exactly one entry. Absent when the manifest carried no `domains` block, or when the question matched no entry. |
+| `results[].judgment` | The run was judged | The verdict on this answer: `confidence` (1–5), `rating` (`green`, `yellow` or `red`), `issues`, and `comment`. A row the judge could not assess carries only `error`. See [Judging the answers](#judging-the-answers). |
+| `judge` | The run was judged | The judge model, the count per rating, and whether the cross-answer consistency check completed (`consistency`, with `consistency_error` when it did not). `consistency_findings` lists each kept finding once, with its `rows` (each a `row` and the quoted `phrase`), its `comment`, and `broad` when it was too wide to apply to rows; `consistency_discarded` counts findings whose quotes did not check out. |
+| `results[].judgment.pre_consistency_confidence` | The consistency check lowered that row's score | The score the row had before the cap. |
 
 > **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run,
 > or the model declines to answer it) prints the error and moves on. All answers collected before the failure are still written to the
@@ -1448,6 +1476,87 @@ Two fields record how each answer was produced, and both are omitted when they d
 > (e.g. AWS Bedrock, or any backend with `chat.api=anthropic`), set the model explicitly in the
 > manifest or configure a default with
 > `sudo rag-cli.rag set --package chat.model="<model-id>"` once after installation.
+
+#### Judging the answers
+
+Every run is judged by Gemini unless judging is turned off. The judge tells a reviewer which answers
+can be pasted as they are and which need attention, and exactly what to check, so nobody has to
+review every answer from scratch.
+
+Each answer is checked against what it was written from: the manifest prompt's rules, the domain
+context, the question, and **the exact chunks retrieved for it**. The judge returns:
+
+| Field | Meaning |
+|---|---|
+| `confidence` | An anchored 1–5 score (below) |
+| `rating` | Derived from the score: **green** = 5, paste as is · **yellow** = 4–3, check or edit · **red** = 2–1, fix or answer |
+| `comment` | Quotes the problem and says what to do: remove it, verify it against a named source, or answer from one. Empty for a 5 |
+| `issues` | One or more of `unsupported_claim`, `contradicts_context`, `missed_context`, `incomplete`, `off_question`, `other_customer`, `rule_violation`, `gap` |
+
+| Score | Means |
+|---|---|
+| 5 | Every claim supported, the question fully answered, every rule followed |
+| 4 | Correct and supported, with a light edit: wording, a preamble, a sentence too many, a format slip |
+| 3 | A real edit or a check: a claim or figure to verify, part of the question unanswered, or a sentence to remove because it volunteers a limitation or breaks a section's rule |
+| 2 | An unsupported or contradicted claim, a different question answered, or another customer, bid or proposal named |
+| 1 | Wrong or fabricated in substance, or a gap |
+
+A problem fixed by deleting or rewording a phrase is never red, except naming another customer.
+
+The judge never corrects an answer from its own knowledge, but it does ask for checks. A figure,
+version, channel name or command example that looks malformed or implausible is flagged for
+verification, even when the context states it, and the judge does not supply a replacement value. Naming another customer,
+bid or proposal is always red, even when the retrieved context names it: knowledge bases often hold
+responses to other bids.
+
+Some checks are made locally, not by the model:
+
+- An answer that is the fixed no-context response is always red, since there is nothing to paste.
+  When retrieval found nothing, no call is made. When the model wrote that response despite having
+  context, the judge still reads it, and reports `missed_context` if the answer was there after all.
+- Markdown (`**bold**`, backticks, headings, lists) is flagged and caps the score at 4, because it
+  pastes into a spreadsheet cell as literal characters.
+- Word and sentence counts are computed locally and given to the judge, which compares them against
+  the prompt's length rule. A short opener such as "Supported." is reported separately and is not
+  counted as a sentence.
+
+After every answer has been judged, one more call reads all the answers together, without their
+chunks. It flags contradictions between rows, such as two answers giving different figures for the
+same thing. Each finding must quote, for every row it names, the phrase in that row's answer that
+conflicts. A row whose quote is not in its answer is dropped, and a finding left with fewer than two
+rows is discarded and counted. Each kept finding is listed once in the run summary. Each row it names
+gets a short note naming the other rows, and none of those rows stays green. A row whose score this
+lowered records its earlier score as `pre_consistency_confidence`.
+
+A finding that names more than 8 rows is not a contradiction: it is usually a remark about the whole
+run, such as customer names in every Reference field, which per-row judging already reports. Such a
+finding is listed once, marked as not applied to rows, and changes no row's comment or score.
+
+**How it runs.** Each answer is judged as soon as it is written, while later questions are still being
+answered, with up to `judge.concurrency` Gemini calls at a time. When the last answer lands, only a
+few judgments remain. A rate-limited call is retried up to three times. Judging never costs the
+answers: the results file is written as soon as answering finishes, and rewritten with the verdicts
+afterwards. A row the judge could not assess is marked *not judged*, with the reason.
+
+**Rows are spreadsheet rows.** The summary, the `comment` of a consistency finding, and the web UI
+all number results as they land when pasted under a header row, so the first answer is row 2.
+
+**What is sent.** Each answer, its question, the manifest prompt, the domain context and the
+retrieved chunks are sent to Google's Gemini API, under the same agreement and with the same pinned
+endpoint and `GEMINI_API_KEY` as [analysis](#answer-batch---build---analyze). The retrieved chunks
+are never written to the results file.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `judge.enabled` | `true` | Set to `false` to turn judging off for every run |
+| `judge.model` | _(unset)_ | The Gemini model that judges. Unset uses `analysis.model` |
+| `judge.reasoning` | `medium` | Reasoning effort per judge call: `minimal`, `low`, `medium` or `high` |
+| `judge.concurrency` | `4` | Most judge calls in flight at once. Raise it on a higher quota tier |
+
+All four are `package` keys, so `sudo rag-cli.rag set judge.<key>=<value>` works on any of them.
+Judging needs `GEMINI_API_KEY` and a model. Without them the run prints one notice and is answered
+unjudged; it never fails. For daemon runs, the key goes in the `ragd` service environment exactly as
+for analysis (see [Configuration](#configuration) under `--analyze`).
 
 ---
 
@@ -1676,6 +1785,8 @@ rag-cli.rag answer batch --build <document> --analyze [--context <file>]... [--o
 | `--context` | _(none)_ | A supporting document that adds background, repeatable. The RFP itself is `--build` |
 | `--instructions` | _(none)_ | Instructions that steer the analysis — granularity, scope, which questions to include. See [Instructions](#instructions) |
 | `--instructions-file` | _(none)_ | Read the instructions from a file under your home directory. Mutually exclusive with `--instructions` |
+| `--sheets` | _(all tabs)_ | Spreadsheet tabs to answer, by name or 1-based position, comma-separated, ranges allowed. See [Choosing tabs](#choosing-tabs) |
+| `--context-sheets` | _(none)_ | Spreadsheet tabs sent only as background, with no questions taken from them. Same syntax as `--sheets` |
 | `--output` | `<document-name>.yaml` | Output manifest path |
 
 > **Analysis sends your document content to a third party: Google's Gemini API.** It is off by
@@ -1789,6 +1900,38 @@ rag-cli.rag answer batch --build ~/rfp/lafika.pdf --analyze \
   #   Split every matrix row into one question per requirement.
   #   Only the Annexure A compliance matrix.
   ```
+
+#### Choosing tabs
+
+RFP workbooks usually carry tabs that hold no questions: a read-me, a cover sheet, a sizing
+appendix, a bill of quantities. Don't ask for those in the instructions. Choose them exactly:
+
+```bash
+rag-cli.rag answer batch --build ~/rfp/telco-rfp.xlsx --analyze \
+  --sheets 2-7 --context-sheets "Read Me"
+```
+
+- `--sheets` lists the tabs to answer. Questions are extracted and counted from these alone.
+- `--context-sheets` lists tabs sent as **background**: the model reads them (the target design, the
+  sizing) to write a better prompt and domain contexts, but takes no question from them.
+- Once either flag is given, **every tab not listed is left out** and is not sent at all.
+- A tab is named by its name (case does not matter) or its 1-based position in the workbook, and
+  `2-7` is a range of positions. Positions are often easier: Excel cuts tab names at 31 characters,
+  and a tab's number is what you see. An unknown tab stops the command before anything is sent, and
+  lists every tab with its position.
+- The scope is applied before triage, so the estimate and the extraction measure the same tabs, and
+  the scope is listed in the conveyance report and recorded in the manifest's header:
+
+  ```
+  # Sheet scope for telco-rfp.xlsx:
+  #   1 Read Me: context
+  #   2 1 Hardware: answer
+  #   …
+  #   8 App B Sizing & BoQ: exclude
+  ```
+
+Tab scope applies to a spreadsheet RFP (`--build`). Context documents are sent whole, and a PDF or
+DOCX is scoped with `--instructions`.
 
 Instructions steer how the **manifest** is generated. To change how **answers** are written, edit the
 prompt: in the web UI, the model-written part of the generated prompt is editable on the review step,

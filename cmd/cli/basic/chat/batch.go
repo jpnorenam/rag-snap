@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
+	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"gopkg.in/yaml.v3"
 )
 
@@ -147,6 +149,9 @@ type BatchResult struct {
 	// pattern. Empty when the question resolved to no domain. It is the routing
 	// audit trail: which rule produced this answer.
 	Domain string `json:"domain,omitempty"`
+	// Judgment is the judge's verdict on this answer. Absent when the run was not
+	// judged, so an unjudged results file keeps the shape it always had.
+	Judgment *Judgment `json:"judgment,omitempty"`
 }
 
 // BatchOutput is the structured result of a batch run: the resolved model, a
@@ -159,7 +164,9 @@ type BatchOutput struct {
 	// "variant@version" reference (empty for the built-in default or an inline
 	// custom prompt). It is the RFP audit trail: which prompt produced these
 	// answers.
-	Prompt  string        `json:"prompt,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	// Judge summarises the judging pass. Absent when the run was not judged.
+	Judge   *JudgeSummary `json:"judge,omitempty"`
 	Results []BatchResult `json:"results"`
 }
 
@@ -172,10 +179,19 @@ const noContextAnswer = "The provided context does not contain enough informatio
 // fires before a question is answered, OnResult after it is answered, and
 // OnError when a question fails and is skipped (i is 0-based; total is the
 // question count).
+//
+// On a judged run, OnAnswered fires once every question has been answered and
+// before judging finishes, carrying the answers without verdicts, so a caller can
+// save them before the judge has a chance to fail. OnJudged fires as each verdict
+// lands: idx is the result's index in the output, done and total count verdicts so
+// far against answers so far. Judge hooks are never called concurrently with each
+// other, but they are called concurrently with the answering hooks.
 type BatchHooks struct {
-	OnStart  func(i, total int, q BatchQuestion)
-	OnResult func(i, total int, result BatchResult)
-	OnError  func(i, total int, q BatchQuestion, err error)
+	OnStart    func(i, total int, q BatchQuestion)
+	OnResult   func(i, total int, result BatchResult)
+	OnError    func(i, total int, q BatchQuestion, err error)
+	OnAnswered func(out *BatchOutput)
+	OnJudged   func(idx int, j Judgment, done, total int)
 }
 
 func (h BatchHooks) start(i, total int, q BatchQuestion) {
@@ -193,6 +209,18 @@ func (h BatchHooks) result(i, total int, r BatchResult) {
 func (h BatchHooks) failure(i, total int, q BatchQuestion, err error) {
 	if h.OnError != nil {
 		h.OnError(i, total, q, err)
+	}
+}
+
+func (h BatchHooks) answered(out *BatchOutput) {
+	if h.OnAnswered != nil {
+		h.OnAnswered(out)
+	}
+}
+
+func (h BatchHooks) judged(idx int, j Judgment, done, total int) {
+	if h.OnJudged != nil {
+		h.OnJudged(idx, j, done, total)
 	}
 }
 
@@ -247,6 +275,11 @@ var batchRetrieve = retrieveContext
 // CLI and the daemon can drive it. The run honours ctx cancellation between
 // questions. When a question retrieves no grounding context, its answer is the
 // fixed no-context response rather than an ungrounded generation.
+//
+// When judge is non-nil, each answer is judged as soon as it is produced, against
+// the context it was grounded on, while later questions are still being answered.
+// That context is held only until its verdict lands and is never returned. Judging
+// never fails the run: a verdict that cannot be had marks its row not judged.
 func RunBatch(
 	ctx context.Context,
 	backend BackendConfig,
@@ -256,6 +289,7 @@ func RunBatch(
 	manifest *BatchManifest,
 	prompts PromptConfig,
 	temperature float64,
+	judge *BatchJudge,
 	hooks BatchHooks,
 	verbose bool,
 ) (*BatchOutput, error) {
@@ -304,6 +338,11 @@ func RunBatch(
 	total := len(manifest.Questions)
 	results := make([]BatchResult, 0, total)
 
+	var pool *judgePool
+	if judge != nil && judge.Judge != nil {
+		pool = newJudgePool(ctx, judge, hooks)
+	}
+
 	for i, q := range manifest.Questions {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -342,6 +381,9 @@ func RunBatch(
 			result := BatchResult{ID: q.ID, Question: q.Question, Answer: noContextAnswer, Domain: domainMatch}
 			results = append(results, result)
 			hooks.result(i, total, result)
+			if pool != nil {
+				pool.local(len(results)-1, gapJudgment())
+			}
 			continue
 		}
 
@@ -371,17 +413,95 @@ func RunBatch(
 		result := BatchResult{ID: q.ID, Question: q.Question, Answer: answer, Domain: domainMatch}
 		results = append(results, result)
 		hooks.result(i, total, result)
+		if pool != nil {
+			opener, body := splitOpener(answer)
+			pool.submit(len(results)-1, JudgeInput{
+				Row:           SpreadsheetRow(len(results) - 1),
+				ID:            q.ID,
+				Question:      q.Question,
+				Answer:        answer,
+				DomainContext: domainContext,
+				SystemPrompt:  defaultSystemPrompt,
+				Evidence:      ragContext,
+				Words:         countWords(answer),
+				Sentences:     countSentences(body),
+				Opener:        opener,
+			})
+		}
 	}
 
-	return &BatchOutput{
+	out := &BatchOutput{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 		Model:       modelName,
 		Results:     results,
-	}, nil
+	}
+	if pool == nil {
+		return out, nil
+	}
+
+	// Hand the caller the answers before waiting on the judge, so a judge that
+	// hangs or crashes the process can never cost the answers.
+	answered := *out
+	answered.Results = append([]BatchResult(nil), results...)
+	hooks.answered(&answered)
+
+	verdicts := pool.wait()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	for idx, j := range verdicts {
+		j := j
+		out.Results[idx].Judgment = &j
+	}
+	out.Judge = summariseWithConsistency(ctx, judge.Judge, defaultSystemPrompt, out.Results)
+	return out, nil
+}
+
+// summariseWithConsistency runs the cross-answer consistency pass over the judged
+// answers, merges its findings, and returns the run summary. A failed pass keeps the
+// per-answer verdicts untouched and is reported in the summary.
+func summariseWithConsistency(ctx context.Context, judge AnswerJudge, systemPrompt string, results []BatchResult) *JudgeSummary {
+	var inputs []ConsistencyInput
+	for i, r := range results {
+		// Gaps carry nothing to compare.
+		if isGapAnswer(r.Answer) {
+			continue
+		}
+		inputs = append(inputs, ConsistencyInput{Row: SpreadsheetRow(i), ID: r.ID, Question: r.Question, Answer: r.Answer})
+	}
+
+	var (
+		consistencyErr error
+		kept           []ConsistencyFinding
+		discarded      int
+	)
+	if len(inputs) > 1 {
+		report, err := judge.Consistency(ctx, systemPrompt, inputs)
+		if err != nil {
+			consistencyErr = err
+		} else {
+			var dropped int
+			kept, dropped = applyConsistency(results, report.Findings)
+			discarded = report.Discarded + dropped
+		}
+	}
+
+	s := summarise(judge.Model(), results)
+	s.Consistency = consistencyErr == nil
+	if consistencyErr != nil {
+		s.ConsistencyError = consistencyErr.Error()
+	}
+	s.ConsistencyFindings = kept
+	s.ConsistencyDiscarded = discarded
+	return s
 }
 
 // ProcessBatchChat runs each question in the manifest through the RAG+LLM pipeline,
 // prints Q&A pairs to the terminal, and writes all results to a timestamped JSON file.
+//
+// A judged run writes the file twice: once with the answers as soon as answering ends,
+// then again, atomically, with the verdicts. Whatever happens to the judge, the
+// answers are on disk.
 func ProcessBatchChat(
 	backend BackendConfig,
 	knowledgeClient *knowledge.OpenSearchClient,
@@ -390,10 +510,13 @@ func ProcessBatchChat(
 	manifest *BatchManifest,
 	prompts PromptConfig,
 	temperature float64,
+	judge *BatchJudge,
 	verbose bool,
 ) error {
 	fmt.Printf("Found %d questions in batch manifest version %s\n", len(manifest.Questions), manifest.Version)
 
+	filename := fmt.Sprintf("batch-results-%s.json", time.Now().Format("20060102-150405"))
+	answersSaved := false
 	hooks := BatchHooks{
 		OnStart: func(i, total int, q BatchQuestion) {
 			fmt.Printf("[%d/%d] Question: %s\n", i+1, total, q.Question)
@@ -404,25 +527,78 @@ func ProcessBatchChat(
 		OnError: func(i, _ int, _ BatchQuestion, err error) {
 			fmt.Printf("error on question %d: %v\n", i+1, err)
 		},
+		OnAnswered: func(out *BatchOutput) {
+			if len(out.Results) == 0 {
+				return
+			}
+			if err := WriteBatchResults(filename, out); err != nil {
+				fmt.Printf("warning: could not save the answers before judging: %v\n", err)
+				return
+			}
+			answersSaved = true
+			fmt.Printf("\nAnswers saved to %s; judging them now.\n", filename)
+		},
+	}
+	var stopJudging func()
+	if judge != nil {
+		var update func(string)
+		hooks.OnJudged = func(_ int, _ Judgment, done, total int) {
+			label := fmt.Sprintf("Judging answers %d/%d", done, total)
+			if update == nil {
+				update, stopJudging = common.StartUpdatableSpinner(label)
+				return
+			}
+			update(label)
+		}
 	}
 
-	out, err := RunBatch(context.Background(), backend, knowledgeClient, kapaClient, embeddingModelID, manifest, prompts, temperature, hooks, verbose)
+	out, err := RunBatch(context.Background(), backend, knowledgeClient, kapaClient, embeddingModelID, manifest, prompts, temperature, judge, hooks, verbose)
+	if stopJudging != nil {
+		stopJudging()
+	}
 	if err != nil {
+		if answersSaved {
+			return fmt.Errorf("%w (the answers are saved in %s)", err, filename)
+		}
 		return err
 	}
 	if len(out.Results) == 0 {
 		return fmt.Errorf("all questions failed; no results to write")
 	}
 
-	filename := fmt.Sprintf("batch-results-%s.json", time.Now().Format("20060102-150405"))
+	if err := WriteBatchResults(filename, out); err != nil {
+		return fmt.Errorf("writing results file: %w", err)
+	}
+	if summary := FormatJudgeSummary(out); summary != "" {
+		fmt.Printf("\n%s", summary)
+	}
+	fmt.Printf("\nResults saved to %s\n", filename)
+	return nil
+}
+
+// WriteBatchResults writes a results file atomically: to a temporary file in the same
+// directory, then renamed over the target. Rewriting the answers-only file with the
+// verdicts therefore never leaves a half-written file behind.
+func WriteBatchResults(filename string, out *BatchOutput) error {
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshaling results: %w", err)
 	}
-	if err := os.WriteFile(filename, data, 0644); err != nil {
-		return fmt.Errorf("writing results file: %w", err)
+	tmp, err := os.CreateTemp(filepath.Dir(filename), "."+filepath.Base(filename)+".*")
+	if err != nil {
+		return err
 	}
-
-	fmt.Printf("\nResults saved to %s\n", filename)
-	return nil
+	defer func() { _ = os.Remove(tmp.Name()) }() // no-op once renamed
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0644); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), filename)
 }

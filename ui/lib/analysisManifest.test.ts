@@ -7,6 +7,7 @@ import {
   normaliseCheck,
   parseAnalyzeMetadata,
   parseGenerateMetadata,
+  sheetScopeHeaderLines,
   defects,
   warnings,
   parseShortfall,
@@ -247,4 +248,30 @@ test("an edited prompt downloads as the edit followed by the unchanged rules", (
   assert.ok(parsed.prompt?.startsWith("Edited prose for the bid.\n\nANSWER LENGTH"));
   assert.ok(parsed.prompt?.includes("GAPS ARE REPORTED, NEVER FILLED"));
   assert.ok(text.includes("# Operator instructions:\n#   Only Annexure A.\n"));
+});
+
+test("sheetScopeHeaderLines matches analysis.SheetScopeHeaderLines", () => {
+  const source = readFileSync(fileURLToPath(new URL("../../cmd/cli/basic/analysis/scope.go", import.meta.url)), "utf8");
+  assert.ok(source.includes('fmt.Sprintf("Sheet scope for %s:", r.Filename)'), "the Go scope heading changed");
+  assert.ok(source.includes('fmt.Sprintf("  %d %s: %s", s.Position, s.Name, s.Scope)'), "the Go scope line format changed");
+  const sheets = [
+    { position: 1, name: "Read Me", data_rows: 3, scope: "context" as const },
+    { position: 2, name: "1 Hardware", data_rows: 40, scope: "answer" as const },
+    { position: 3, name: "App B", data_rows: 9, scope: "exclude" as const },
+  ];
+  const report = { filename: "rfp.xlsx", format: "xlsx", path: "converted" as const, converted: true, bytes: 1 };
+  assert.deepEqual(sheetScopeHeaderLines([{ ...report, sheets }]), [
+    "Sheet scope for rfp.xlsx:",
+    "  1 Read Me: context",
+    "  2 1 Hardware: answer",
+    "  3 App B: exclude",
+  ]);
+  const unscoped = sheets.map((s) => ({ ...s, scope: "answer" as const }));
+  assert.deepEqual(sheetScopeHeaderLines([{ ...report, sheets: unscoped }, report]), []);
+});
+
+test("analysis metadata carries the session's sheet scope", () => {
+  const sheets = [{ position: 1, name: "Read Me", data_rows: 3, scope: "context" }];
+  assert.deepEqual(parseAnalyzeMetadata({ analysis_token: "t", triage: {}, sheets }).sheets, sheets);
+  assert.deepEqual(parseAnalyzeMetadata({ analysis_token: "t", triage: {} }).sheets, []);
 });
