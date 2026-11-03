@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -56,18 +57,14 @@ func (s *Server) judgeAvailable() (bool, string) {
 // reason when judging is wanted but cannot run, and nil with no reason when it is
 // turned off.
 func (s *Server) batchJudge() (*chat.BatchJudge, string) {
-	if ok, reason := s.judgeAvailable(); !ok {
-		return nil, reason
+	judge, _, err := analysis.NewBatchJudge(s.ctx.Config, s.ctx.Verbose)
+	switch {
+	case err == nil:
+		return judge, ""
+	case analysis.IsJudgeDisabled(err):
+		return nil, ""
 	}
-	settings, err := analysis.LoadJudgeSettings(s.ctx.Config)
-	if err != nil {
-		return nil, err.Error()
-	}
-	judge, err := analysis.NewJudge(settings, s.ctx.Verbose)
-	if err != nil {
-		return nil, err.Error()
-	}
-	return &chat.BatchJudge{Judge: judge, Concurrency: settings.Concurrency}, ""
+	return nil, err.Error()
 }
 
 // analysisClient builds the analysis client and the live catalogue, the two things every
@@ -156,7 +153,7 @@ func (s *Server) handleAnswerAnalyze(w http.ResponseWriter, r *http.Request) {
 		respondError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if len(scope) > 0 && rfp.DetectFormat(name, "") != "xlsx" {
+	if len(scope) > 0 && rfp.DetectFormat(primary, "") != "xlsx" {
 		cleanupPrimary()
 		respondError(w, http.StatusBadRequest, analysis.ErrScopeNotSpreadsheet(name).Error())
 		return
@@ -269,8 +266,9 @@ func parseSheetScope(raw string) (analysis.SheetScope, error) {
 // inventory: per sheet its 1-based position in workbook order, its name and its data-row
 // count. Synchronous; makes no model call and needs no API key, and stages nothing. A
 // CSV is one sheet; a PDF or DOCX returns an empty list with its format, since sheet
-// scope does not apply to it. Unsupported file types are a 400; a spreadsheet that
-// cannot be converted because the tika service is unavailable is a 500 saying so.
+// scope does not apply to it. Unsupported file types, and a spreadsheet with no tables
+// or a CSV that does not parse, are a 400; a spreadsheet that cannot be converted
+// because the tika service is unavailable is a 500 saying so.
 //
 //	Consumes:
 //	- multipart/form-data
@@ -300,7 +298,14 @@ func (s *Server) handleAnswerAnalyzeSheets(w http.ResponseWriter, r *http.Reques
 
 	sheets, format, err := analysis.NewConverter(s.clients.tikaURL()).Inventory(path)
 	if err != nil {
-		respondError(w, http.StatusInternalServerError, err.Error())
+		// The document's own faults are a 400; anything else, such as the tika service
+		// being unavailable, is the server's.
+		status := http.StatusInternalServerError
+		var unreadable *analysis.UnreadableDocumentError
+		if format == "unknown" || errors.As(err, &unreadable) {
+			status = http.StatusBadRequest
+		}
+		respondError(w, status, err.Error())
 		return
 	}
 	respondSync(w, map[string]any{"format": format, "sheets": sheets})
@@ -604,8 +609,15 @@ func stageUpload(r *http.Request, field string) (path string, cleanup func(), na
 // Conveyance reads from a path, and an upload arriving over the API was never on disk,
 // so it is staged here and removed when the operation finishes.
 func stageUploadHeader(header *multipart.FileHeader) (string, func(), error) {
-	if format := rfp.DetectFormat(header.Filename, header.Header.Get("Content-Type")); format == "unknown" {
+	format := rfp.DetectFormat(header.Filename, header.Header.Get("Content-Type"))
+	if format == "unknown" {
 		return "", nil, fmt.Errorf("unsupported file type %q — analysis reads PDF, XLSX, CSV, DOCX", header.Filename)
+	}
+	// Everything downstream detects the format from the staged path alone, so a file
+	// recognised only by its Content-Type is staged under that format's extension.
+	ext := filepath.Ext(header.Filename)
+	if rfp.DetectFormat(header.Filename, "") == "unknown" {
+		ext = "." + format
 	}
 	src, err := header.Open()
 	if err != nil {
@@ -613,7 +625,7 @@ func stageUploadHeader(header *multipart.FileHeader) (string, func(), error) {
 	}
 	defer src.Close()
 
-	tmp, err := os.CreateTemp("", "ragd-analyze-*"+filepath.Ext(header.Filename))
+	tmp, err := os.CreateTemp("", "ragd-analyze-*"+ext)
 	if err != nil {
 		return "", nil, fmt.Errorf("staging upload: %w", err)
 	}

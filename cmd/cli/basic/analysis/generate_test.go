@@ -341,7 +341,7 @@ func TestAttributeSectionsByLongestPrefix(t *testing.T) {
 		{Name: "Narrative", EstimatedQuestions: 10}, // no prefix: unknown, not guessed
 	}}
 	qs := []chat.BatchQuestion{{ID: "FR_01-a"}, {ID: "fr_02"}, {ID: "NFR_01-a"}, {ID: "NFR_02-b"}, {ID: "NFR_03"}, {ID: "X1"}}
-	got := attributeSections(tr, qs, nil)
+	got := attributeSections(tr, qs, nil, nil)
 
 	want := []SectionCount{
 		{Name: "Functional", IDPrefix: "FR_", Estimated: 95, Produced: 2},
@@ -357,7 +357,7 @@ func TestAttributeSectionsByLongestPrefix(t *testing.T) {
 			t.Errorf("section %d = %+v, want %+v", i, got[i], want[i])
 		}
 	}
-	if attributeSections(nil, qs, nil) != nil {
+	if attributeSections(nil, qs, nil, nil) != nil {
 		t.Error("no triage means no breakdown")
 	}
 }
@@ -374,7 +374,7 @@ func TestAttributeSectionsFallsBackToSource(t *testing.T) {
 		{ID: "FR_02-a", Source: "a.1 functional requirements compliance matrix"},
 		{ID: "NFR_01-a", Source: "A.2 Non-Functional Requirements Compliance Matrix / NFR_01 Performance"},
 	}
-	got := attributeSections(tr, qs, nil)
+	got := attributeSections(tr, qs, nil, nil)
 	if len(got) != 2 || got[0].Produced != 2 || got[1].Produced != 1 {
 		t.Errorf("attributeSections = %+v, want 2 and 1 attributed by source", got)
 	}

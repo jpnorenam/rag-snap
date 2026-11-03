@@ -3,10 +3,13 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
@@ -170,6 +173,10 @@ type BatchOutput struct {
 	Results []BatchResult `json:"results"`
 }
 
+// errEmptyAnswer is the failure RunBatch reports for a question the model answered
+// with no text.
+var errEmptyAnswer = errors.New("the model returned an empty answer (it may have spent its output budget on reasoning)")
+
 // noContextAnswer is the fixed response emitted when retrieval returns nothing,
 // so the model never answers an ungrounded question from parametric knowledge.
 const noContextAnswer = "The provided context does not contain enough information to answer this question."
@@ -183,9 +190,11 @@ const noContextAnswer = "The provided context does not contain enough informatio
 // On a judged run, OnAnswered fires once every question has been answered and
 // before judging finishes, carrying the answers without verdicts, so a caller can
 // save them before the judge has a chance to fail. OnJudged fires as each verdict
-// lands: idx is the result's index in the output, done and total count verdicts so
-// far against answers so far. Judge hooks are never called concurrently with each
-// other, but they are called concurrently with the answering hooks.
+// lands: idx is the result's index in the output, done counts verdicts so far and
+// total the answers the run is expected to produce (the question count, less the
+// questions that failed so far). Judge hooks are never called concurrently with each
+// other, but they are called concurrently with the answering hooks, and never after
+// RunBatch has returned.
 type BatchHooks struct {
 	OnStart    func(i, total int, q BatchQuestion)
 	OnResult   func(i, total int, result BatchResult)
@@ -340,12 +349,20 @@ func RunBatch(
 
 	var pool *judgePool
 	if judge != nil && judge.Judge != nil {
-		pool = newJudgePool(ctx, judge, hooks)
+		pool = newJudgePool(ctx, judge, hooks, total)
+	}
+	// cancelled returns ctx's error once every judge call in flight has returned, so no
+	// judge hook can fire after RunBatch has.
+	cancelled := func(err error) (*BatchOutput, error) {
+		if pool != nil {
+			pool.wait()
+		}
+		return nil, err
 	}
 
 	for i, q := range manifest.Questions {
 		if err := ctx.Err(); err != nil {
-			return nil, err
+			return cancelled(err)
 		}
 		hooks.start(i, total, q)
 
@@ -382,7 +399,7 @@ func RunBatch(
 			results = append(results, result)
 			hooks.result(i, total, result)
 			if pool != nil {
-				pool.local(len(results)-1, gapJudgment())
+				pool.record(len(results)-1, gapJudgment())
 			}
 			continue
 		}
@@ -399,16 +416,29 @@ func RunBatch(
 			// the operation is recorded as cancelled rather than silently
 			// dropping the remaining questions.
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return nil, ctxErr
+				return cancelled(ctxErr)
 			}
 			// A single question failing is non-fatal: report it and skip,
 			// matching the CLI's original resilience. A refusal or an output
 			// ceiling hit with no text lands here too, never as an empty answer.
 			hooks.failure(i, total, q, err)
+			if pool != nil {
+				pool.skip()
+			}
 			continue
 		}
 
 		answer := StripThinkTags(content)
+		// A backend may return no text without an error — the OpenAI route does when
+		// a reasoning model spends its whole budget. A blank cell is a failed question,
+		// not an answer, and is not worth a judge call.
+		if strings.TrimSpace(answer) == "" {
+			hooks.failure(i, total, q, errEmptyAnswer)
+			if pool != nil {
+				pool.skip()
+			}
+			continue
+		}
 
 		result := BatchResult{ID: q.ID, Question: q.Question, Answer: answer, Domain: domainMatch}
 		results = append(results, result)
@@ -450,21 +480,23 @@ func RunBatch(
 		return nil, err
 	}
 	for idx, j := range verdicts {
-		j := j
 		out.Results[idx].Judgment = &j
 	}
-	out.Judge = summariseWithConsistency(ctx, judge.Judge, defaultSystemPrompt, out.Results)
+	out.Judge = summariseWithConsistency(ctx, judge.Judge, defaultSystemPrompt, out.Results, pool.unusableErr())
 	return out, nil
 }
 
 // summariseWithConsistency runs the cross-answer consistency pass over the judged
 // answers, merges its findings, and returns the run summary. A failed pass keeps the
-// per-answer verdicts untouched and is reported in the summary.
-func summariseWithConsistency(ctx context.Context, judge AnswerJudge, systemPrompt string, results []BatchResult) *JudgeSummary {
+// per-answer verdicts untouched and is reported in the summary. When unusable is set
+// the judge is known not to work, so the pass is not attempted.
+func summariseWithConsistency(ctx context.Context, judge AnswerJudge, systemPrompt string, results []BatchResult, unusable error) *JudgeSummary {
 	var inputs []ConsistencyInput
 	for i, r := range results {
-		// Gaps carry nothing to compare.
-		if isGapAnswer(r.Answer) {
+		// Gaps carry nothing to compare, and a row the judge could not assess would
+		// let a finding rest on a verdict the reviewer never sees.
+		if isGapAnswer(r.Answer) || r.Judgment == nil || !r.Judgment.Judged() ||
+			slices.Contains(r.Judgment.Issues, IssueGap) {
 			continue
 		}
 		inputs = append(inputs, ConsistencyInput{Row: SpreadsheetRow(i), ID: r.ID, Question: r.Question, Answer: r.Answer})
@@ -475,7 +507,9 @@ func summariseWithConsistency(ctx context.Context, judge AnswerJudge, systemProm
 		kept           []ConsistencyFinding
 		discarded      int
 	)
-	if len(inputs) > 1 {
+	if unusable != nil {
+		consistencyErr = unusable
+	} else if len(inputs) > 1 {
 		report, err := judge.Consistency(ctx, systemPrompt, inputs)
 		if err != nil {
 			consistencyErr = err
@@ -517,6 +551,24 @@ func ProcessBatchChat(
 
 	filename := fmt.Sprintf("batch-results-%s.json", time.Now().Format("20060102-150405"))
 	answersSaved := false
+
+	// The judging spinner waits for answering to end: verdicts arrive while the Q&A is
+	// still being printed, and a spinner redrawing the line would garble it. Judge
+	// hooks run on judge goroutines, so the spinner state is guarded.
+	var (
+		judgeMu                 sync.Mutex
+		answering               = true
+		judgedDone, judgedTotal int
+		update                  func(string)
+		stopJudging             func()
+	)
+	judgeLabel := func() string {
+		if judgedTotal == 0 {
+			return "Judging answers"
+		}
+		return fmt.Sprintf("Judging answers %d/%d", judgedDone, judgedTotal)
+	}
+
 	hooks := BatchHooks{
 		OnStart: func(i, total int, q BatchQuestion) {
 			fmt.Printf("[%d/%d] Question: %s\n", i+1, total, q.Question)
@@ -528,31 +580,36 @@ func ProcessBatchChat(
 			fmt.Printf("error on question %d: %v\n", i+1, err)
 		},
 		OnAnswered: func(out *BatchOutput) {
-			if len(out.Results) == 0 {
-				return
+			if len(out.Results) > 0 {
+				if err := WriteBatchResults(filename, out); err != nil {
+					fmt.Printf("warning: could not save the answers before judging: %v\n", err)
+				} else {
+					answersSaved = true
+					fmt.Printf("\nAnswers saved to %s; judging them now.\n", filename)
+				}
 			}
-			if err := WriteBatchResults(filename, out); err != nil {
-				fmt.Printf("warning: could not save the answers before judging: %v\n", err)
-				return
+			judgeMu.Lock()
+			defer judgeMu.Unlock()
+			answering = false
+			// No verdict yet (judgedTotal 0) still means judging is under way.
+			if judgedTotal == 0 || judgedDone < judgedTotal {
+				update, stopJudging = common.StartUpdatableSpinner(judgeLabel())
 			}
-			answersSaved = true
-			fmt.Printf("\nAnswers saved to %s; judging them now.\n", filename)
 		},
 	}
-	var stopJudging func()
 	if judge != nil {
-		var update func(string)
 		hooks.OnJudged = func(_ int, _ Judgment, done, total int) {
-			label := fmt.Sprintf("Judging answers %d/%d", done, total)
-			if update == nil {
-				update, stopJudging = common.StartUpdatableSpinner(label)
-				return
+			judgeMu.Lock()
+			defer judgeMu.Unlock()
+			judgedDone, judgedTotal = done, total
+			if !answering && update != nil {
+				update(judgeLabel())
 			}
-			update(label)
 		}
 	}
 
 	out, err := RunBatch(context.Background(), backend, knowledgeClient, kapaClient, embeddingModelID, manifest, prompts, temperature, judge, hooks, verbose)
+	// RunBatch never calls a hook after returning, so the spinner state is settled.
 	if stopJudging != nil {
 		stopJudging()
 	}

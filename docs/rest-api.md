@@ -543,7 +543,8 @@ Lists a document's sheets so a client can offer a tab scope before analysis.
 `multipart/form-data` with the document in `file`. Synchronous: returns `{format, sheets}`, where
 each sheet has `position` (1-based, workbook order), `name` and `data_rows`. It makes no model
 call, needs no API key and stages nothing. A CSV is one sheet; a PDF or DOCX returns an empty
-`sheets` list. An unsupported file type is a `400`; a workbook that cannot be converted because
+`sheets` list. An unsupported file type, a workbook with no tables or a CSV that does not
+parse is a `400`; a workbook that cannot be converted because
 Tika is unavailable is a `500` saying so.
 
 ### `POST /1.0/answer/analyze`
@@ -555,7 +556,9 @@ include). They are applied to every analysis call for the session, including gen
 without being sent again. Over 4,000 characters is a `400` before any operation starts.
 An optional `sheets` field scopes a spreadsheet RFP's tabs: a JSON object mapping sheet names
 (matched ignoring case) or 1-based positions to `answer`, `context` or `exclude`, for example
-`{"1":"context","2":"answer","3":"answer"}`. Once any sheet is named, unnamed sheets are
+`{"1":"context","2":"answer","3":"answer"}`. A key is matched against sheet names before
+positions, so a client that has the sheet list should send names: in a workbook with tabs
+named `1` or `2`, a position key can name a different tab. Once any sheet is named, unnamed sheets are
 excluded. A malformed `sheets` value, or one sent with a primary document that is not an `.xlsx`,
 is a `400` before any operation starts. A sheet the workbook lacks, or a scope with nothing to
 answer, fails the operation before any model call, with a message listing the sheets.

@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -114,12 +115,12 @@ func (c Conveyance) HasContextSheets() bool {
 	return false
 }
 
-// contextSheetNames lists the names of every context-only sheet conveyed.
-func (c Conveyance) contextSheetNames() []string {
+// sheetNames lists the names of every conveyed sheet with the given scope.
+func (c Conveyance) sheetNames(scope SheetScopeValue) []string {
 	var out []string
 	for _, r := range c.Report {
 		for _, s := range r.Sheets {
-			if s.Scope == ScopeContext {
+			if s.Scope == scope {
 				out = append(out, s.Name)
 			}
 		}
@@ -383,7 +384,7 @@ func (c *Converter) readTables(path, name, format string) ([]rfp.SheetTable, err
 	case "csv":
 		var err error
 		if sheets, err = rfp.SheetsFromCSV(path); err != nil {
-			return nil, err
+			return nil, &UnreadableDocumentError{Name: name, Err: err}
 		}
 	case "xlsx":
 		if c.TikaURL == "" {
@@ -401,10 +402,21 @@ func (c *Converter) readTables(path, name, format string) ([]rfp.SheetTable, err
 	}
 
 	if len(sheets) == 0 {
-		return nil, fmt.Errorf("no tables found in %s", name)
+		return nil, &UnreadableDocumentError{Name: name, Err: errors.New("no tables found")}
 	}
 	return sheets, nil
 }
+
+// UnreadableDocumentError says a document was converted but holds nothing readable:
+// a CSV that does not parse, or a workbook with no tables. It is the document's fault,
+// not the service's, so the API reports it as a bad request.
+type UnreadableDocumentError struct {
+	Name string
+	Err  error
+}
+
+func (e *UnreadableDocumentError) Error() string { return fmt.Sprintf("reading %s: %v", e.Name, e.Err) }
+func (e *UnreadableDocumentError) Unwrap() error { return e.Err }
 
 // conveyProse converts a word-processor document. Tables inside it are recovered as
 // Markdown tables the same way a spreadsheet's are; the surrounding prose is kept as

@@ -104,6 +104,9 @@ func TestSheetsInventoryForOtherFormats(t *testing.T) {
 	if status, _, raw := postSheets(t, client, "notes.txt", "x"); status != http.StatusBadRequest {
 		t.Errorf("an unsupported type is a 400: status %d, %s", status, raw)
 	}
+	if status, _, raw := postSheets(t, client, "empty.csv", ""); status != http.StatusBadRequest {
+		t.Errorf("a CSV with nothing in it is the document's fault, a 400: status %d, %s", status, raw)
+	}
 	if status, _, raw := postSheets(t, client, "rfp.xlsx", "not a zip"); status != http.StatusInternalServerError || !strings.Contains(raw, "tika") {
 		t.Errorf("a workbook Tika cannot reach is a 500 naming tika: status %d, %s", status, raw)
 	}

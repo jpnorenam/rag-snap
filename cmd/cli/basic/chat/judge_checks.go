@@ -9,11 +9,12 @@ import (
 // markdownPatterns are the markdown constructs an RFP answer must not carry: pasted
 // into a spreadsheet cell they show as literal characters. Single-asterisk italics are
 // deliberately absent — a lone "*" is too often a footnote mark or a multiplication.
+// Underscore bold must span more than one word, so identifiers such as __init__ pass.
 var markdownPatterns = []struct {
 	name string
 	re   *regexp.Regexp
 }{
-	{"bold", regexp.MustCompile(`\*\*[^*\n]+\*\*|__[^_\n]+__`)},
+	{"bold", regexp.MustCompile(`\*\*[^*\n]+\*\*|(?:^|[^\w])__[^\s_][^_\n]* [^_\n]*[^\s_]__(?:[^\w]|$)`)},
 	{"backticks", regexp.MustCompile("`")},
 	{"heading", regexp.MustCompile(`(?m)^\s{0,3}#{1,6}\s`)},
 	{"bullet list", regexp.MustCompile(`(?m)^\s*[-*+•]\s+\S`)},
