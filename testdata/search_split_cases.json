@@ -1,0 +1,78 @@
+{
+  "_comment": "Shared fixture for the search matching/similar split. Loaded by the Go tests (cmd/cli/basic/knowledge/search_split_test.go) and the UI tests (ui/lib/searchSplit.test.ts) so the CLI and the UI cannot diverge. Hits are in the order the server returns them (score descending). 'matched' is what the server sets (score > 0); a hit without 'matched' comes from a daemon that predates the field and counts as matching. Expected strings use null when the message is not shown.",
+  "cases": [
+    {
+      "name": "all matching",
+      "query": "ceph osd",
+      "hits": [
+        { "id": "a", "score": 8.41, "matched": true },
+        { "id": "b", "score": 2.07, "matched": true },
+        { "id": "c", "score": 0.15, "matched": true }
+      ],
+      "matched": ["a", "b", "c"],
+      "similar": [],
+      "no_matches_message": null,
+      "similar_notice": null
+    },
+    {
+      "name": "none matching",
+      "query": "kafka",
+      "hits": [
+        { "id": "a", "score": -1.2, "matched": false },
+        { "id": "b", "score": -4.7, "matched": false },
+        { "id": "c", "score": -10.9, "matched": false }
+      ],
+      "matched": [],
+      "similar": ["a", "b", "c"],
+      "no_matches_message": "No results match \"kafka\".",
+      "similar_notice": "3 similar results don't match the query."
+    },
+    {
+      "name": "mixed",
+      "query": "high availability",
+      "hits": [
+        { "id": "a", "score": 6.3, "matched": true },
+        { "id": "b", "score": 1.01, "matched": true },
+        { "id": "c", "score": -0.4, "matched": false },
+        { "id": "d", "score": -7.8, "matched": false }
+      ],
+      "matched": ["a", "b"],
+      "similar": ["c", "d"],
+      "no_matches_message": null,
+      "similar_notice": "2 similar results don't match the query."
+    },
+    {
+      "name": "score exactly zero does not match",
+      "query": "vault",
+      "hits": [
+        { "id": "a", "score": 0.5, "matched": true },
+        { "id": "b", "score": 0, "matched": false }
+      ],
+      "matched": ["a"],
+      "similar": ["b"],
+      "no_matches_message": null,
+      "similar_notice": "1 similar result doesn't match the query."
+    },
+    {
+      "name": "matched flag absent counts as matching",
+      "query": "juju",
+      "hits": [
+        { "id": "a", "score": 3.2 },
+        { "id": "b", "score": -2.5 }
+      ],
+      "matched": ["a", "b"],
+      "similar": [],
+      "no_matches_message": null,
+      "similar_notice": null
+    },
+    {
+      "name": "empty result",
+      "query": "anything",
+      "hits": [],
+      "matched": [],
+      "similar": [],
+      "no_matches_message": "No results match \"anything\".",
+      "similar_notice": null
+    }
+  ]
+}

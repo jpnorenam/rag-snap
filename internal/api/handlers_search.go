@@ -22,6 +22,9 @@ type searchRequest struct {
 // searchResult is the API view of a single hit. Label is the hit's resolved
 // knowledge label (stored chunk label, with index-name fallback for chunks
 // ingested before labels existed), already resolved by the knowledge package.
+// Matched is true when the relevance score clears knowledge.MatchScoreThreshold;
+// clients show matched hits and hide the rest as similar results, so the
+// threshold lives only on the server.
 type searchResult struct {
 	Score     float64 `json:"score"`
 	Base      string  `json:"base"`
@@ -29,6 +32,7 @@ type searchResult struct {
 	CreatedAt string  `json:"created_at"`
 	Label     string  `json:"label"`
 	Content   string  `json:"content"`
+	Matched   bool    `json:"matched"`
 }
 
 // swagger:route POST /1.0/search search search
@@ -36,7 +40,17 @@ type searchResult struct {
 // Hybrid search over knowledge bases.
 //
 // Runs hybrid (neural + lexical) retrieval over the named bases. Requires a
-// configured embedding model.
+// configured embedding model. The count caps the total number of hits across
+// all bases.
+//
+// Each hit's score is the cross-encoder reranker's relevance score: a logit,
+// positive when the reranker judges the chunk relevant to the query and
+// negative when it does not. Each hit carries "matched": true when its score
+// is greater than 0 (the match threshold, exclusive). Search always returns the
+// nearest chunks, even for a query that nothing matches, so clients should use
+// "matched" rather than comparing scores: the threshold is owned by the server
+// and may change with the reranker. A hit without "matched" comes from an
+// older daemon and counts as matching.
 //
 //	Responses:
 //	  200: syncResponse
@@ -81,7 +95,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 
 	// The CLI /search uses the verbatim query for both the neural and lexical
 	// arms; do the same here (no LLM query rewrite for raw search).
-	hits, err := client.Search(r.Context(), indexes, req.Query, req.Query, embeddingModelID, k)
+	hits, err := client.SearchTop(r.Context(), indexes, req.Query, req.Query, embeddingModelID, k)
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -97,6 +111,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: h.CreatedAt,
 			Label:     h.Label,
 			Content:   h.Content,
+			Matched:   h.Matched,
 		})
 	}
 	respondSync(w, results)

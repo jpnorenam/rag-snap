@@ -115,6 +115,21 @@ the exact variable name to set.
 Re-running a batch is safe by default: sources already ingested are skipped unless **Force
 re-ingest** is set, which replaces them (the same semantics as the CLI).
 
+### Search
+
+**Search** runs the same retrieval as `rag-cli.rag k search`: hybrid semantic + lexical search
+with reranking, over the knowledge bases you toggle on, with no LLM involved. **Results** sets
+the maximum number of results in total across the selected bases. The query, bases, and count
+are kept in the URL, so a search can be shared or reloaded.
+
+Only results that **match** the query are listed. A result matches when its relevance score
+is above 0, meaning the reranker judges it relevant. Search always returns the chunks nearest
+to the query, even for a term your bases don't contain, so the others are kept apart as
+**similar results**: a line under the matches says how many there are, and **Show similar
+results** reveals them, marked "Not matching". They're hidden again on every new search. When
+nothing matches, the page says so instead of listing unrelated chunks. The split is the same
+one the CLI makes for the same query.
+
 ### Prompts
 
 The **Prompts** page is the browser equivalent of `rag-cli.rag prompt init`. It shows the three

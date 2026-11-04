@@ -575,32 +575,55 @@ Found 118 files in openstack/nova
 Run a hybrid semantic + lexical search across one or more knowledge bases.
 
 ```
-rag-cli.rag knowledge search <query> [--bases <name,...>] [--top <k>]
+rag-cli.rag knowledge search <query> [--bases <name,...>] [--top <k>] [--show-similar]
 ```
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--bases` | `-b` | `default` | Comma-separated list of knowledge base names to search |
-| `--top` | `-k` | `10` | Maximum number of results returned per index |
+| `--top` | `-k` | `10` | Maximum number of results, in total across all searched bases |
+| `--show-similar` | | off | Also show the similar results that don't match the query |
 
-**Example — search the default base**
+Search always finds the chunks *nearest* to your query, even for a term that appears nowhere in
+your bases, so each result is checked against the reranker: a result **matches** when its
+relevance score is above 0, meaning the reranker judges it relevant to the query. Only matching
+results are shown. The others are **similar results**: the command says how many there are and
+hides them unless you pass `--show-similar`, which lists them after the matches under a
+separator. The total then follows them and says how it splits, e.g.
+`Total: 10 results (4 matching, 6 similar)`.
+
+**Example: search the default base**
 
 ```bash
 $ rag-cli.rag knowledge search "how does vector search work"
 
---- Result 1 (score: 0.9821, index: rag-kb-default) [CANONICAL] ---
+--- Result 1 (score: 7.4120, index: rag-snap-context-default) [CANONICAL] ---
   Source: rag-wiki
   Date:   2025-06-02T14:22:10Z
   Vector search (also called semantic search) finds documents by comparing high-dimensional …
 
-Total: 10 results
+Total: 4 results
+
+6 similar results don't match the query. Use --show-similar to show them.
 ```
 
-**Example — search across multiple bases**
+**Example: a term that isn't in the base**
+
+```bash
+$ rag-cli.rag knowledge search kafka
+No results match "kafka".
+
+10 similar results don't match the query. Use --show-similar to show them.
+```
+
+**Example: search across multiple bases**
 
 ```bash
 $ rag-cli.rag knowledge search "snap confinement" --bases docs,wiki-rag --top 5
 ```
+
+`--top 5` returns the best 5 results across both bases, not 5 from each. To see more, raise
+`--top`.
 
 ---
 
@@ -1017,7 +1040,7 @@ Type your prompt, then ENTER to submit. CTRL-C to quit.
 |---|---|
 | Type a prompt, press Enter | Send to the LLM (with RAG context if available) |
 | `Tab` | Autocomplete slash commands |
-| Finish typing a slash command name | A dimmed inline hint shows its argument syntax (e.g. `/search [-k N] <query>`) |
+| Finish typing a slash command name | A dimmed inline hint shows its argument syntax (e.g. `/search [-k N] [--show-similar] <query>`) |
 | `Ctrl-C` (empty line) | Exit the session |
 | `Ctrl-C` (mid-prompt) | Cancel current input, stay in session |
 | Type `exit`, press Enter | Exit the session |
@@ -1056,24 +1079,34 @@ verbatim (no query rewriting, no inference-server call). Useful for inspecting w
 the model for a given query.
 
 ```
-» /search [-k N] <query>
+» /search [-k N] [--show-similar] <query>
 ```
 
-- `<query>` — the keywords or question to retrieve for.
-- `-k N` — maximum number of results (default: 15). Also accepts `-k=N`.
+- `<query>`: the keywords or question to retrieve for.
+- `-k N`: maximum number of results, in total across the active bases (default: 15). Also
+  accepts `-k=N`.
+- `--show-similar`: also show the similar results that don't match the query. Can go anywhere
+  in the line. It takes no value: `--show-similar=true` is rejected rather than searched for.
 
 Each result shows its relevance score, knowledge base name, knowledge-label tag (e.g.
 `[CANONICAL]`, `[UPSTREAM]`, or any label you assigned at ingest — see `knowledge label`), source
 ID, creation date, and the full (untruncated) chunk content. Results are ordered by score
 descending.
 
+As with `knowledge search`, only results that **match** the query (relevance score above 0) are
+shown. The rest are summarized as similar results and hidden unless you add `--show-similar`.
+When nothing matches, `/search` says so instead of showing unrelated chunks. This only affects
+`/search`: chat answers still retrieve context as before.
+
 ```
 » /search -k 5 ceph osd recovery
 
-[1] score 0.8421  ·  ops-docs  [CANONICAL]
+[1] score 6.8421  ·  ops-docs  [CANONICAL]
     source: ceph/recovery.md   created: 2026-03-11
     ────────────────────────────────────────────────────────
     <full chunk content>
+
+3 similar results don't match the query. Use --show-similar to show them.
 ```
 
 If no knowledge bases are active, `/search` tells you to select some with `/use-knowledge` first; an

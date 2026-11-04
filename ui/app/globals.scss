@@ -1688,6 +1688,24 @@ $sidebar-accent: #e95420; // Ubuntu orange
   word-break: break-all;
 }
 
+// Similar results: hits that don't match the query, hidden behind a toggle
+// under the matching ones. The card also says "Not matching" in words.
+.search__similar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.search-result--similar {
+  border-style: dashed;
+
+  .search-result__body {
+    color: var(--vf-color-text-muted);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Answer batch (components/answer)
 // ---------------------------------------------------------------------------
