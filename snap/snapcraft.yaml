@@ -58,6 +58,9 @@ parts:
     build-snaps:
       - go/1.24/stable
       - node/20/stable
+    # git reads the commit the snap is built from (shown in the UI footer).
+    build-packages:
+      - git
     source: .
     source-type: local
     override-build: |
@@ -75,13 +78,33 @@ parts:
       mkdir -p internal/webui/dist
       cp -r ui/out/. internal/webui/dist/
 
-      CGO_ENABLED=0 go build -trimpath \
-        -ldflags="-w -s" \
+      # Record the source commit the snap is built from. The part's source is a
+      # copy of the tree, so ask git in the project directory itself;
+      # safe.directory allows a checkout owned by another user (the build VM
+      # runs as root). "-dirty" marks uncommitted changes to tracked files, or
+      # untracked files under the directories that are built, which would be
+      # compiled in. git status refreshes the index first, so stat differences
+      # on a bind-mounted project dir do not read as changes. internal/webui/dist
+      # is left out: the UI build above rewrites it, so it is always "changed".
+      # A build outside a git checkout records no commit.
+      project_git() { git -c safe.directory='*' -C "${CRAFT_PROJECT_DIR}" "$@"; }
+      COMMIT="$(project_git rev-parse --short=12 HEAD 2>/dev/null || true)"
+      if [ -n "${COMMIT}" ] && [ -n "$(project_git status --porcelain --untracked-files=normal -- \
+          cmd internal pkg ui apps snap go.mod go.sum ':(exclude)internal/webui/dist' 2>/dev/null)" ]; then
+        COMMIT="${COMMIT}-dirty"
+      fi
+      echo "Building from commit: ${COMMIT:-unknown}"
+      # -buildvcs=false: the commit is injected explicitly above, so Go must not
+      # try (and possibly fail) to stamp VCS info from the copied tree.
+      LDFLAGS="-w -s -X github.com/jpnorenam/rag-snap/internal/buildinfo.commit=${COMMIT}"
+
+      CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+        -ldflags="${LDFLAGS}" \
         -o "${CRAFT_PART_INSTALL}/bin/cli" ./cmd/cli
       # ragd is the REST API daemon (opt-in service, see the `ragd` app below).
       # It embeds the UI built above and serves it on the loopback listener.
-      CGO_ENABLED=0 go build -trimpath \
-        -ldflags="-w -s" \
+      CGO_ENABLED=0 go build -trimpath -buildvcs=false \
+        -ldflags="${LDFLAGS}" \
         -o "${CRAFT_PART_INSTALL}/bin/ragd" ./cmd/ragd
 
   common-runtime-dependencies:

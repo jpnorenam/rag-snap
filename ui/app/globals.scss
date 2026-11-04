@@ -166,6 +166,21 @@ $sidebar-accent: #e95420; // Ubuntu orange
   padding: 0.25rem 0;
 }
 
+// The running build (snap version and commit) at the very bottom of the rail:
+// small, muted, and selectable so it can be pasted into a bug report.
+.app-sidebar__build {
+  margin: 0;
+  padding: 0.25rem 1rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.25rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: text;
+}
+
 // ---------------------------------------------------------------------------
 // Content area
 // ---------------------------------------------------------------------------
@@ -219,7 +234,8 @@ $sidebar-accent: #e95420; // Ubuntu orange
   .app-sidebar__title,
   .app-sidebar__label,
   .app-sidebar__soon,
-  .app-sidebar__external {
+  .app-sidebar__external,
+  .app-sidebar__build {
     display: none;
   }
 

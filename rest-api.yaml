@@ -353,7 +353,9 @@ paths:
         get:
             description: |-
                 Server metadata plus a read-only, secret-free summary of effective config and
-                backend readiness for diagnostics.
+                backend readiness for diagnostics. "version" is the installed snap version
+                ("dev" outside a snap) and "commit" the source commit the daemon was built
+                from (a "-dirty" suffix marks uncommitted changes; omitted when unknown).
             operationId: serverInfo
             responses:
                 "200":

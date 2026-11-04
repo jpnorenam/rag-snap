@@ -2,8 +2,12 @@ import { getSync } from "./envelope";
 
 // ServerInfo is the metadata returned by GET /1.0 (and the subset of GET /
 // the UI cares about): the API version, advertised extensions, and the
-// caller's auth state.
+// caller's auth state. version (the snap version, "dev" outside a snap) and
+// commit (the source commit ragd was built from, omitted when unknown) are
+// GET /1.0 only.
 export interface ServerInfo {
+  version?: string;
+  commit?: string;
   api_version: string;
   api_extensions: string[];
   auth: string;

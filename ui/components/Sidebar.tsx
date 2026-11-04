@@ -19,9 +19,11 @@ const DOCS_URL = "https://github.com/jpnorenam/rag-snap/tree/main/docs";
 interface Props {
   darkMode: boolean;
   onToggleDark: () => void;
+  // The running build, e.g. "v0.0.9 · cd3ac8925556"; empty while unknown.
+  build?: string;
 }
 
-export default function Sidebar({ darkMode, onToggleDark }: Props) {
+export default function Sidebar({ darkMode, onToggleDark, build = "" }: Props) {
   const pathname = usePathname();
   const current = normalizePath(pathname ?? "/");
 
@@ -84,6 +86,12 @@ export default function Sidebar({ darkMode, onToggleDark }: Props) {
           )}
           <span className="app-sidebar__label">{darkMode ? "Light mode" : "Dark mode"}</span>
         </button>
+        {build && (
+          <p className="app-sidebar__build" title={`rag-cli ${build}`}>
+            <span className="u-off-screen">rag-cli version </span>
+            {build}
+          </p>
+        )}
       </div>
     </nav>
   );
