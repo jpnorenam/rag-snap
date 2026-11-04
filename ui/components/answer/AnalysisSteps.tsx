@@ -9,8 +9,11 @@ import type {
   OpenStackFlavour,
   Shortfall,
   ShortfallAcceptance,
+  SheetInfo,
   Triage,
 } from "@/lib/api/answer";
+
+const SCOPE_WORDS: Record<string, string> = { answer: "Answer", context: "Context only", exclude: "Excluded" };
 
 // TriageStep shows what the first pass found, before the interview and before any
 // manifest is generated. It exists so the operator can see which documents were read
@@ -19,12 +22,15 @@ export function TriageStep({
   triage,
   expiresAt,
   instructions,
+  sheets = [],
   onBack,
   onContinue,
 }: {
   triage: Triage;
   expiresAt: string;
   instructions: string;
+  // The RFP's tabs with the scope this session works to; shown only when scoped.
+  sheets?: SheetInfo[];
   onBack: () => void;
   onContinue: () => void;
 }) {
@@ -38,6 +44,40 @@ export function TriageStep({
         <>
           <h4 className="analysis-step__heading">Working to</h4>
           <p className="analysis-instructions">{instructions}</p>
+        </>
+      )}
+
+      {/* The tab scope, beside the instructions: both decide what the estimate counts. */}
+      {sheets.some((s) => s.scope && s.scope !== "answer") && (
+        <>
+          <h4 className="analysis-step__heading">Tabs</h4>
+          <div className="analysis-step__scroll">
+            <table className="sheet-scope" aria-label="Tabs and how each is used">
+              <thead>
+                <tr>
+                  <th className="u-align--right">Tab</th>
+                  <th>Name</th>
+                  <th className="u-align--right">Rows</th>
+                  <th>Use</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sheets.map((s) => (
+                  <tr
+                    key={s.position}
+                    className={["sheet-scope__row", s.scope !== "answer" && `sheet-scope__row--${s.scope}`]
+                      .filter(Boolean)
+                      .join(" ")}
+                  >
+                    <td className="u-align--right">{s.position}</td>
+                    <td>{s.name}</td>
+                    <td className="u-align--right">{s.data_rows}</td>
+                    <td>{SCOPE_WORDS[s.scope ?? "answer"]}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
 

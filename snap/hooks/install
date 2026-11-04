@@ -26,6 +26,16 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 # is one-shot and does not persist into the ragd daemon's runtime environment. See the
 # `ragd` app's environment comment in snapcraft.yaml for how operators inject them.
 
+# Register the chat backend's wire protocol so users can switch it with:
+#   sudo rag set chat.api=anthropic
+# openai    — OpenAI Chat Completions: a local Inference snap, or a third party's
+#             OpenAI-compatible route (e.g. Bedrock bedrock-runtime …/openai/v1). Default.
+# anthropic — Anthropic Messages API, e.g. Claude on Bedrock: chat.http.host=
+#             bedrock-runtime.<region>.amazonaws.com, chat.http.path=anthropic,
+#             chat.model=global.anthropic.claude-sonnet-5-5. chat.model is required (no model
+#             listing) and sampling temperature is not sent. CHAT_API_KEY is the bearer.
+snapctl set config.package.chat.api="openai"
+
 # Register Google Drive OAuth2 credential keys so users can configure them with:
 #   sudo rag set gdrive.client.id=<client-id>
 #   sudo rag set gdrive.client.secret=<client-secret>
@@ -71,6 +81,20 @@ snapctl set config.package.analysis.reasoning.questions="medium"
 snapctl set config.package.analysis.reasoning.strategy="high"
 snapctl set config.package.analysis.answer.words="100"
 snapctl set config.package.analysis.answer.limit="soft"
+
+# Register answer-judge keys. Every `answer batch` run is judged by Gemini: each answer
+# is checked against the context it was written from and given a confidence score,
+# rating and comment. It is ON by default — the Gemini agreement covers sending answers
+# and knowledge-base chunks — and needs GEMINI_API_KEY (same rules as above) plus a
+# model. judge.model empty falls back to analysis.model. Turn it off with:
+#   sudo rag set judge.enabled=false
+# judge.concurrency bounds the Gemini calls in flight; raise it on a higher quota tier.
+#
+# Keep this list in sync with the post-refresh hook.
+snapctl set config.package.judge.enabled="true"
+snapctl set config.package.judge.model=""
+snapctl set config.package.judge.reasoning="medium"
+snapctl set config.package.judge.concurrency="4"
 
 # Register the REST API daemon (ragd) socket keys. Members of api.socket.group
 # (plus root) may access the local unix socket; access is enforced by the daemon's

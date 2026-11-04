@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -33,6 +34,37 @@ func (s *Server) analysisAvailable() (bool, string) {
 		return false, err.Error()
 	}
 	return true, ""
+}
+
+// judgeAvailable reports whether the daemon can judge batch answers, and why not when
+// it cannot. A judge turned off by configuration is unavailable with no reason worth
+// showing: that is a choice, not something to fix.
+func (s *Server) judgeAvailable() (bool, string) {
+	settings, err := analysis.LoadJudgeSettings(s.ctx.Config)
+	if err == nil {
+		err = analysis.ValidateJudge(settings)
+	}
+	switch {
+	case err == nil:
+		return true, ""
+	case analysis.IsJudgeDisabled(err):
+		return false, ""
+	}
+	return false, err.Error()
+}
+
+// batchJudge builds the judge for one batch run. It returns a nil judge with the
+// reason when judging is wanted but cannot run, and nil with no reason when it is
+// turned off.
+func (s *Server) batchJudge() (*chat.BatchJudge, string) {
+	judge, _, err := analysis.NewBatchJudge(s.ctx.Config, s.ctx.Verbose)
+	switch {
+	case err == nil:
+		return judge, ""
+	case analysis.IsJudgeDisabled(err):
+		return nil, ""
+	}
+	return nil, err.Error()
 }
 
 // analysisClient builds the analysis client and the live catalogue, the two things every
@@ -74,7 +106,13 @@ func (s *Server) analysisClient() (*analysis.Client, *analysis.Catalogue, error)
 // "instructions" field carries the operator's free-text instructions (granularity,
 // scope, which questions to include), applied to every analysis call for this session
 // and echoed as "instructions" in the metadata; over 4000 characters is a 400 before any
-// operation starts. Generates no manifest and answers no question. Rejected with 400 when analysis is not
+// operation starts. An optional "sheets" field scopes a spreadsheet RFP's tabs: a JSON
+// object mapping sheet names or 1-based positions to "answer", "context" or "exclude",
+// where unnamed sheets are excluded once any is named. A malformed scope, or a scope on
+// a document that is not a spreadsheet, is a 400; a scope naming a sheet the workbook
+// lacks fails the operation before any model call, listing the sheets. The resolved
+// scope is echoed as "sheets" in the metadata and staged with the token, so generation
+// applies it. Generates no manifest and answers no question. Rejected with 400 when analysis is not
 // configured or no API key is present in the environment; the API key never appears in
 // any response.
 //
@@ -104,9 +142,20 @@ func (s *Server) handleAnswerAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	scope, err := parseSheetScope(r.FormValue("sheets"))
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	primary, cleanupPrimary, name, err := stageUpload(r, "file")
 	if err != nil {
 		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if len(scope) > 0 && rfp.DetectFormat(primary, "") != "xlsx" {
+		cleanupPrimary()
+		respondError(w, http.StatusBadRequest, analysis.ErrScopeNotSpreadsheet(name).Error())
 		return
 	}
 	staged := []func(){cleanupPrimary}
@@ -146,7 +195,7 @@ func (s *Server) handleAnswerAnalyze(w http.ResponseWriter, r *http.Request) {
 			defer cleanupAll()
 
 			converter := analysis.NewConverter(tikaURL)
-			conveyance, err := converter.ConveyAll(primary, contextPaths)
+			conveyance, err := converter.ConveyAllWith(primary, contextPaths, scope)
 			if err != nil {
 				return err
 			}
@@ -167,14 +216,18 @@ func (s *Server) handleAnswerAnalyze(w http.ResponseWriter, r *http.Request) {
 			}
 			expires, _ := s.analyses.expiresAt(token)
 
-			op.UpdateMetadata(map[string]any{
+			meta := map[string]any{
 				"analysis_token": token,
 				"expires_at":     expires.UTC().Format(time.RFC3339),
 				"model":          client.Model(),
 				"triage":         triage,
 				"report":         triage.Report,
 				"instructions":   instructions,
-			})
+			}
+			if sheets := conveyance.Report[0].Sheets; sheets != nil {
+				meta["sheets"] = sheets
+			}
+			op.UpdateMetadata(meta)
 			return nil
 		},
 	)
@@ -184,6 +237,78 @@ func (s *Server) handleAnswerAnalyze(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	respondAsync(w, op.url(), op.view())
+}
+
+// parseSheetScope reads the triage request's "sheets" field. Empty means no scope.
+func parseSheetScope(raw string) (analysis.SheetScope, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var scope analysis.SheetScope
+	if err := json.Unmarshal([]byte(raw), &scope); err != nil {
+		return nil, fmt.Errorf(`the "sheets" field must be a JSON object mapping sheet names or positions to "answer", "context" or "exclude": %v`, err)
+	}
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	return scope, nil
+}
+
+// handleAnswerAnalyzeSheets lists a document's sheets so a client can offer a scope
+// before analysis.
+//
+// swagger:route POST /1.0/answer/analyze/sheets answer answerAnalyzeSheets
+//
+// List a document's sheets.
+//
+// Accepts one document as multipart/form-data in the "file" field and returns its sheet
+// inventory: per sheet its 1-based position in workbook order, its name and its data-row
+// count. Synchronous; makes no model call and needs no API key, and stages nothing. A
+// CSV is one sheet; a PDF or DOCX returns an empty list with its format, since sheet
+// scope does not apply to it. Unsupported file types, and a spreadsheet with no tables
+// or a CSV that does not parse, are a 400; a spreadsheet that cannot be converted
+// because the tika service is unavailable is a 500 saying so.
+//
+//	Consumes:
+//	- multipart/form-data
+//
+//	Responses:
+//	  200: syncResponse
+//	  400: errorResponse
+//	  403: errorResponse
+//	  500: errorResponse
+func (s *Server) handleAnswerAnalyzeSheets(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(processing.MaxIngestFileSize); err != nil {
+		respondError(w, http.StatusBadRequest, "parsing upload: "+err.Error())
+		return
+	}
+	if r.MultipartForm != nil && len(r.MultipartForm.File["file"]) > 0 {
+		if err := checkAnalysisRequestSize(r.MultipartForm.File["file"][0].Size); err != nil {
+			respondError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	path, cleanup, _, err := stageUpload(r, "file")
+	if err != nil {
+		respondError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	defer cleanup()
+
+	sheets, format, err := analysis.NewConverter(s.clients.tikaURL()).Inventory(path)
+	if err != nil {
+		// The document's own faults are a 400; anything else, such as the tika service
+		// being unavailable, is the server's.
+		status := http.StatusInternalServerError
+		var unreadable *analysis.UnreadableDocumentError
+		if format == "unknown" || errors.As(err, &unreadable) {
+			status = http.StatusBadRequest
+		}
+		respondError(w, status, err.Error())
+		return
+	}
+	respondSync(w, map[string]any{"format": format, "sheets": sheets})
 }
 
 // analysisGenerateRequest is the JSON body of POST /1.0/answer/analyze/generate.
@@ -484,8 +609,15 @@ func stageUpload(r *http.Request, field string) (path string, cleanup func(), na
 // Conveyance reads from a path, and an upload arriving over the API was never on disk,
 // so it is staged here and removed when the operation finishes.
 func stageUploadHeader(header *multipart.FileHeader) (string, func(), error) {
-	if format := rfp.DetectFormat(header.Filename, header.Header.Get("Content-Type")); format == "unknown" {
+	format := rfp.DetectFormat(header.Filename, header.Header.Get("Content-Type"))
+	if format == "unknown" {
 		return "", nil, fmt.Errorf("unsupported file type %q — analysis reads PDF, XLSX, CSV, DOCX", header.Filename)
+	}
+	// Everything downstream detects the format from the staged path alone, so a file
+	// recognised only by its Content-Type is staged under that format's extension.
+	ext := filepath.Ext(header.Filename)
+	if rfp.DetectFormat(header.Filename, "") == "unknown" {
+		ext = "." + format
 	}
 	src, err := header.Open()
 	if err != nil {
@@ -493,7 +625,7 @@ func stageUploadHeader(header *multipart.FileHeader) (string, func(), error) {
 	}
 	defer src.Close()
 
-	tmp, err := os.CreateTemp("", "ragd-analyze-*"+filepath.Ext(header.Filename))
+	tmp, err := os.CreateTemp("", "ragd-analyze-*"+ext)
 	if err != nil {
 		return "", nil, fmt.Errorf("staging upload: %w", err)
 	}

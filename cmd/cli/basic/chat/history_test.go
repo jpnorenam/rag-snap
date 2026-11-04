@@ -5,18 +5,16 @@ import (
 	"time"
 
 	"github.com/jpnorenam/rag-snap/internal/chatstore"
-	"github.com/openai/openai-go/v3"
 )
 
-func TestHistoryToTurnsDropsSystem(t *testing.T) {
-	msgs := []openai.ChatCompletionMessageParamUnion{
-		openai.SystemMessage("system prompt"),
-		openai.UserMessage("hello"),
-		openai.AssistantMessage("hi there"),
+func TestHistoryToTurns(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleUser, Content: "hello"},
+		{Role: RoleAssistant, Content: "hi there"},
 	}
 	turns := historyToTurns(msgs)
 	if len(turns) != 2 {
-		t.Fatalf("expected 2 turns (system dropped), got %d", len(turns))
+		t.Fatalf("expected 2 turns, got %d", len(turns))
 	}
 	if turns[0].Role != "user" || turns[0].Content != "hello" {
 		t.Errorf("turn 0 = %+v", turns[0])
@@ -26,23 +24,40 @@ func TestHistoryToTurnsDropsSystem(t *testing.T) {
 	}
 }
 
-func TestTurnsToHistoryRebuildsWithFreshSystem(t *testing.T) {
+func TestTurnsToHistoryDropsUnknownRoles(t *testing.T) {
 	turns := []chatstore.Turn{
+		{Role: "system", Content: "a stored system prompt must never be replayed"},
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi there"},
 	}
-	msgs := turnsToHistory("fresh system", turns)
-	if len(msgs) != 3 {
-		t.Fatalf("expected system + 2 turns, got %d", len(msgs))
+	msgs := turnsToHistory(turns)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 turns (system dropped), got %d", len(msgs))
 	}
-	if msgs[0].OfSystem == nil || msgs[0].OfSystem.Content.OfString.Or("") != "fresh system" {
-		t.Errorf("first message is not the fresh system prompt: %+v", msgs[0])
+	if msgs[0] != (Message{Role: RoleUser, Content: "hello"}) {
+		t.Errorf("first message is not the user turn: %+v", msgs[0])
 	}
-	if msgs[1].OfUser == nil || msgs[1].OfUser.Content.OfString.Or("") != "hello" {
-		t.Errorf("second message is not the user turn: %+v", msgs[1])
+	if msgs[1] != (Message{Role: RoleAssistant, Content: "hi there"}) {
+		t.Errorf("second message is not the assistant turn: %+v", msgs[1])
 	}
-	if msgs[2].OfAssistant == nil || msgs[2].OfAssistant.Content.OfString.Or("") != "hi there" {
-		t.Errorf("third message is not the assistant turn: %+v", msgs[2])
+}
+
+// Saved turns are backend-neutral: a chat saved under one chat.api must resume
+// unchanged under the other.
+func TestHistoryRoundTrip(t *testing.T) {
+	want := []Message{
+		{Role: RoleUser, Content: "what is MAAS?"},
+		{Role: RoleAssistant, Content: "Metal as a Service."},
+		{Role: RoleUser, Content: "and its storage?"},
+	}
+	got := turnsToHistory(historyToTurns(want))
+	if len(got) != len(want) {
+		t.Fatalf("round trip changed the length: got %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("message %d = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }
 

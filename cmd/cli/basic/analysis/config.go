@@ -1,5 +1,7 @@
-// Package analysis generates a complete 'answer batch' manifest from RFP/RFI
-// documents using Google's Gemini API, called directly with the operator's own key.
+// Package analysis is rag-cli's Gemini integration. It generates a complete
+// 'answer batch' manifest from RFP/RFI documents, and it judges the answers a batch
+// produces (judge*.go), using Google's Gemini API called directly with the
+// operator's own key.
 //
 // No gateway sits in the request path, and the destination is not configuration: RFP
 // content is confidential, and compliance requires that it reach Google and nothing
@@ -12,7 +14,9 @@
 //
 // The package deliberately holds no dependency on cmd/cli/basic (which imports it)
 // and none on the retrieval or answering path: a manifest it produces is run by
-// exactly the same pipeline as a hand-written one.
+// exactly the same pipeline as a hand-written one. The judge meets the answering
+// path only at chat.AnswerJudge, which it implements: RunBatch calls it, never the
+// other way round.
 package analysis
 
 import (

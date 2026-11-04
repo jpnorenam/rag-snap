@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/canonical/go-snapctl/env"
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
 )
@@ -87,6 +88,13 @@ func ResolveLoopbackConfig(ctx *common.Context) LoopbackConfig {
 // equivalent of the CLI's serverApiUrls and reads the same keys. Missing keys
 // yield an error so the daemon fails loudly on a half-configured install.
 func ResolveBackendURLs(ctx *common.Context) (map[string]string, error) {
+	// An invalid chat.api fails startup like a missing chat.http.host would,
+	// rather than surfacing later as an opaque error on the first chat turn.
+	chatAPI, _ := config.GetString(ctx.Config, chat.ConfAPI)
+	if _, err := chat.ResolveAPI(chatAPI); err != nil {
+		return nil, err
+	}
+
 	openAiHost, err := requireString(ctx, confOpenAiHTTPHost)
 	if err != nil {
 		return nil, err

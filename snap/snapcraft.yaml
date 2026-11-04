@@ -226,8 +226,11 @@ apps:
     # never on the `rag` CLI app (task 8.2). API clients talk to the daemon over the unix
     # socket and never receive these values.
     #
-    # GEMINI_API_KEY authenticates RFP analysis (`answer batch --build --analyze`),
-    # which calls Google's Gemini API directly. It is the only variable analysis reads:
+    # GEMINI_API_KEY authenticates RFP analysis (`answer batch --build --analyze`) and
+    # the answer judge (on by default for every `answer batch` run; judge.enabled=false
+    # turns it off), both of which call Google's Gemini API directly. Without it on this
+    # service, daemon-run batches are answered unjudged and report why. It is the only
+    # variable analysis and the judge read:
     # there is deliberately no fallback to CHAT_API_KEY, because that key belongs to
     # the chat backend (Bedrock or a local snap) and must never be sent to Google. The
     # key must belong to a billing-enabled (paid-tier) Google project — unpaid-tier
@@ -245,7 +248,7 @@ apps:
     #     "$CHAT_KEY" "$OS_USER" "$OS_PASS" | \
     #     sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
     #
-    # Add GEMINI_API_KEY to that same drop-in to enable analysis on the daemon:
+    # Add GEMINI_API_KEY to that same drop-in to enable analysis and answer judging on the daemon:
     #   Environment=GEMINI_API_KEY=<key>
     #   sudo chmod 600 .../10-secrets.conf && sudo systemctl daemon-reload
     #   sudo snap restart rag-cli.ragd

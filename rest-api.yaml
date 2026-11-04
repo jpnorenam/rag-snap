@@ -57,6 +57,12 @@ definitions:
                     $ref: '#/definitions/batchDomainRequest'
                 type: array
                 x-go-name: Domains
+            judge:
+                description: |-
+                    Judge set to false skips judging for this run. Absent or true judges the
+                    answers whenever the daemon can (see answer-judge).
+                type: boolean
+                x-go-name: Judge
             knowledge_bases:
                 items:
                     type: string
@@ -373,7 +379,13 @@ paths:
                 "instructions" field carries the operator's free-text instructions (granularity,
                 scope, which questions to include), applied to every analysis call for this session
                 and echoed as "instructions" in the metadata; over 4000 characters is a 400 before any
-                operation starts. Generates no manifest and answers no question. Rejected with 400 when analysis is not
+                operation starts. An optional "sheets" field scopes a spreadsheet RFP's tabs: a JSON
+                object mapping sheet names or 1-based positions to "answer", "context" or "exclude",
+                where unnamed sheets are excluded once any is named. A malformed scope, or a scope on
+                a document that is not a spreadsheet, is a 400; a scope naming a sheet the workbook
+                lacks fails the operation before any model call, listing the sheets. The resolved
+                scope is echoed as "sheets" in the metadata and staged with the token, so generation
+                applies it. Generates no manifest and answers no question. Rejected with 400 when analysis is not
                 configured or no API key is present in the environment; the API key never appears in
                 any response.
             operationId: answerAnalyze
@@ -430,6 +442,31 @@ paths:
             summary: Generate a manifest from a triage token.
             tags:
                 - answer
+    /1.0/answer/analyze/sheets:
+        post:
+            consumes:
+                - multipart/form-data
+            description: |-
+                Accepts one document as multipart/form-data in the "file" field and returns its sheet
+                inventory: per sheet its 1-based position in workbook order, its name and its data-row
+                count. Synchronous; makes no model call and needs no API key, and stages nothing. A
+                CSV is one sheet; a PDF or DOCX returns an empty list with its format, since sheet
+                scope does not apply to it. Unsupported file types, and a spreadsheet with no tables
+                or a CSV that does not parse, are a 400; a spreadsheet that cannot be converted
+                because the tika service is unavailable is a 500 saying so.
+            operationId: answerAnalyzeSheets
+            responses:
+                "200":
+                    $ref: '#/responses/syncResponse'
+                "400":
+                    $ref: '#/responses/errorResponse'
+                "403":
+                    $ref: '#/responses/errorResponse'
+                "500":
+                    $ref: '#/responses/errorResponse'
+            summary: List a document's sheets.
+            tags:
+                - answer
     /1.0/answer/batch:
         post:
             description: |-
@@ -439,7 +476,18 @@ paths:
                 retrieval on completion. Each result under the operation metadata's "results"
                 key carries the question's "id", "question", "answer", and — when the
                 manifest's "domains" block routed it — the "domain" pattern that matched, so
-                the routing is auditable per answer. To derive a manifest from a document,
+                the routing is auditable per answer.
+
+                Unless the request sets "judge" to false, the answers are judged by Gemini as they
+                are produced. A judged result carries a "judgment" (confidence, rating, issues,
+                comment — or an error when that row could not be judged), the metadata carries
+                "phase" ("answering" or "judging") with "judged_done" and "judged_total", and the
+                completed metadata carries a "judge" summary, including each cross-answer
+                "consistency_findings" entry once, with every row it names quoted, and the count
+                "consistency_discarded" of findings whose quotes did not check out. A verdict the
+                consistency check lowered carries "pre_consistency_confidence". When judging is wanted but the daemon
+                cannot judge, "judge_unavailable" says why and the run proceeds unjudged. Judging
+                never fails the operation. To derive a manifest from a document,
                 use the separate POST /1.0/answer/build endpoint (Tika extraction + optional
                 LLM refinement); this run endpoint accepts only a prepared manifest.
 

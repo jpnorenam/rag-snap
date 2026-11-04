@@ -93,6 +93,9 @@ func manifestHeader(m *chat.BatchManifest, p Provenance) string {
 	for _, line := range InstructionsHeaderLines(p.Instructions) {
 		fmt.Fprintf(&b, "# %s\n", line)
 	}
+	for _, line := range SheetScopeHeaderLines(p.Documents) {
+		fmt.Fprintf(&b, "# %s\n", line)
+	}
 	for _, d := range p.Documents {
 		fmt.Fprintf(&b, "# Source: %s (%s, %s)\n", d.Filename, d.Format, d.Path)
 	}

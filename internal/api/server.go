@@ -356,6 +356,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	// path has two — the interview between them is conditioned on what triage found.
 	mux.HandleFunc("POST /1.0/answer/analyze", s.requireAuth(s.handleAnswerAnalyze))
 	mux.HandleFunc("POST /1.0/answer/analyze/generate", s.requireAuth(s.handleAnswerAnalyzeGenerate))
+	mux.HandleFunc("POST /1.0/answer/analyze/sheets", s.requireAuth(s.handleAnswerAnalyzeSheets))
 
 	// Check a manifest without running it. Synchronous: no model call, no run.
 	mux.HandleFunc("POST /1.0/answer/check", s.requireAuth(s.handleAnswerCheck))
@@ -432,10 +433,14 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 // unavailable rather than offering it and failing at submit time, so advertising it
 // unconditionally would defeat the point of advertising it at all.
 func (s *Server) extensions() []string {
-	out := make([]string, len(apiExtensions), len(apiExtensions)+1)
+	out := make([]string, len(apiExtensions), len(apiExtensions)+2)
 	copy(out, apiExtensions)
 	if ok, _ := s.analysisAvailable(); ok {
 		out = append(out, "answer_analyze")
+	}
+	// Advertised on the same terms: only when batch runs will actually be judged.
+	if ok, _ := s.judgeAvailable(); ok {
+		out = append(out, "answer_judge")
 	}
 	return out
 }

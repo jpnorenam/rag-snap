@@ -118,7 +118,7 @@ func (s *Server) handleAnswerBuild(w http.ResponseWriter, r *http.Request) {
 	stagedPath := tmp.Name()
 
 	tikaURL := s.clients.tikaURL()
-	inferenceURL := s.clients.openAIURL()
+	inference := s.clients.chatBackend()
 	model := s.clients.chatModelID()
 	tabular := format == "xlsx" || format == "csv"
 
@@ -161,7 +161,7 @@ func (s *Server) handleAnswerBuild(w http.ResponseWriter, r *http.Request) {
 			if len(questions) == 0 {
 				return fmt.Errorf("no questions could be extracted from the document")
 			}
-			refined := maybeRefine(ctx, &questions, refine, inferenceURL, model)
+			refined := maybeRefine(ctx, &questions, refine, inference, model)
 			op.UpdateMetadata(map[string]any{
 				"questions": toBuildQuestionsJSON(questions),
 				"count":     len(questions),
@@ -239,7 +239,7 @@ func (s *Server) handleAnswerBuildExtract(w http.ResponseWriter, r *http.Request
 		refine = *req.Refine
 	}
 
-	inferenceURL := s.clients.openAIURL()
+	inference := s.clients.chatBackend()
 	model := s.clients.chatModelID()
 	token := req.BuildToken
 	colIdx := req.ColumnIndex
@@ -262,7 +262,7 @@ func (s *Server) handleAnswerBuildExtract(w http.ResponseWriter, r *http.Request
 				}
 				qs[i].Source = table.Name
 			}
-			refined := maybeRefine(ctx, &qs, refine, inferenceURL, model)
+			refined := maybeRefine(ctx, &qs, refine, inference, model)
 			// The token's purpose is served once a column has been extracted.
 			s.builds.consume(token)
 			op.UpdateMetadata(map[string]any{
@@ -284,15 +284,15 @@ func (s *Server) handleAnswerBuildExtract(w http.ResponseWriter, r *http.Request
 // and inference is configured; on any failure it keeps the raw questions
 // (matching the CLI's rfpMaybeRefineQuestions). Returns whether refinement was
 // attempted (for the "refined" metadata flag).
-func maybeRefine(ctx context.Context, questions *[]rfp.Question, refine bool, inferenceURL, model string) bool {
-	attempted := refine && inferenceURL != "" && model != ""
+func maybeRefine(ctx context.Context, questions *[]rfp.Question, refine bool, inference chat.BackendConfig, model string) bool {
+	attempted := refine && inference.BaseURL != "" && model != ""
 	if !attempted {
 		return false
 	}
 	if err := ctx.Err(); err != nil {
 		return attempted
 	}
-	if refined, _, err := chat.RefineQuestions(inferenceURL, model, *questions); err == nil && len(refined) > 0 {
+	if refined, _, err := chat.RefineQuestions(inference, model, *questions); err == nil && len(refined) > 0 {
 		*questions = refined
 	}
 	return attempted

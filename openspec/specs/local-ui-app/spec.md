@@ -6,9 +6,7 @@ Define the browser UI that drives the local `ragd` REST API, replicating the fra
 and visual style of the existing `rag-snap-ui` (Next.js + React + TypeScript + Canonical
 Vanilla Framework) while being a real client of the local API rather than a Firebase-backed
 JSON reviewer. The first delivered experience is interactive chat.
-
 ## Requirements
-
 ### Requirement: UI is a static single-page application
 
 The UI SHALL be built as a client-rendered single-page application that exports to static
@@ -1337,3 +1335,105 @@ The page SHALL show only hits the response marks as matching (hits without the f
 
 - **WHEN** similar results are shown and the user submits another query
 - **THEN** the new search's similar results start hidden
+
+### Requirement: Judge verdicts are shown in results review
+
+The batch results review surface SHALL show, on each question card whose result carries a verdict:
+- a rating badge (green, yellow or red);
+- the confidence score;
+- the verdict comment.
+
+The badge SHALL be distinct from the answer text. The comment SHALL appear in the card without being expanded. A not-judged result SHALL show a neutral "Not judged" badge and its reason.
+
+When the result set carries a `judge` summary, the surface SHALL show a summary strip with the count per rating. The surface SHALL also offer a filter that limits the cards to chosen ratings. Every card SHALL keep its spreadsheet row number (first answer = row 2) when the cards are filtered.
+
+A results file with no verdicts SHALL render exactly as before, with no badges, no summary strip and no filter.
+
+While a batch operation is in its judging phase, the running view SHALL show judging progress.
+
+#### Scenario: Verdict on a card
+
+- **WHEN** a result carries a red verdict with a comment
+- **THEN** its card shows a red badge, the score and the comment
+
+#### Scenario: Filtering to the rows that need attention
+
+- **WHEN** the reviewer filters to red and yellow
+- **THEN** only red and yellow cards are shown
+- **AND** each shows its original row number
+
+#### Scenario: Unjudged file
+
+- **WHEN** a user opens a results file with no verdicts
+- **THEN** the review surface renders without badges, summary strip or filter
+
+#### Scenario: Judging progress
+
+- **WHEN** a tracked batch operation reports phase `judging`
+- **THEN** the running view shows judging progress, not answering progress
+
+### Requirement: The build wizard offers a sheet scope for spreadsheet RFPs
+
+When the analysis path is chosen and the RFP document is a spreadsheet, the build wizard's upload step SHALL fetch the document's sheet inventory and list every sheet with its position, name and data-row
+count. Each sheet SHALL have a scope control offering Answer, Context only and Exclude, defaulting to Answer.
+
+The control SHALL state what each setting does. It SHALL prevent starting analysis when no sheet is set to
+Answer, saying why at the control. The chosen scope SHALL be sent with the documents, and the triage
+step SHALL show it beside the instructions the session works to.
+
+For a PDF, DOCX or CSV RFP the sheet list SHALL NOT be shown. The instructions field SHALL remain the way
+to scope those documents. Fetching the inventory SHALL render loading and error states. A failed fetch
+SHALL leave analysis available without a scope, with the reason shown.
+
+#### Scenario: Scoping a workbook
+
+- **WHEN** a user picks an eight-tab workbook as the RFP on the analysis path
+- **THEN** the upload step lists the eight tabs with row counts, each set to Answer
+- **AND** after the user sets "Read Me" to Context only and "App B Sizing & BoQ" to Exclude and starts analysis, the triage step shows that scope
+
+#### Scenario: Nothing left to answer
+
+- **WHEN** a user sets every sheet to Context only or Exclude
+- **THEN** the control reports that at least one sheet must be answered, and analysis cannot be started
+
+#### Scenario: Non-spreadsheet RFP
+
+- **WHEN** a user picks a PDF as the RFP on the analysis path
+- **THEN** no sheet list is shown
+
+#### Scenario: Inventory unavailable
+
+- **WHEN** fetching the sheet inventory fails because the tika service is down
+- **THEN** the upload step shows the reason, and analysis can still be started without a scope
+
+### Requirement: Consistency findings are shown once in results review
+
+When the result set's `judge` summary carries consistency findings, the results review surface SHALL list them once, in the summary area, and not repeat them on every card.
+
+Each listed finding SHALL show its comment and its rows by spreadsheet row number (first answer = row 2). Each row number SHALL be a control that brings that row's card into view, clearing a rating filter that would hide it. A broad finding SHALL be marked as not applied to rows. When findings were discarded by verification, the surface SHALL say how many.
+
+A card whose confidence the consistency pass lowered SHALL indicate that, showing the confidence from before the pass beside the current one.
+
+A results file without these fields SHALL render as before.
+
+#### Scenario: Findings listed once
+
+- **WHEN** a user opens a results file with one applied finding over rows 47 and 263 and one broad finding
+- **THEN** the summary area lists both findings once, the broad one marked as not applied to rows
+- **AND** no card repeats the broad finding
+
+#### Scenario: Jumping to a row
+
+- **WHEN** the reviewer has filtered to red and activates row 263 in a finding, and row 263 is yellow
+- **THEN** the filter is cleared and row 263's card is brought into view
+
+#### Scenario: Lowered confidence
+
+- **WHEN** a card's verdict records a confidence from before the pass of 5 and a current confidence of 3
+- **THEN** the card shows that the consistency pass lowered it from 5
+
+#### Scenario: Older results file
+
+- **WHEN** a user opens a judged results file with no `consistency_findings`
+- **THEN** the review surface renders as before
+
