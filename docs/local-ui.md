@@ -49,9 +49,10 @@ icon-only strip; hover an icon for its label.
 
 The very bottom of the rail shows the running build: the snap version and the commit it was built
 from, e.g. `v0.0.9 · cd3ac8925556`. A `-dirty` suffix means the snap was built from a tree with
-uncommitted changes, and `dev` means ragd isn't running from the snap. Include it when reporting a
-problem. It's hidden when the rail collapses; the **ragd** card on the Status page shows the same
-information.
+uncommitted changes (or new, uncommitted source files), and `dev` means ragd isn't running from
+the snap. Include it when reporting a problem. It's hidden when the rail collapses; the **ragd** card
+on the Status page shows the same information. For the CLI, `rag-cli.rag --version` prints the same
+for its own build.
 
 ### Background operations
 

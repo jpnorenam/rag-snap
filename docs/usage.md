@@ -4,6 +4,9 @@
 > knowledge bases over an opt-in loopback listener. See the
 > [Local web UI guide](local-ui.md) (`rag-cli.rag ui`).
 
+`rag-cli.rag --version` prints the snap version and the commit the CLI was built from, for example
+`rag-cli 0.0.9 (commit cd3ac8925556)`. Include it when reporting a problem.
+
 ## Services
 
 `rag-cli` orchestrates three services. Only the first is mandatory for every command:

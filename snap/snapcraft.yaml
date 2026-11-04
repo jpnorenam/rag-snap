@@ -81,10 +81,16 @@ parts:
       # Record the source commit the snap is built from. The part's source is a
       # copy of the tree, so ask git in the project directory itself;
       # safe.directory allows a checkout owned by another user (the build VM
-      # runs as root). "-dirty" marks uncommitted changes to tracked files, and
-      # a build outside a git checkout records no commit.
-      COMMIT="$(git -c safe.directory='*' -C "${CRAFT_PROJECT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || true)"
-      if [ -n "${COMMIT}" ] && ! git -c safe.directory='*' -C "${CRAFT_PROJECT_DIR}" diff --quiet HEAD -- 2>/dev/null; then
+      # runs as root). "-dirty" marks uncommitted changes to tracked files, or
+      # untracked files under the directories that are built, which would be
+      # compiled in. git status refreshes the index first, so stat differences
+      # on a bind-mounted project dir do not read as changes. internal/webui/dist
+      # is left out: the UI build above rewrites it, so it is always "changed".
+      # A build outside a git checkout records no commit.
+      project_git() { git -c safe.directory='*' -C "${CRAFT_PROJECT_DIR}" "$@"; }
+      COMMIT="$(project_git rev-parse --short=12 HEAD 2>/dev/null || true)"
+      if [ -n "${COMMIT}" ] && [ -n "$(project_git status --porcelain --untracked-files=normal -- \
+          cmd internal pkg ui apps snap go.mod go.sum ':(exclude)internal/webui/dist' 2>/dev/null)" ]; then
         COMMIT="${COMMIT}-dirty"
       fi
       echo "Building from commit: ${COMMIT:-unknown}"
