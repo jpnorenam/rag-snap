@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { noMatchesMessage, similarNotice, splitResults } from "./searchSplit";
+import { noMatchesMessage, resultCount, similarNotice, splitResults } from "./searchSplit";
 
 // Shared with the CLI tests (cmd/cli/basic/knowledge/search_split_test.go): the
 // UI and the CLI must split and summarize every case identically.
@@ -44,3 +44,12 @@ for (const c of cases) {
     assert.equal(shownNotice, c.similar_notice);
   });
 }
+
+test("the result count covers what is on screen", () => {
+  assert.equal(resultCount(1, 0, false), "1 result");
+  assert.equal(resultCount(2, 8, false), "2 results");
+  assert.equal(resultCount(0, 10, false), "0 results");
+  assert.equal(resultCount(0, 10, true), "10 results (0 matching, 10 similar)");
+  assert.equal(resultCount(2, 8, true), "10 results (2 matching, 8 similar)");
+  assert.equal(resultCount(3, 0, true), "3 results");
+});

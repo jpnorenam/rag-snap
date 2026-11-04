@@ -43,8 +43,14 @@ func TestFormatSearchHitViews(t *testing.T) {
 			name:        "show similar",
 			hits:        []searchHitView{searchView("a", 5, true), searchView("c", -2, false)},
 			showSimilar: true,
-			want:        []string{"Result 1 ", "Source: a", knowledge.SimilarSeparator(), "Result 2 (score: -2.0000", "Source: c"},
-			absent:      []string{"Use --show-similar"},
+			want:        []string{"Result 1 ", "Source: a", knowledge.SimilarSeparator(), "Result 2 (score: -2.0000", "Source: c", "Total: 2 results (1 matching, 1 similar)"},
+			absent:      []string{"Use --show-similar", "Total: 1 results"},
+		},
+		{
+			name:        "show similar with no matches",
+			hits:        []searchHitView{searchView("c", -2, false), searchView("d", -5, false)},
+			showSimilar: true,
+			want:        []string{knowledge.NoMatchesMessage("kafka"), knowledge.SimilarSeparator(), "Result 1 ", "Result 2 ", "Total: 2 results (0 matching, 2 similar)"},
 		},
 		{
 			name:   "empty",

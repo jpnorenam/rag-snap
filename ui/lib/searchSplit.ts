@@ -35,3 +35,12 @@ export function similarNotice(n: number): string {
     ? "1 similar result doesn't match the query."
     : `${n} similar results don't match the query.`;
 }
+
+// resultCount words the live-region count for what is on screen: the matching
+// results, plus the similar ones once they are shown, so a screen reader never
+// hears a count that contradicts the visible list.
+export function resultCount(nMatched: number, nSimilar: number, showSimilar: boolean): string {
+  const plural = (n: number) => `${n} result${n === 1 ? "" : "s"}`;
+  if (!showSimilar || nSimilar === 0) return plural(nMatched);
+  return `${plural(nMatched + nSimilar)} (${nMatched} matching, ${nSimilar} similar)`;
+}

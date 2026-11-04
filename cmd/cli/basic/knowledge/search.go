@@ -35,7 +35,9 @@ type SearchHit struct {
 // the cross-encoder's output, and the default cross-encoder
 // (ms-marco-MiniLM-L-12-v2) emits a relevance logit: sigmoid(score) is its
 // estimate of P(relevant), so 0 is the model's own decision boundary. A
-// reranker that emits probabilities (0..1) instead would need 0.5 here.
+// reranker that emits probabilities (0..1) instead would need 0.5 here, which
+// is why TestMatchThresholdIsPinnedToTheDefaultReranker fails if
+// DefaultCrossEncoderName changes: change the two together.
 //
 // This is the only place the rule lives: the REST API reports it per hit as
 // "matched", and every client reads that flag rather than comparing scores.
@@ -126,10 +128,7 @@ func (c *OpenSearchClient) Search(ctx context.Context, indexes []string, query, 
 // index's share. Each index returns its own top k, so the merged list always
 // contains the global top k. The chat RAG loop keeps calling Search.
 func (c *OpenSearchClient) SearchTop(ctx context.Context, indexes []string, query, lexicalQuery, embeddingModelID string, k int) ([]SearchHit, error) {
-	stopProgress := common.StartProgressSpinner("Searching knowledge base")
-	defer stopProgress()
-
-	hits, err := c.search(ctx, indexes, query, lexicalQuery, embeddingModelID, k)
+	hits, err := c.Search(ctx, indexes, query, lexicalQuery, embeddingModelID, k)
 	if err != nil {
 		return nil, err
 	}

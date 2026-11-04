@@ -60,14 +60,40 @@ func handleSearch(args string, session *Session) {
 		return
 	}
 
-	fmt.Print(formatSearchOutput(parsed.terms, hits, parsed.showSimilar))
+	fmt.Print(formatSearchOutput(parsed.terms, directSearchHits(hits), parsed.showSimilar))
 }
 
-// formatSearchOutput renders /search output for direct-mode hits: matched
-// hits, then similar results hidden behind a notice or, with showSimilar,
-// listed under a separator.
-func formatSearchOutput(terms string, hits []knowledge.SearchHit, showSimilar bool) string {
-	matched, similar := knowledge.SplitByMatch(hits, func(h knowledge.SearchHit) bool { return h.Matched })
+// searchHit is one /search result as both modes render it. Direct-mode and
+// daemon hits are converted to it, so the two modes share one renderer and
+// cannot drift apart.
+type searchHit struct {
+	Score     float64
+	Base      string
+	Label     string
+	SourceID  string
+	CreatedAt string
+	Content   string
+	Matched   bool
+}
+
+// directSearchHits converts direct-mode hits, resolving each base name from its index.
+func directSearchHits(hits []knowledge.SearchHit) []searchHit {
+	out := make([]searchHit, len(hits))
+	for i, h := range hits {
+		name, err := knowledge.KnowledgeBaseNameFromIndex(h.Index)
+		if err != nil {
+			name = h.Index
+		}
+		out[i] = searchHit{Score: h.Score, Base: name, Label: h.Label, SourceID: h.SourceID,
+			CreatedAt: h.CreatedAt, Content: h.Content, Matched: h.Matched}
+	}
+	return out
+}
+
+// formatSearchOutput renders /search output: matched hits, then similar
+// results hidden behind a notice or, with showSimilar, listed under a separator.
+func formatSearchOutput(terms string, hits []searchHit, showSimilar bool) string {
+	matched, similar := knowledge.SplitByMatch(hits, func(h searchHit) bool { return h.Matched })
 	return knowledge.FormatSplit(terms,
 		formatSearchResults(matched, 0), formatSearchResults(similar, len(matched)),
 		len(matched), len(similar), showSimilar)
@@ -105,6 +131,10 @@ func parseSearchArgs(args string) (parsed searchArgs, ok bool) {
 			k = n
 		case f == knowledge.ShowSimilarFlag:
 			showSimilar = true
+		case strings.HasPrefix(f, knowledge.ShowSimilarFlag+"="):
+			// The flag takes no value; a form like --show-similar=true is a
+			// usage error rather than query text that skews the search.
+			return searchArgs{}, false
 		default:
 			queryTokens = append(queryTokens, f)
 		}
@@ -122,19 +152,14 @@ func parseSearchArgs(args string) (parsed searchArgs, ok bool) {
 // metadata and prints the full, untruncated chunk content. Hits are already
 // sorted by score descending by Search. Numbering starts at start+1, so the
 // similar results continue from the matched ones.
-func formatSearchResults(hits []knowledge.SearchHit, start int) string {
+func formatSearchResults(hits []searchHit, start int) string {
 	var b strings.Builder
 	for i, hit := range hits {
 		if i > 0 {
 			b.WriteString("\n")
 		}
 
-		name, err := knowledge.KnowledgeBaseNameFromIndex(hit.Index)
-		if err != nil {
-			name = hit.Index
-		}
-
-		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", start+i+1, hit.Score, name, knowledge.LabelTag(hit.Label))
+		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", start+i+1, hit.Score, hit.Base, knowledge.LabelTag(hit.Label))
 		fmt.Fprintln(&b, color.New(color.Bold).Sprint(header))
 		fmt.Fprintf(&b, "    source: %s   created: %s\n", hit.SourceID, hit.CreatedAt)
 		fmt.Fprintln(&b, color.HiBlackString("    "+strings.Repeat("─", 56)))

@@ -7,7 +7,7 @@ import Spinner from "@/components/common/Spinner";
 import { errorMessage } from "@/lib/api/envelope";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
 import { search, type SearchResult } from "@/lib/api/search";
-import { noMatchesMessage, similarNotice, splitResults } from "@/lib/searchSplit";
+import { noMatchesMessage, resultCount, similarNotice, splitResults } from "@/lib/searchSplit";
 
 // TOP_K_OPTIONS are the selectable result budgets. 10 matches `k search --top`;
 // 15 (the chat REPL's retrieval default) stays available as an option.
@@ -315,9 +315,7 @@ export default function SearchScreen() {
       <section className="search__results">
         <h2 className="u-off-screen">Results</h2>
         <p className="p-text--small u-text--muted search__count" aria-live="polite">
-          {split !== null
-            ? `${split.matched.length} result${split.matched.length === 1 ? "" : "s"}`
-            : ""}
+          {split !== null ? resultCount(split.matched.length, split.similar.length, showSimilar) : ""}
         </p>
 
         {searching && <Spinner label="Searching…" />}

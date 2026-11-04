@@ -719,11 +719,21 @@ func formatSearchHitViews(query string, hits []searchHitView, showSimilar bool) 
 		return b.String()
 	}
 
+	// The total counts what is listed. With similar results shown it follows them
+	// and says how it splits, so it never contradicts the numbering.
+	listsSimilar := showSimilar && len(similar) > 0
 	matchedOut := ""
 	if len(matched) > 0 {
-		matchedOut = render(matched, 0) + fmt.Sprintf("\nTotal: %d results\n", len(matched))
+		matchedOut = render(matched, 0)
+		if !listsSimilar {
+			matchedOut += fmt.Sprintf("\nTotal: %d results\n", len(matched))
+		}
 	}
-	return knowledge.FormatSplit(query, matchedOut, render(similar, len(matched)), len(matched), len(similar), showSimilar)
+	out := knowledge.FormatSplit(query, matchedOut, render(similar, len(matched)), len(matched), len(similar), showSimilar)
+	if listsSimilar {
+		out += fmt.Sprintf("\nTotal: %d results (%d matching, %d similar)\n", len(matched)+len(similar), len(matched), len(similar))
+	}
+	return out
 }
 
 func (cmd *knowledgeCommand) forgetCommand() *cobra.Command {

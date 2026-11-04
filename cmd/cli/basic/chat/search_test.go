@@ -24,6 +24,7 @@ func TestParseSearchArgs(t *testing.T) {
 		{"with -k=", "kafka -k=3", searchArgs{k: 3, terms: "kafka"}, true},
 		{"flag without terms", "--show-similar", searchArgs{}, false},
 		{"flag and -k without terms", "-k 5 --show-similar", searchArgs{}, false},
+		{"flag with a value", "--show-similar=true kafka", searchArgs{}, false},
 		{"invalid -k", "-k 0 kafka", searchArgs{}, false},
 		{"empty", "", searchArgs{}, false},
 	}
@@ -39,11 +40,12 @@ func TestParseSearchArgs(t *testing.T) {
 
 func boolPtr(b bool) *bool { return &b }
 
-// TestSearchOutputs runs the direct (formatSearchOutput) and daemon
-// (formatRemoteSearchOutput) renderers over the same hits, so both /search
-// modes agree on the split as well as the wording.
+// TestSearchOutputs renders the same hits arriving from direct mode and from
+// the daemon, so both /search modes agree on the split as well as the wording.
 func TestSearchOutputs(t *testing.T) {
+	noColor := color.NoColor
 	color.NoColor = true
+	t.Cleanup(func() { color.NoColor = noColor })
 	notice := func(n int) string { return knowledge.SimilarNotice(n) + " Use --show-similar to show them." }
 	index := knowledge.FullIndexName("default")
 
@@ -94,8 +96,8 @@ func TestSearchOutputs(t *testing.T) {
 			remote[i] = apiclient.SearchHit{Base: "default", Score: h.score, SourceID: h.source, Label: "canonical", Matched: boolPtr(h.matched)}
 		}
 		outputs := map[string]string{
-			"direct": formatSearchOutput("kafka", local, tc.showSimilar),
-			"daemon": formatRemoteSearchOutput("kafka", remote, tc.showSimilar),
+			"direct": formatSearchOutput("kafka", directSearchHits(local), tc.showSimilar),
+			"daemon": formatSearchOutput("kafka", remoteSearchHits(remote), tc.showSimilar),
 		}
 		for mode, out := range outputs {
 			t.Run(tc.name+"/"+mode, func(t *testing.T) {

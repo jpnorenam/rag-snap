@@ -586,7 +586,8 @@ your bases, so each result is checked against the reranker: a result **matches**
 relevance score is above 0, meaning the reranker judges it relevant to the query. Only matching
 results are shown. The others are **similar results**: the command says how many there are and
 hides them unless you pass `--show-similar`, which lists them after the matches under a
-separator.
+separator. The total then follows them and says how it splits, e.g.
+`Total: 10 results (4 matching, 6 similar)`.
 
 **Example: search the default base**
 
@@ -1082,7 +1083,7 @@ the model for a given query.
 - `-k N`: maximum number of results, in total across the active bases (default: 15). Also
   accepts `-k=N`.
 - `--show-similar`: also show the similar results that don't match the query. Can go anywhere
-  in the line.
+  in the line. It takes no value: `--show-similar=true` is rejected rather than searched for.
 
 Each result shows its relevance score, knowledge base name, knowledge-label tag (e.g.
 `[CANONICAL]`, `[UPSTREAM]`, or any label you assigned at ingest — see `knowledge label`), source

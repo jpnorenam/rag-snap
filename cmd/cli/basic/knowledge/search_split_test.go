@@ -142,3 +142,14 @@ func TestCapHits(t *testing.T) {
 		t.Error("capHits must not pad or drop when under the cap")
 	}
 }
+
+// TestMatchThresholdIsPinnedToTheDefaultReranker fails when the reranker
+// `knowledge init` registers changes, because MatchScoreThreshold assumes this
+// model's output scale (a relevance logit with its boundary at 0). A model that
+// emits probabilities would mark every hit as a match at threshold 0.
+func TestMatchThresholdIsPinnedToTheDefaultReranker(t *testing.T) {
+	if DefaultCrossEncoderName != "huggingface/cross-encoders/ms-marco-MiniLM-L-12-v2" || MatchScoreThreshold != 0 {
+		t.Fatalf("the reranker (%s) or MatchScoreThreshold (%v) changed: check the new model's score scale and set the threshold to its decision boundary, then update this test",
+			DefaultCrossEncoderName, MatchScoreThreshold)
+	}
+}

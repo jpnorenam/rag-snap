@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/huh"
 	"github.com/chzyer/readline"
 	"github.com/fatih/color"
-	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/internal/apiclient"
 )
@@ -312,37 +311,19 @@ func remoteSearch(ctx context.Context, dc *apiclient.Client, args string, active
 		fmt.Printf("Search failed: %v\n", err)
 		return
 	}
-	fmt.Print(formatRemoteSearchOutput(parsed.terms, hits, parsed.showSimilar))
+	fmt.Print(formatSearchOutput(parsed.terms, remoteSearchHits(hits), parsed.showSimilar))
 }
 
-// formatRemoteSearchOutput is formatSearchOutput for daemon hits, which carry
-// the daemon's match flag (missing on an older daemon, counted as matching).
-func formatRemoteSearchOutput(terms string, hits []apiclient.SearchHit, showSimilar bool) string {
-	matched, similar := knowledge.SplitByMatch(hits, apiclient.SearchHit.IsMatched)
-	return knowledge.FormatSplit(terms,
-		formatRemoteSearchResults(matched, 0), formatRemoteSearchResults(similar, len(matched)),
-		len(matched), len(similar), showSimilar)
-}
-
-// formatRemoteSearchResults renders daemon search hits for human reading,
-// mirroring formatSearchResults but sourcing the base name and provenance from
-// the API response (which already resolved them server-side). Hits are sorted
-// by score descending by the daemon. Numbering starts at start+1.
-func formatRemoteSearchResults(hits []apiclient.SearchHit, start int) string {
-	var b strings.Builder
-	for i, hit := range hits {
-		if i > 0 {
-			b.WriteString("\n")
-		}
-
-		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", start+i+1, hit.Score, hit.Base, knowledge.LabelTag(hit.Label))
-		fmt.Fprintln(&b, color.New(color.Bold).Sprint(header))
-		fmt.Fprintf(&b, "    source: %s   created: %s\n", hit.SourceID, hit.CreatedAt)
-		fmt.Fprintln(&b, color.HiBlackString("    "+strings.Repeat("─", 56)))
-		b.WriteString(hit.Content)
-		b.WriteString("\n")
+// remoteSearchHits converts daemon hits, which carry the base name resolved
+// server-side and the daemon's match flag (missing on an older daemon, counted
+// as matching).
+func remoteSearchHits(hits []apiclient.SearchHit) []searchHit {
+	out := make([]searchHit, len(hits))
+	for i, h := range hits {
+		out[i] = searchHit{Score: h.Score, Base: h.Base, Label: h.Label, SourceID: h.SourceID,
+			CreatedAt: h.CreatedAt, Content: h.Content, Matched: h.IsMatched()}
 	}
-	return b.String()
+	return out
 }
 
 // remotePromptTurn sends one prompt and renders streamed frames until the
