@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
@@ -57,68 +56,46 @@ func retrieveContext(session *Session, query, lexicalQuery string, verbose bool)
 	}
 
 	var (
-		localHits []knowledge.SearchHit
-		kapaHits  []knowledge.SearchHit
-		localErr  error
-		kapaErr   error
-		wg        sync.WaitGroup
+		localClient *knowledge.OpenSearchClient
+		indexes     []string
+		kapaClient  *knowledge.KapaClient
 	)
-
 	if hasLocal {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			localHits, localErr = session.KnowledgeClient.Search(
-				context.Background(),
-				session.ActiveIndexes,
-				query,
-				lexicalQuery,
-				session.EmbeddingModelID,
-				defaultRAGTopK,
-			)
-		}()
+		localClient, indexes = session.KnowledgeClient, session.ActiveIndexes
 	}
-
 	if hasKapa {
+		kapaClient = session.KapaClient
 		if verbose {
 			fmt.Printf("Kapa search: groups=%v\n", session.ActiveKapaGroups)
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			kapaHits, kapaErr = session.KapaClient.Search(context.Background(), query, defaultRAGTopK, session.ActiveKapaGroups)
-		}()
 	}
 
-	wg.Wait()
+	res := knowledge.SearchWithKapa(context.Background(), localClient, indexes, query, lexicalQuery,
+		session.EmbeddingModelID, defaultRAGTopK, kapaClient, session.ActiveKapaGroups)
 
-	if localErr != nil && verbose {
-		fmt.Printf("Knowledge search failed: %v\n", localErr)
+	if res.LocalErr != nil && verbose {
+		fmt.Printf("Knowledge search failed: %v\n", res.LocalErr)
 	}
-	if kapaErr != nil {
+	if res.KapaErr != nil {
 		// A kapa.ai failure never fails the turn: the answer proceeds on the
 		// local context, but the user is told it is missing kapa.ai grounding.
 		if session.Warn != nil {
-			session.Warn(fmt.Sprintf("kapa.ai retrieval failed, answering from local knowledge only: %v", kapaErr))
+			session.Warn(fmt.Sprintf("kapa.ai retrieval failed, answering from local knowledge only: %v", res.KapaErr))
 		} else if verbose {
-			fmt.Printf("Kapa search failed: %v\n", kapaErr)
+			fmt.Printf("Kapa search failed: %v\n", res.KapaErr)
 		}
 	}
 
-	allHits := make([]knowledge.SearchHit, 0, len(localHits)+len(kapaHits))
-	allHits = append(allHits, localHits...)
-	allHits = append(allHits, kapaHits...)
-
-	counts := &RetrievalCounts{Local: len(localHits), Kapa: len(kapaHits)}
-	if len(allHits) == 0 {
+	counts := &RetrievalCounts{Local: res.Local, Kapa: res.Kapa}
+	if len(res.Hits) == 0 {
 		return "", counts
 	}
 
 	if verbose {
-		fmt.Printf("Retrieved %d local + %d kapa results\n", len(localHits), len(kapaHits))
+		fmt.Printf("Retrieved %d local + %d kapa results\n", res.Local, res.Kapa)
 	}
 
-	return formatContext(allHits), counts
+	return formatContext(res.Hits), counts
 }
 
 // RetrievalCounts records how many hits each source contributed to an answer's

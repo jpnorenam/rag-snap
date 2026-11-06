@@ -52,15 +52,19 @@ func handleSearch(args string, session *Session) {
 	if hasLocal {
 		indexes = session.ActiveIndexes
 	}
-	hits, kapaErr, err := knowledge.SearchWithKapa(context.Background(), session.KnowledgeClient, indexes,
+	res := knowledge.SearchWithKapa(context.Background(), session.KnowledgeClient, indexes,
 		terms, terms, session.EmbeddingModelID, k, session.KapaClient, session.ActiveKapaGroups)
-	if err != nil {
+	if err := res.Err(); err != nil {
 		fmt.Printf("Search failed: %v\n", err)
 		return
 	}
-	if kapaErr != nil {
-		fmt.Printf("Warning: kapa.ai search failed, showing local results only: %v\n", kapaErr)
+	if res.LocalErr != nil {
+		fmt.Printf("Warning: local knowledge search failed, showing kapa.ai results only: %v\n", res.LocalErr)
 	}
+	if res.KapaErr != nil {
+		fmt.Printf("Warning: kapa.ai search failed, showing local results only: %v\n", res.KapaErr)
+	}
+	hits := res.Hits
 
 	if len(hits) == 0 {
 		fmt.Println("No results found.")

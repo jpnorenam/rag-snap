@@ -1552,7 +1552,9 @@ paths:
                 hit has base "kapa.ai" and label "kapa-canonical". Absent or empty
                 "kapa_groups" means kapa.ai is not queried. When kapa.ai is not configured or
                 its request fails, the local hits are still returned and the response's
-                top-level "warnings" says kapa.ai could not be applied.
+                top-level "warnings" says kapa.ai could not be applied. Likewise, when the
+                local search fails but kapa.ai succeeds, the kapa.ai hits are returned with a
+                warning; the request fails only when no queried source succeeded.
             operationId: search
             parameters:
                 - in: body

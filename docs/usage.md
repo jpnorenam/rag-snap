@@ -583,7 +583,9 @@ rag-cli.rag knowledge search <query> [--bases <name,...>] [--top <k>] [--kapa-gr
 
 With `--kapa-groups`, kapa.ai results (index `kapa-canonical`, tag `[KAPA-CANONICAL]`) are listed
 after the local ones. kapa.ai is searched only for the groups you name; if it is not configured or
-its request fails, a `Warning:` line says so and the local results are still shown.
+its request fails, a `Warning:` line says so and the local results are still shown. The same
+works the other way: if the local search fails but kapa.ai answers, the kapa.ai results are shown
+with a warning. The command fails only when no source returned results.
 
 **Example — search the default base**
 
@@ -1109,7 +1111,8 @@ descending; kapa.ai results (`[KAPA-CANONICAL]`) follow them, in the same order 
 
 If neither knowledge bases nor kapa.ai groups are active, `/search` tells you to select some with
 `/use-knowledge` or `/use-kapa` first. kapa.ai alone works without an embedding model. If the
-kapa.ai request fails, a warning is printed and the local results are still shown. An empty query or
+kapa.ai request fails, a warning is printed and the local results are still shown; if the local
+search fails, the kapa.ai results are shown with a warning instead. An empty query or
 an invalid `-k` prints a short usage line.
 
 #### `/save`

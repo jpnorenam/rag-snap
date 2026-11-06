@@ -676,14 +676,18 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 					fmt.Fprintln(os.Stderr, "Warning: kapa.ai is not configured (set kapa.project.id and export KAPA_API_KEY); showing local results only")
 				}
 			}
-			results, kapaErr, err := knowledge.SearchWithKapa(context.Background(), client, fullIndexNames,
+			res := knowledge.SearchWithKapa(context.Background(), client, fullIndexNames,
 				query, query, modelID, k, kapaClient, kapaGroups)
-			if err != nil {
+			if err := res.Err(); err != nil {
 				return fmt.Errorf("searching: %w", err)
 			}
-			if kapaErr != nil {
-				fmt.Fprintf(os.Stderr, "Warning: kapa.ai search failed, showing local results only: %v\n", kapaErr)
+			if res.LocalErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: local knowledge search failed, showing kapa.ai results only: %v\n", res.LocalErr)
 			}
+			if res.KapaErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: kapa.ai search failed, showing local results only: %v\n", res.KapaErr)
+			}
+			results := res.Hits
 
 			if len(results) == 0 {
 				fmt.Println("No results found.")

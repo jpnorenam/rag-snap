@@ -303,37 +303,62 @@ func (c *KapaClient) Search(ctx context.Context, query string, limit int, source
 	return hits, nil
 }
 
+// CombinedSearch is the outcome of SearchWithKapa. Each side's failure is kept
+// separately so callers can say exactly what is missing from the results.
+type CombinedSearch struct {
+	// Hits holds the local hits (sorted by score) followed by the kapa.ai hits
+	// in kapa.ai's order: kapa.ai scores are rank-derived and not comparable
+	// with local ones.
+	Hits []SearchHit
+	// Local and Kapa count the hits each side contributed.
+	Local, Kapa int
+	// LocalQueried and KapaQueried record which sides ran.
+	LocalQueried, KapaQueried bool
+	// LocalErr and KapaErr are each side's failure, if it ran and failed.
+	LocalErr, KapaErr error
+}
+
+// Err is the error to fail a search on: the local search failed and kapa.ai
+// gives nothing to fall back on, because it was not queried or also failed.
+// Otherwise a failure on one side leaves usable results and is a warning.
+func (s CombinedSearch) Err() error {
+	if s.LocalErr != nil && (!s.KapaQueried || s.KapaErr != nil) {
+		return s.LocalErr
+	}
+	return nil
+}
+
 // SearchWithKapa runs local hybrid search over indexes and kapa.ai retrieval
-// over groups concurrently, returning local hits (sorted by score) followed by
-// kapa.ai hits in kapa.ai's order: kapa.ai scores are rank-derived and not
-// comparable with local ones. Either side is skipped when it has no client or
-// nothing selected. A kapa.ai failure does not fail the search: it is returned
-// as kapaErr so the caller can warn and keep the local results.
+// over groups concurrently. Either side is skipped when it has no client or
+// nothing selected. It is the one implementation of the local + kapa.ai merge,
+// shared by the CLI search, chat retrieval and the daemon's search endpoint.
 func SearchWithKapa(ctx context.Context, local *OpenSearchClient, indexes []string, query, lexicalQuery, embeddingModelID string,
-	k int, kapa *KapaClient, groups []string) (hits []SearchHit, kapaErr, err error) {
+	k int, kapa *KapaClient, groups []string) CombinedSearch {
 	var (
+		res                 CombinedSearch
 		localHits, kapaHits []SearchHit
 		wg                  sync.WaitGroup
 	)
 	if local != nil && len(indexes) > 0 {
+		res.LocalQueried = true
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			localHits, err = local.Search(ctx, indexes, query, lexicalQuery, embeddingModelID, k)
+			localHits, res.LocalErr = local.Search(ctx, indexes, query, lexicalQuery, embeddingModelID, k)
 		}()
 	}
 	if kapa != nil && len(groups) > 0 {
+		res.KapaQueried = true
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			kapaHits, kapaErr = kapa.Search(ctx, query, k, groups)
+			kapaHits, res.KapaErr = kapa.Search(ctx, query, k, groups)
 		}()
 	}
 	wg.Wait()
-	if err != nil {
-		return nil, kapaErr, err
-	}
-	hits = make([]SearchHit, 0, len(localHits)+len(kapaHits))
-	hits = append(hits, localHits...)
-	return append(hits, kapaHits...), kapaErr, nil
+	res.Local, res.Kapa = len(localHits), len(kapaHits)
+	res.Hits = make([]SearchHit, 0, res.Local+res.Kapa)
+	res.Hits = append(res.Hits, localHits...)
+	res.Hits = append(res.Hits, kapaHits...)
+	return res
 }

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
-	"sync"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 )
@@ -52,7 +51,9 @@ type searchResult struct {
 // hit has base "kapa.ai" and label "kapa-canonical". Absent or empty
 // "kapa_groups" means kapa.ai is not queried. When kapa.ai is not configured or
 // its request fails, the local hits are still returned and the response's
-// top-level "warnings" says kapa.ai could not be applied.
+// top-level "warnings" says kapa.ai could not be applied. Likewise, when the
+// local search fails but kapa.ai succeeds, the kapa.ai hits are returned with a
+// warning; the request fails only when no queried source succeeded.
 //
 //	Responses:
 //	  200: syncResponse
@@ -97,49 +98,33 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	var (
-		localHits, kapaHits []knowledge.SearchHit
-		localErr, kapaErr   error
-		warnings            []string
-		wg                  sync.WaitGroup
-	)
-	if client != nil {
-		indexes := make([]string, len(req.Bases))
-		for i, b := range req.Bases {
-			indexes[i] = knowledge.FullIndexName(b)
-		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			// The CLI /search uses the verbatim query for both the neural and
-			// lexical arms; do the same here (no LLM query rewrite for raw search).
-			localHits, localErr = client.Search(r.Context(), indexes, req.Query, req.Query, embeddingModelID, k)
-		}()
+	var warnings []string
+	if len(req.KapaGroups) > 0 && s.kapa == nil {
+		warnings = append(warnings, "kapa.ai was requested but is not configured on the daemon "+
+			"(set kapa.project.id and KAPA_API_KEY, then restart ragd); showing local results only")
 	}
-	if len(req.KapaGroups) > 0 {
-		if s.kapa == nil {
-			warnings = append(warnings, "kapa.ai was requested but is not configured on the daemon "+
-				"(set kapa.project.id and KAPA_API_KEY, then restart ragd); showing local results only")
-		} else {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				kapaHits, kapaErr = s.kapa.Search(r.Context(), req.Query, k, req.KapaGroups)
-			}()
-		}
+	var indexes []string
+	for _, b := range req.Bases {
+		indexes = append(indexes, knowledge.FullIndexName(b))
 	}
-	wg.Wait()
 
-	if localErr != nil {
-		respondError(w, http.StatusInternalServerError, localErr.Error())
+	// The CLI /search uses the verbatim query for both the neural and lexical
+	// arms; do the same here (no LLM query rewrite for raw search).
+	res := knowledge.SearchWithKapa(r.Context(), client, indexes, req.Query, req.Query, embeddingModelID,
+		k, s.kapa, req.KapaGroups)
+	if err := res.Err(); err != nil {
+		respondError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if kapaErr != nil {
-		warnings = append(warnings, "kapa.ai search failed, showing local results only: "+kapaErr.Error())
+	if res.LocalErr != nil {
+		warnings = append(warnings, "local knowledge search failed, showing kapa.ai results only: "+res.LocalErr.Error())
+	}
+	if res.KapaErr != nil {
+		warnings = append(warnings, "kapa.ai search failed, showing local results only: "+res.KapaErr.Error())
 	}
 
-	results := make([]searchResult, 0, len(localHits)+len(kapaHits))
-	for _, h := range append(localHits, kapaHits...) {
+	results := make([]searchResult, 0, len(res.Hits))
+	for _, h := range res.Hits {
 		base := kapaBaseLabel
 		if h.Index != knowledge.KapaIndexName {
 			base, _ = knowledge.KnowledgeBaseNameFromIndex(h.Index)
