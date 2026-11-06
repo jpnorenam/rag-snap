@@ -16,14 +16,17 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 # the environment only. Remove any stored value from both layers so a credential
 # does not linger in snapd state. Unsetting a key that is not there is not an
 # error worth failing the refresh over.
-snapctl unset config.package.kapa.api.key || true
-snapctl unset config.user.kapa.api.key || true
-
-# Answer judge. Keep in sync with the install hook, which documents each key.
-seed judge.enabled "true"
-seed judge.model ""
-seed judge.reasoning "medium"
-seed judge.concurrency "4"
+#
+# A stored value means kapa.ai worked before this refresh and stops working after
+# it, so say so in the hook log (never the value itself); `rag status` then lists
+# KAPA_API_KEY as missing until it is exported.
+for layer in package user; do
+	if [ -n "$(snapctl get "config.$layer.kapa.api.key" 2>/dev/null || true)" ]; then
+		echo "kapa.api.key is no longer read and was removed from the $layer config layer;" \
+			"export it as KAPA_API_KEY (ragd: systemd drop-in, CLI: shell or credentials.json)" >&2
+	fi
+	snapctl unset "config.$layer.kapa.api.key" || true
+done
 
 # Retired keys. analysis.http.* addressed a configurable (gateway) endpoint; analysis
 # now calls the Gemini API only, so the keys are gone. An install that seeded them
