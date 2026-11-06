@@ -478,7 +478,9 @@ Each result records what grounded it under `retrieved`, for example
 `"retrieved": {"local": 30, "kapa": 14}`, so you can confirm kapa.ai took part in a daemon run
 (the CLI's results file carries the same counts). Problems that degrade a run without failing it are
 listed under the operation metadata's `warnings` key: groups selected while kapa.ai is not configured, or a kapa.ai request failing for
-one question. The run continues on local knowledge in both cases.
+one question. The run continues on local knowledge in both cases. A problem that recurs across
+questions is one entry naming them (`questions Q1, Q3: …`, with ids past the tenth counted as
+`and N more`), so an outage does not produce one entry per question.
 
 ---
 

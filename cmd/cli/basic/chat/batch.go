@@ -190,7 +190,9 @@ const noContextAnswer = "The provided context does not contain enough informatio
 // fires before a question is answered, OnResult after it is answered, and
 // OnError when a question fails and is skipped (i is 0-based; total is the
 // question count). OnWarning reports a problem that degrades the run without
-// failing it, such as kapa.ai grounding being requested but unavailable.
+// failing it, such as kapa.ai grounding being requested but unavailable;
+// question is the id (or 1-based number) of the question it hit, empty for a
+// problem with the whole run.
 //
 // On a judged run, OnAnswered fires once every question has been answered and
 // before judging finishes, carrying the answers without verdicts, so a caller can
@@ -206,7 +208,7 @@ type BatchHooks struct {
 	OnError    func(i, total int, q BatchQuestion, err error)
 	OnAnswered func(out *BatchOutput)
 	OnJudged   func(idx int, j Judgment, done, total int)
-	OnWarning  func(msg string)
+	OnWarning  func(question, msg string)
 }
 
 // kapaUnavailableWarning is reported once per run when the manifest selects
@@ -215,10 +217,60 @@ const kapaUnavailableWarning = "kapa.ai grounding was requested (kapa_source_gro
 	"disabled or not configured: set kapa.project.id and the KAPA_API_KEY environment variable. " +
 	"Answering from local knowledge bases only."
 
-func (h BatchHooks) warning(msg string) {
+func (h BatchHooks) warning(question, msg string) {
 	if h.OnWarning != nil {
-		h.OnWarning(msg)
+		h.OnWarning(question, msg)
 	}
+}
+
+// maxWarningQuestions caps the question ids a grouped warning names; the rest
+// are counted.
+const maxWarningQuestions = 10
+
+// BatchWarnings groups a run's warnings by message, so a problem that hits
+// every question (a kapa.ai outage, say) is one line naming the questions
+// rather than one line per question. Not safe for concurrent use.
+type BatchWarnings struct {
+	order     []string
+	questions map[string][]string
+}
+
+// Add records msg against question (empty for a problem with the whole run).
+func (w *BatchWarnings) Add(question, msg string) {
+	if w.questions == nil {
+		w.questions = map[string][]string{}
+	}
+	qs, seen := w.questions[msg]
+	if !seen {
+		w.order = append(w.order, msg)
+	}
+	if question != "" {
+		qs = append(qs, question)
+	}
+	w.questions[msg] = qs
+}
+
+// Lines returns one line per distinct message, in first-seen order, each
+// prefixed with the questions it hit.
+func (w *BatchWarnings) Lines() []string {
+	lines := make([]string, 0, len(w.order))
+	for _, msg := range w.order {
+		lines = append(lines, warningLine(w.questions[msg], msg))
+	}
+	return lines
+}
+
+func warningLine(questions []string, msg string) string {
+	switch {
+	case len(questions) == 0:
+		return msg
+	case len(questions) == 1:
+		return fmt.Sprintf("question %s: %s", questions[0], msg)
+	case len(questions) <= maxWarningQuestions:
+		return fmt.Sprintf("questions %s: %s", strings.Join(questions, ", "), msg)
+	}
+	return fmt.Sprintf("questions %s and %d more: %s",
+		strings.Join(questions[:maxWarningQuestions], ", "), len(questions)-maxWarningQuestions, msg)
 }
 
 func (h BatchHooks) start(i, total int, q BatchQuestion) {
@@ -363,13 +415,13 @@ func RunBatch(
 	// Pre-flight: groups selected but no client means every question would
 	// silently answer without kapa.ai. Say so once, then run on local knowledge.
 	if len(manifest.KapaSourceGroups) > 0 && kapaClient == nil {
-		hooks.warning(kapaUnavailableWarning)
+		hooks.warning("", kapaUnavailableWarning)
 	}
 
 	// Per-question retrieval problems are reported against the question they hit.
 	var current string
 	session.Warn = func(msg string) {
-		hooks.warning(fmt.Sprintf("question %s: %s", current, msg))
+		hooks.warning(current, msg)
 	}
 
 	defaultSystemPrompt := batchSystemPrompt(manifest, prompts)
@@ -613,7 +665,11 @@ func ProcessBatchChat(
 		OnError: func(i, _ int, _ BatchQuestion, err error) {
 			fmt.Printf("error on question %d: %v\n", i+1, err)
 		},
-		OnWarning: func(msg string) {
+		OnWarning: func(question, msg string) {
+			// Printed as it happens, one line per question, alongside the answers.
+			if question != "" {
+				msg = fmt.Sprintf("question %s: %s", question, msg)
+			}
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
 		},
 		OnAnswered: func(out *BatchOutput) {

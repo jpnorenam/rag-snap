@@ -260,7 +260,7 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 				mu          sync.Mutex
 				done        []chat.BatchResult
 				lastResults time.Time
-				warnings    []string
+				warnings    chat.BatchWarnings
 			)
 			publish := func(extra map[string]any) {
 				extra["results"] = append([]chat.BatchResult(nil), done...)
@@ -278,10 +278,11 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 				},
 				// Problems that degrade the run without failing it (kapa.ai
 				// requested but unavailable, or a kapa.ai request failing) are
-				// published so the client can show them, never swallowed.
-				OnWarning: func(msg string) {
-					warnings = append(warnings, msg)
-					op.UpdateMetadata(map[string]any{"warnings": append([]string(nil), warnings...)})
+				// published so the client can show them, never swallowed. A
+				// problem repeated across questions is one line naming them.
+				OnWarning: func(question, msg string) {
+					warnings.Add(question, msg)
+					op.UpdateMetadata(map[string]any{"warnings": warnings.Lines()})
 				},
 				OnAnswered: func(*chat.BatchOutput) {
 					op.UpdateMetadata(map[string]any{"phase": "judging", "questions_done": total})

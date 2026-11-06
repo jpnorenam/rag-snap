@@ -3,8 +3,10 @@ package chat
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -62,7 +64,7 @@ func TestRunBatchReportsKapaFailureAndContinues(t *testing.T) {
 	kapa := knowledge.NewKapaClientAt(stubKapa(t, "FAILKAPA"), "proj", "key")
 
 	var warnings []string
-	hooks := BatchHooks{OnWarning: func(msg string) { warnings = append(warnings, msg) }}
+	hooks := BatchHooks{OnWarning: recordWarnings(&warnings)}
 	out, err := RunBatch(context.Background(), BackendConfig{API: APIOpenAI, BaseURL: stubInference(t)}, nil, kapa, "", kapaManifest(), PromptConfig{}, 0.1, nil, hooks, false)
 	if err != nil {
 		t.Fatalf("RunBatch: %v", err)
@@ -102,7 +104,7 @@ func TestRunBatchReportsKapaFailureAndContinues(t *testing.T) {
 // selected with no kapa client is reported once, and the batch still answers.
 func TestRunBatchReportsUnconfiguredKapa(t *testing.T) {
 	var warnings []string
-	hooks := BatchHooks{OnWarning: func(msg string) { warnings = append(warnings, msg) }}
+	hooks := BatchHooks{OnWarning: recordWarnings(&warnings)}
 	out, err := RunBatch(context.Background(), BackendConfig{API: APIOpenAI, BaseURL: stubInference(t)}, nil, nil, "", kapaManifest(), PromptConfig{}, 0.1, nil, hooks, false)
 	if err != nil {
 		t.Fatalf("RunBatch: %v", err)
@@ -122,7 +124,7 @@ func TestRunBatchNoWarningWithoutKapaSelection(t *testing.T) {
 	manifest.KapaSourceGroups = nil
 
 	var warnings []string
-	hooks := BatchHooks{OnWarning: func(msg string) { warnings = append(warnings, msg) }}
+	hooks := BatchHooks{OnWarning: recordWarnings(&warnings)}
 	out, err := RunBatch(context.Background(), BackendConfig{API: APIOpenAI, BaseURL: stubInference(t)}, nil, nil, "", manifest, PromptConfig{}, 0.1, nil, hooks, false)
 	if err != nil {
 		t.Fatalf("RunBatch: %v", err)
@@ -135,5 +137,45 @@ func TestRunBatchNoWarningWithoutKapaSelection(t *testing.T) {
 		if r.Retrieved != nil {
 			t.Errorf("%s retrieved = %+v, want none recorded", r.ID, r.Retrieved)
 		}
+	}
+}
+
+// recordWarnings collects warnings as the CLI prints them: prefixed with the
+// question they hit, bare for a problem with the whole run.
+func recordWarnings(into *[]string) func(question, msg string) {
+	return func(question, msg string) {
+		if question != "" {
+			msg = "question " + question + ": " + msg
+		}
+		*into = append(*into, msg)
+	}
+}
+
+// TestBatchWarningsGroupsRepeats keeps a problem that hits many questions to
+// one line naming them, so an outage does not list every question separately.
+func TestBatchWarningsGroupsRepeats(t *testing.T) {
+	var w BatchWarnings
+	w.Add("", kapaUnavailableWarning)
+	w.Add("Q1", "kapa.ai retrieval failed")
+	w.Add("Q2", "local retrieval failed")
+	w.Add("Q3", "kapa.ai retrieval failed")
+
+	want := []string{
+		kapaUnavailableWarning,
+		"questions Q1, Q3: kapa.ai retrieval failed",
+		"question Q2: local retrieval failed",
+	}
+	if got := w.Lines(); !reflect.DeepEqual(got, want) {
+		t.Errorf("Lines() = %q, want %q", got, want)
+	}
+
+	var many BatchWarnings
+	for i := 1; i <= maxWarningQuestions+3; i++ {
+		many.Add(fmt.Sprint(i), "kapa.ai retrieval failed")
+	}
+	got := many.Lines()
+	if len(got) != 1 || !strings.HasPrefix(got[0], "questions 1, 2, 3") ||
+		!strings.Contains(got[0], "10 and 3 more: kapa.ai retrieval failed") {
+		t.Errorf("Lines() = %q, want one line naming 10 questions and counting 3 more", got)
 	}
 }
