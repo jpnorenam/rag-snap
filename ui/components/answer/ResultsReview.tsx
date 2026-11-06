@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import QACard from "@/components/answer/QACard";
+import RunWarnings from "@/components/answer/RunWarnings";
 import ConfirmModal from "@/components/common/ConfirmModal";
 import type { ParsedQAFile } from "@/lib/types";
 import { buildPayload, collaborateInWebUI, type FallbackReason } from "@/lib/handoff";
@@ -10,6 +11,9 @@ interface Props {
   parsed: ParsedQAFile;
   manifestName?: string;
   knowledgeBases?: string[];
+  // warnings are the problems the run hit without failing (see RunWarnings).
+  // Absent for a results file opened from disk, which does not record them.
+  warnings?: string[];
   // resumable is true when these results came from a batch run (an operation
   // that lives in the indicator and can be lost). false for a results file
   // opened from disk — nothing to lose, so Exit just closes without a warning.
@@ -45,6 +49,7 @@ export default function ResultsReview({
   parsed,
   manifestName,
   knowledgeBases,
+  warnings,
   resumable,
   consumed,
   onConsumed,
@@ -150,6 +155,8 @@ export default function ResultsReview({
           </div>
         </div>
       )}
+
+      <RunWarnings warnings={warnings ?? []} />
 
       <div className="answer-review__head">
         <div>

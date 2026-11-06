@@ -1,7 +1,9 @@
 "use client";
 
+import RunWarnings from "@/components/answer/RunWarnings";
 import Spinner from "@/components/common/Spinner";
 import { statusOf, type OperationView } from "@/lib/api/operations";
+import { runWarnings } from "@/lib/runWarnings";
 
 interface Props {
   // The tracked run operation, resolved from the operations context by
@@ -33,6 +35,10 @@ export default function RunningBatch({ op, onCancelRun }: Props) {
           Cancel run
         </button>
       </div>
+
+      {/* Shown as soon as the daemon reports a problem, so a run that has lost
+          kapa.ai grounding says so before it finishes. */}
+      <RunWarnings warnings={runWarnings(op?.metadata)} />
 
       <div className="answer-running" aria-live="polite">
         {total !== null && total > 0 ? (

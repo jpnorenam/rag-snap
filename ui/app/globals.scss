@@ -2061,6 +2061,12 @@ $sidebar-accent: #e95420; // Ubuntu orange
   margin-bottom: 0.5rem;
 }
 
+// Several warnings from one batch run, listed inside a single caution notice.
+.run-warnings__list {
+  margin-bottom: 0;
+  padding-left: 1rem;
+}
+
 // --- rfp analysis -----------------------------------------------------------
 // The analysis path through the build wizard: the path chooser on upload, the
 // triage and interview steps, the generated-manifest review, and the shared check
