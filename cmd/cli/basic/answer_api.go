@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"slices"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
@@ -151,13 +152,17 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 		updateSpinner, stopSpinner = common.StartUpdatableSpinner(label)
 		spinning = true
 	}
-	warned := 0
+	// shown is the warnings printed live. The daemon groups a repeated problem
+	// into one entry that grows as more questions hit it, so only an entry's
+	// first sighting is printed here; the final grouped list follows the run.
+	var shown []string
 	judgeNoticed := false
 	printResults := func(op *apiclient.Operation) {
-		if warnings := batchWarningsFrom(op); warned < len(warnings) {
+		if warnings := batchWarningsFrom(op); len(shown) < len(warnings) {
 			haltSpinner()
-			for ; warned < len(warnings); warned++ {
-				fmt.Fprintf(os.Stderr, "Warning: %s\n", warnings[warned])
+			for _, w := range warnings[len(shown):] {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+				shown = append(shown, w)
 			}
 		}
 		results := batchResultsFrom(op)
@@ -200,6 +205,12 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 	}
 	printResults(op) // flush any results only present in the terminal view
 	haltSpinner()
+	if final := batchWarningsFrom(op); !slices.Equal(final, shown) {
+		fmt.Fprintln(os.Stderr, "Warnings for this run:")
+		for _, w := range final {
+			fmt.Fprintf(os.Stderr, "  %s\n", w)
+		}
+	}
 
 	// The operation metadata carries the structured results on success.
 	out := chat.BatchOutput{
