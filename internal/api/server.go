@@ -90,6 +90,8 @@ type Server struct {
 	// gdriveMu. See handlers_gdrive.go.
 	gdriveMu sync.Mutex
 	gdrive   gdriveFlowState
+	// kapaGroups caches the kapa.ai source-group listing. See handlers_kapa.go.
+	kapaGroups kapaGroupsCache
 }
 
 // Options configure a Server.

@@ -743,7 +743,8 @@ paths:
                 Lists the configured kapa.ai project's source groups, each with its id (the
                 value to send in a manifest's "kapa_source_groups") and display name. The
                 listing follows the upstream pagination to completion and reports each group
-                once. "configured" is false, with an empty "groups" list, when kapa.ai is
+                once. A successful listing is reused for a few minutes, so a group added
+                upstream can take that long to appear (or restart ragd). "configured" is false, with an empty "groups" list, when kapa.ai is
                 disabled or its project id (kapa.project.id / KAPA_PROJECT_ID) or API key
                 (KAPA_API_KEY in the daemon's environment) is missing. A failing upstream
                 request (rejected credentials, unreachable host, unexpected status) returns

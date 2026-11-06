@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/pkg/storage"
@@ -236,5 +239,45 @@ func TestSearchKapaFailureWarns(t *testing.T) {
 	}
 	if len(warnings) != 1 || !strings.Contains(warnings[0], "kapa.ai search failed") {
 		t.Errorf("warnings = %q, want the kapa.ai failure warning", warnings)
+	}
+}
+
+func TestKapaGroupsCache(t *testing.T) {
+	clock := time.Unix(0, 0)
+	c := kapaGroupsCache{now: func() time.Time { return clock }}
+	calls := 0
+	fail := false
+	fetch := func(context.Context) ([]knowledge.SourceGroup, error) {
+		calls++
+		if fail {
+			return nil, errors.New("upstream down")
+		}
+		return []knowledge.SourceGroup{{ID: "g", Name: "G"}}, nil
+	}
+	get := func() error {
+		_, err := c.get(context.Background(), fetch)
+		return err
+	}
+
+	if err := get(); err != nil || calls != 1 {
+		t.Fatalf("first get: err=%v calls=%d, want one upstream call", err, calls)
+	}
+	clock = clock.Add(kapaGroupsTTL - time.Second)
+	if err := get(); err != nil || calls != 1 {
+		t.Fatalf("fresh get: err=%v calls=%d, want the cached listing", err, calls)
+	}
+
+	clock = clock.Add(2 * time.Second)
+	fail = true
+	if err := get(); err == nil || calls != 2 {
+		t.Fatalf("expired get with upstream down: err=%v calls=%d, want a refetch that fails", err, calls)
+	}
+	if err := get(); err == nil || calls != 3 {
+		t.Fatalf("after a failure: err=%v calls=%d, want the failure not cached", err, calls)
+	}
+
+	fail = false
+	if err := get(); err != nil || calls != 4 {
+		t.Fatalf("recovered: err=%v calls=%d", err, calls)
 	}
 }
