@@ -68,6 +68,13 @@ export default function ChatScreen() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // Whether the current assistant turn is still streaming (awaiting `done`).
   const awaitingDone = useRef(false);
+  // The latest chip selections, read when a connection finishes opening: a
+  // change made while connecting is not sent over the socket (there is none
+  // yet), so it is applied once the session is up.
+  const activeBasesRef = useRef<string[]>([]);
+  const kapaGroupsRef = useRef<string[]>([]);
+  activeBasesRef.current = activeBases;
+  kapaGroupsRef.current = kapaGroups;
 
   // Matching slash commands while the user is still typing the command (before a
   // space starts the arguments), for the composer hint list.
@@ -203,16 +210,28 @@ export default function ChatScreen() {
 
     setConnState("connecting");
     setError(null);
+    const startBases = activeBases;
+    const startKapaGroups = kapaGroups;
     // promptChoice is a start-time control: the daemon snapshots the prompt when
     // the session begins, so an empty choice defers to the slot's active prompt.
     const { conn, session } = await openConnection({
-      bases: activeBases,
+      bases: startBases,
       ...(promptChoice ? { prompt: promptChoice } : {}),
-      ...(kapaGroups.length > 0 ? { kapa_source_groups: kapaGroups } : {}),
+      ...(startKapaGroups.length > 0 ? { kapa_source_groups: startKapaGroups } : {}),
     });
     connRef.current = conn;
     setModel(session.model);
-    setKapaGroups(session.kapaGroups);
+    // Chips toggled while connecting were not sent; send them now, before the
+    // first prompt, so that prompt already uses them. The daemon's
+    // acknowledgement then sets the effective selection.
+    if (!sameSelection(activeBasesRef.current, startBases)) {
+      conn.setActiveBases(activeBasesRef.current);
+    }
+    if (!session.kapaUnavailable && !sameSelection(kapaGroupsRef.current, startKapaGroups)) {
+      conn.setActiveKapaGroups(kapaGroupsRef.current);
+    } else {
+      setKapaGroups(session.kapaGroups);
+    }
     if (session.kapaUnavailable) {
       setNotice({
         type: "caution",
@@ -595,4 +614,12 @@ export default function ChatScreen() {
       )}
     </>
   );
+}
+
+// sameSelection reports whether two chip selections hold the same ids,
+// ignoring order.
+function sameSelection(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((id) => set.has(id));
 }
