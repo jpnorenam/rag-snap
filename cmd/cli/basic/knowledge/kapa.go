@@ -7,9 +7,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/jpnorenam/rag-snap/cmd/cli/config"
+	"github.com/jpnorenam/rag-snap/pkg/storage"
 )
 
 const (
@@ -46,6 +50,19 @@ func ResolveKapaClient(enabled bool, projectID, apiKey string) *KapaClient {
 		return nil
 	}
 	return NewKapaClient(projectID, apiKey)
+}
+
+// KapaSettings reads the inputs to ResolveKapaClient: kapa.enabled and
+// kapa.project.id from config, with KAPA_PROJECT_ID overriding the project id.
+// The CLI and the daemon find the API key in different places (the CLI also
+// reads its credentials file), so lookup supplies it by variable name.
+func KapaSettings(cfg storage.Config, lookup func(name string) string) (enabled bool, projectID, apiKey string) {
+	enabledRaw, _ := config.GetString(cfg, ConfKapaEnabled)
+	projectID, _ = config.GetString(cfg, ConfKapaProjectID)
+	if v := os.Getenv(EnvKapaProjectID); v != "" {
+		projectID = v
+	}
+	return KapaEnabled(enabledRaw), projectID, lookup(EnvKapaAPIKey)
 }
 
 // KapaClient queries the kapa.ai retrieval API for semantic search over

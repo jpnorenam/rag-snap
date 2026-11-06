@@ -17,6 +17,7 @@ import (
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
+	"github.com/jpnorenam/rag-snap/internal/testutil"
 	"github.com/jpnorenam/rag-snap/pkg/storage"
 )
 
@@ -645,7 +646,7 @@ func TestAnswerBatchPromptRefValidation(t *testing.T) {
 // without threading it through batchManifestRequest fails here.
 func TestBatchManifestRequestCarriesEveryField(t *testing.T) {
 	var want chat.BatchManifest
-	fillManifestFields(reflect.ValueOf(&want).Elem())
+	testutil.FillFields(reflect.ValueOf(&want).Elem())
 
 	body, err := json.Marshal(yamlNamed(reflect.ValueOf(want)))
 	if err != nil {
@@ -714,24 +715,6 @@ func TestAnswerBatchAcceptsKapaSourceGroups(t *testing.T) {
 	}
 	if len(meta.Warnings) != 1 || !strings.Contains(meta.Warnings[0], "kapa.ai grounding was requested") {
 		t.Errorf("warnings = %q, want the kapa-unavailable warning", meta.Warnings)
-	}
-}
-
-// fillManifestFields sets every string to "x" and every slice to one filled
-// element, recursively, so each field of v is non-zero.
-func fillManifestFields(v reflect.Value) {
-	switch v.Kind() {
-	case reflect.String:
-		v.SetString("x")
-	case reflect.Slice:
-		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
-		fillManifestFields(v.Index(0))
-	case reflect.Struct:
-		for i := 0; i < v.NumField(); i++ {
-			if v.Type().Field(i).IsExported() {
-				fillManifestFields(v.Field(i))
-			}
-		}
 	}
 }
 

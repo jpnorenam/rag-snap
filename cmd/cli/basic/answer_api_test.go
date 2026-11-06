@@ -8,6 +8,7 @@ import (
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"github.com/jpnorenam/rag-snap/internal/apiclient"
+	"github.com/jpnorenam/rag-snap/internal/testutil"
 )
 
 // TestBatchManifestBodyCarriesDomainsAndSource guards the CLI's daemon-backed
@@ -141,7 +142,7 @@ func TestBatchResultsFromDecodesDomain(t *testing.T) {
 // not threaded through batchManifestBody fails here instead of shipping.
 func TestBatchManifestBodyCarriesEveryField(t *testing.T) {
 	var manifest chat.BatchManifest
-	fillFields(reflect.ValueOf(&manifest).Elem())
+	testutil.FillFields(reflect.ValueOf(&manifest).Elem())
 
 	data, err := json.Marshal(batchManifestBody(&manifest, 0.1))
 	if err != nil {
@@ -152,24 +153,6 @@ func TestBatchManifestBodyCarriesEveryField(t *testing.T) {
 		t.Fatalf("decoding posted body: %v", err)
 	}
 	assertCarried(t, "manifest", reflect.TypeOf(manifest), wire)
-}
-
-// fillFields sets every string to "x" and every slice to one filled
-// element, recursively, so each field of v is non-zero.
-func fillFields(v reflect.Value) {
-	switch v.Kind() {
-	case reflect.String:
-		v.SetString("x")
-	case reflect.Slice:
-		v.Set(reflect.MakeSlice(v.Type(), 1, 1))
-		fillFields(v.Index(0))
-	case reflect.Struct:
-		for i := 0; i < v.NumField(); i++ {
-			if v.Type().Field(i).IsExported() {
-				fillFields(v.Field(i))
-			}
-		}
-	}
 }
 
 // assertCarried checks that wire holds a non-empty value for every yaml-tagged

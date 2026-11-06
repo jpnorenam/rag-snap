@@ -131,12 +131,8 @@ func ResolveBackendURLs(ctx *common.Context) (map[string]string, error) {
 // change needs a ragd restart. Returns nil when kapa.ai is disabled or not
 // configured.
 func ResolveKapaClient(ctx *common.Context) *knowledge.KapaClient {
-	enabledRaw, _ := config.GetString(ctx.Config, knowledge.ConfKapaEnabled)
-	projectID, _ := config.GetString(ctx.Config, knowledge.ConfKapaProjectID)
-	if v := os.Getenv(knowledge.EnvKapaProjectID); v != "" {
-		projectID = v
-	}
-	return knowledge.ResolveKapaClient(knowledge.KapaEnabled(enabledRaw), projectID, os.Getenv(knowledge.EnvKapaAPIKey))
+	// The daemon reads the API key from its environment only (a systemd drop-in).
+	return knowledge.ResolveKapaClient(knowledge.KapaSettings(ctx.Config, os.Getenv))
 }
 
 // ResolveSocketConfig builds the socket config from $SNAP_COMMON and the

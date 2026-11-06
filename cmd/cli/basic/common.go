@@ -3,7 +3,6 @@ package basic
 import (
 	"fmt"
 	"net/url"
-	"os"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
@@ -141,15 +140,18 @@ func getConfigBool(ctx *common.Context, key string, fallback bool) bool {
 // credentials file — never from config. The rule itself lives in
 // knowledge.ResolveKapaClient, shared with the daemon.
 func buildKapaClient(ctx *common.Context) *knowledge.KapaClient {
-	enabledRaw, _ := config.GetString(ctx.Config, knowledge.ConfKapaEnabled)
-	projectID, _ := getConfigString(ctx, knowledge.ConfKapaProjectID)
-	if v := os.Getenv(knowledge.EnvKapaProjectID); v != "" {
-		projectID = v
-	}
-	// A malformed credentials file leaves the key unset; commands that need the
-	// file for other secrets report the file problem themselves.
-	apiKey, _, _ := credentials.Lookup(knowledge.EnvKapaAPIKey)
-	return knowledge.ResolveKapaClient(knowledge.KapaEnabled(enabledRaw), projectID, apiKey)
+	return knowledge.ResolveKapaClient(kapaSettings(ctx))
+}
+
+// kapaSettings reads the kapa client inputs. The CLI finds the API key in the
+// environment or, when not exported, its credentials file. A malformed
+// credentials file leaves the key unset; commands that need the file for other
+// secrets report the file problem themselves.
+func kapaSettings(ctx *common.Context) (enabled bool, projectID, apiKey string) {
+	return knowledge.KapaSettings(ctx.Config, func(name string) string {
+		v, _, _ := credentials.Lookup(name)
+		return v
+	})
 }
 
 func serverApiUrls(ctx *common.Context) (map[string]string, error) {
