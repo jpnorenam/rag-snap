@@ -98,6 +98,9 @@ type Status struct {
 	Models    map[string]string `json:"models" yaml:"models"`
 	Services  map[string]string `json:"services" yaml:"services"`
 	Endpoints map[string]string `json:"endpoints" yaml:"endpoints"`
+	// Kapa is the kapa.ai integration as this CLI sees it. The ragd daemon
+	// reads KAPA_API_KEY from its own environment, which may differ.
+	Kapa knowledge.KapaStatus `json:"kapa" yaml:"kapa"`
 }
 
 func (cmd *statusCommand) statusStruct() (*Status, error) {
@@ -144,6 +147,8 @@ func (cmd *statusCommand) statusStruct() (*Status, error) {
 	if rerankModelID != "" {
 		statusStr.Models["reranker"] = fmt.Sprintf("%s (%s)", knowledge.DefaultCrossEncoderName, rerankModelID)
 	}
+
+	statusStr.Kapa = kapaStatus(cmd.Context)
 
 	return &statusStr, nil
 }

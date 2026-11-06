@@ -65,6 +65,39 @@ func KapaSettings(cfg storage.Config, lookup func(name string) string) (enabled 
 	return KapaEnabled(enabledRaw), projectID, lookup(EnvKapaAPIKey)
 }
 
+// KapaStatus is the kapa.ai section of `rag status`. It follows the same rule
+// as ResolveKapaClient: Configured is true exactly when a client can be built.
+type KapaStatus struct {
+	Enabled    bool `json:"enabled" yaml:"enabled"`
+	Configured bool `json:"configured" yaml:"configured"`
+	// Missing names the settings that keep an enabled integration from being
+	// configured (kapa.project.id, KAPA_API_KEY).
+	Missing []string `json:"missing,omitempty" yaml:"missing,omitempty"`
+	// Project is the configured project's name, looked up from kapa.ai.
+	Project string `json:"project,omitempty" yaml:"project,omitempty"`
+	// ProjectError says why the project name could not be looked up. kapa.ai
+	// is still configured; the reason helps spot a wrong project id or a
+	// rejected key.
+	ProjectError string `json:"project_error,omitempty" yaml:"project_error,omitempty"`
+}
+
+// NewKapaStatus reports whether a kapa client can be built from these values
+// and, if not, what is missing. The project name is filled in separately.
+func NewKapaStatus(enabled bool, projectID, apiKey string) KapaStatus {
+	st := KapaStatus{Enabled: enabled}
+	if !enabled {
+		return st
+	}
+	if projectID == "" {
+		st.Missing = append(st.Missing, ConfKapaProjectID)
+	}
+	if apiKey == "" {
+		st.Missing = append(st.Missing, EnvKapaAPIKey)
+	}
+	st.Configured = len(st.Missing) == 0
+	return st
+}
+
 // KapaClient queries the kapa.ai retrieval API for semantic search over
 // ingested Canonical documentation without LLM generation.
 type KapaClient struct {
@@ -118,6 +151,41 @@ type kapaSource struct {
 type kapaSourcesPage struct {
 	Next    *string      `json:"next"`
 	Results []kapaSource `json:"results"`
+}
+
+// kapaProject is the part of the kapa.ai project object the CLI uses.
+type kapaProject struct {
+	ProjectName string `json:"project_name"`
+}
+
+// ProjectName looks up the configured project's display name, so an operator
+// can tell which project the CLI is pointed at.
+func (c *KapaClient) ProjectName(ctx context.Context) (string, error) {
+	url := fmt.Sprintf("%s/org/v1/projects/%s/", c.baseURL, c.projectID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return "", fmt.Errorf("kapa: creating project request: %w", err)
+	}
+	req.Header.Set("X-API-KEY", c.apiKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("kapa: project request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		// The status alone is enough here; the body can be long HTML.
+		return "", fmt.Errorf("kapa: unexpected status %d", resp.StatusCode)
+	}
+	var p kapaProject
+	if err := json.NewDecoder(resp.Body).Decode(&p); err != nil {
+		return "", fmt.Errorf("kapa: decoding project: %w", err)
+	}
+	if p.ProjectName == "" {
+		return "", fmt.Errorf("kapa: project has no name")
+	}
+	return p.ProjectName, nil
 }
 
 // ListSourceGroups paginates through all sources and returns the unique, sorted

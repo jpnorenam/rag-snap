@@ -1,8 +1,10 @@
 package basic
 
 import (
+	"context"
 	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
@@ -141,6 +143,29 @@ func getConfigBool(ctx *common.Context, key string, fallback bool) bool {
 // knowledge.ResolveKapaClient, shared with the daemon.
 func buildKapaClient(ctx *common.Context) *knowledge.KapaClient {
 	return knowledge.ResolveKapaClient(kapaSettings(ctx))
+}
+
+// kapaStatusTimeout bounds the project-name lookup in `rag status`, so a slow
+// or unreachable kapa.ai cannot stall the command.
+const kapaStatusTimeout = 5 * time.Second
+
+// kapaStatus reports for `rag status` whether buildKapaClient would succeed
+// and, if not, what is missing. When it would, it also names the project.
+func kapaStatus(ctx *common.Context) knowledge.KapaStatus {
+	enabled, projectID, apiKey := kapaSettings(ctx)
+	st := knowledge.NewKapaStatus(enabled, projectID, apiKey)
+	client := knowledge.ResolveKapaClient(enabled, projectID, apiKey)
+	if client == nil {
+		return st
+	}
+	lookupCtx, cancel := context.WithTimeout(context.Background(), kapaStatusTimeout)
+	defer cancel()
+	if name, err := client.ProjectName(lookupCtx); err != nil {
+		st.ProjectError = err.Error()
+	} else {
+		st.Project = name
+	}
+	return st
 }
 
 // kapaSettings reads the kapa client inputs. The CLI finds the API key in the
