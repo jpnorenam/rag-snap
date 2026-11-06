@@ -6,6 +6,7 @@ import EmptyState from "@/components/common/EmptyState";
 import { useOperations } from "@/lib/useOperations";
 import { isTerminal, statusOf, type OperationView } from "@/lib/api/operations";
 import { normalizeQAFile, type ResultsParseError } from "@/lib/results";
+import { runWarnings } from "@/lib/runWarnings";
 import type { ParsedQAFile, QAFile } from "@/lib/types";
 import type { BatchManifest } from "@/lib/api/answer";
 import ManifestRunner from "@/components/answer/ManifestRunner";
@@ -27,6 +28,8 @@ interface ReviewContext {
   parsed: ParsedQAFile;
   manifestName?: string;
   knowledgeBases?: string[];
+  // The run's warnings (kapa.ai unavailable, and similar), if any.
+  warnings?: string[];
   operationId?: string;
 }
 
@@ -105,6 +108,7 @@ export default function AnswerScreen() {
           // Prefer the originating manifest's KBs; fall back to the operation's
           // resources so a resumed run still shows its KB chips.
           knowledgeBases: runManifest?.knowledge_bases ?? kbsFromResources(runOp.resources),
+          warnings: runWarnings(runOp.metadata),
           operationId: runOp.id,
         });
         setStep("review");
@@ -243,6 +247,7 @@ export default function AnswerScreen() {
             parsed={review.parsed}
             manifestName={review.manifestName}
             knowledgeBases={review.knowledgeBases}
+            warnings={review.warnings}
             resumable={review.operationId !== undefined}
             consumed={review.operationId ? ops.isConsumed(review.operationId) : false}
             onConsumed={consumeReview}

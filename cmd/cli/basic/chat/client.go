@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"syscall"
@@ -130,6 +131,9 @@ func Client(backend BackendConfig, knowledgeClient *knowledge.OpenSearchClient, 
 		KapaClient:       kapaClient,
 		EmbeddingModelID: embeddingModelID,
 		ActiveIndexes:    []string{knowledge.DefaultIndexName()},
+		Warn: func(msg string) {
+			fmt.Fprintf(os.Stderr, "Warning: %s\n", msg)
+		},
 	}
 
 	// Saved-chat history is stored client-locally in daemonless mode. chatID pins
@@ -308,7 +312,7 @@ func handlePrompt(backend Backend, conv *conversation, prompt string, session *S
 	if hasContext {
 		lexicalQuery = rewriteSearchQuery(backend, conv.model, conv.history, prompt, verbose)
 		// Retrieve RAG context from knowledge base (no-op when unavailable).
-		ragContext = retrieveContext(session, prompt, lexicalQuery, verbose)
+		ragContext, _ = retrieveContext(session, prompt, lexicalQuery, verbose)
 	}
 
 	// Build the message sent to the LLM: augmented when context is found.

@@ -2,7 +2,7 @@
 // socket, owning the long-lived backend clients and (in later phases) the async
 // operations registry and chat sessions. Configuration is read from the
 // snapctl-backed store at startup and re-read on SIGHUP; secrets come from the
-// environment (OPENSEARCH_USERNAME/PASSWORD, CHAT_API_KEY).
+// environment (OPENSEARCH_USERNAME/PASSWORD, CHAT_API_KEY, KAPA_API_KEY).
 package main
 
 import (
@@ -65,6 +65,7 @@ func serveOnce(ctx context.Context, hup <-chan os.Signal, appCtx *common.Context
 		Socket:      socket,
 		Loopback:    loopback,
 		BackendURLs: backendURLs,
+		Kapa:        api.ResolveKapaClient(appCtx),
 	})
 
 	// runCtx is cancelled either by shutdown (parent ctx) or by a reload (SIGHUP).

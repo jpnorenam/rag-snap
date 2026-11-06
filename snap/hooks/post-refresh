@@ -7,38 +7,26 @@ exec 1> >(tee >(logger --tag=$tag))
 # Redirect stderr to stderr+syslog
 exec 2> >(logger --stderr --priority error --tag=$tag)
 
-# Register config keys introduced after a machine's original install.
+# Register package-layer config keys added since this installation's revision, so
+# a refreshed installation can configure them (a user-layer set rejects keys the
+# package layer lacks). Values that are already set are left alone.
+. "$SNAP/bin/package-config.sh"
+
+# kapa.api.key is no longer a config key: the API key comes from KAPA_API_KEY in
+# the environment only. Remove any stored value from both layers so a credential
+# does not linger in snapd state. Unsetting a key that is not there is not an
+# error worth failing the refresh over.
 #
-# A `user` set is rejected for a key that has no `package` layer, so a key added in
-# a later revision is unsettable on an already-installed snap unless it is seeded
-# here as well as in the install hook.
-#
-# seed() only writes a key that is currently absent or empty, so re-running a
-# refresh never clobbers a value a maintainer set with `set --package`.
-seed() {
-	if [ -z "$(snapctl get "config.package.$1" 2>/dev/null || true)" ]; then
-		snapctl set "config.package.$1=$2"
+# A stored value means kapa.ai worked before this refresh and stops working after
+# it, so say so in the hook log (never the value itself); `rag status` then lists
+# KAPA_API_KEY as missing until it is exported.
+for layer in package user; do
+	if [ -n "$(snapctl get "config.$layer.kapa.api.key" 2>/dev/null || true)" ]; then
+		echo "kapa.api.key is no longer read and was removed from the $layer config layer;" \
+			"export it as KAPA_API_KEY (ragd: systemd drop-in, CLI: shell or credentials.json)" >&2
 	fi
-}
-
-# Chat backend wire protocol. Keep in sync with the install hook, which documents it.
-seed chat.api "openai"
-
-# RFP analysis. Keep in sync with the install hook, which documents each key.
-seed analysis.enabled "false"
-seed analysis.model ""
-# seed() never overwrites, so an install that already holds "low" keeps it; the new
-# default is documented rather than forced.
-seed analysis.reasoning.questions "medium"
-seed analysis.reasoning.strategy "high"
-seed analysis.answer.words "100"
-seed analysis.answer.limit "soft"
-
-# Answer judge. Keep in sync with the install hook, which documents each key.
-seed judge.enabled "true"
-seed judge.model ""
-seed judge.reasoning "medium"
-seed judge.concurrency "4"
+	snapctl unset "config.$layer.kapa.api.key" || true
+done
 
 # Retired keys. analysis.http.* addressed a configurable (gateway) endpoint; analysis
 # now calls the Gemini API only, so the keys are gone. An install that seeded them

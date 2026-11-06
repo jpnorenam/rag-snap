@@ -1,14 +1,16 @@
 package basic
 
 import (
+	"context"
 	"fmt"
 	"net/url"
-	"os"
+	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
+	"github.com/jpnorenam/rag-snap/pkg/credentials"
 	"github.com/jpnorenam/rag-snap/pkg/storage"
 	"github.com/spf13/cobra"
 )
@@ -134,26 +136,48 @@ func getConfigBool(ctx *common.Context, key string, fallback bool) bool {
 	return val == "true" || val == "1"
 }
 
-// buildKapaClient reads kapa configuration and environment variables and
-// returns a ready-to-use KapaClient. Returns nil when Kapa is disabled or
-// credentials are not configured.
+// buildKapaClient reads kapa configuration (kapa.enabled, kapa.project.id) and
+// environment variables (KAPA_API_KEY, KAPA_PROJECT_ID) and returns a
+// ready-to-use KapaClient, or nil when Kapa is disabled or not configured. The
+// API key comes from the environment or, when not exported, the CLI's
+// credentials file — never from config. The rule itself lives in
+// knowledge.ResolveKapaClient, shared with the daemon.
 func buildKapaClient(ctx *common.Context) *knowledge.KapaClient {
-	enabled := getConfigBool(ctx, knowledge.ConfKapaEnabled, true)
-	if !enabled {
-		return nil
+	return knowledge.ResolveKapaClient(kapaSettings(ctx))
+}
+
+// kapaStatusTimeout bounds the project-name lookup in `rag status`, so a slow
+// or unreachable kapa.ai cannot stall the command.
+const kapaStatusTimeout = 5 * time.Second
+
+// kapaStatus reports for `rag status` whether buildKapaClient would succeed
+// and, if not, what is missing. When it would, it also names the project.
+func kapaStatus(ctx *common.Context) knowledge.KapaStatus {
+	enabled, projectID, apiKey := kapaSettings(ctx)
+	st := knowledge.NewKapaStatus(enabled, projectID, apiKey)
+	client := knowledge.ResolveKapaClient(enabled, projectID, apiKey)
+	if client == nil {
+		return st
 	}
-	apiKey, _ := getConfigString(ctx, knowledge.ConfKapaAPIKey)
-	if v := os.Getenv("KAPA_API_KEY"); v != "" {
-		apiKey = v
+	lookupCtx, cancel := context.WithTimeout(context.Background(), kapaStatusTimeout)
+	defer cancel()
+	if name, err := client.ProjectName(lookupCtx); err != nil {
+		st.ProjectError = err.Error()
+	} else {
+		st.Project = name
 	}
-	projectID, _ := getConfigString(ctx, knowledge.ConfKapaProjectID)
-	if v := os.Getenv("KAPA_PROJECT_ID"); v != "" {
-		projectID = v
-	}
-	if apiKey != "" && projectID != "" {
-		return knowledge.NewKapaClient(projectID, apiKey)
-	}
-	return nil
+	return st
+}
+
+// kapaSettings reads the kapa client inputs. The CLI finds the API key in the
+// environment or, when not exported, its credentials file. A malformed
+// credentials file leaves the key unset; commands that need the file for other
+// secrets report the file problem themselves.
+func kapaSettings(ctx *common.Context) (enabled bool, projectID, apiKey string) {
+	return knowledge.KapaSettings(ctx.Config, func(name string) string {
+		v, _, _ := credentials.Lookup(name)
+		return v
+	})
 }
 
 // chatBackend resolves the inference backend: the wire protocol selected by

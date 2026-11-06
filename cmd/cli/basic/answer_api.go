@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"slices"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
@@ -14,13 +16,14 @@ import (
 // batchManifestJSON mirrors the daemon's POST /1.0/answer/batch body. The CLI's
 // chat.BatchManifest is YAML-tagged, so we re-shape it for the JSON API.
 type batchManifestJSON struct {
-	Version        string            `json:"version,omitempty"`
-	Model          string            `json:"model,omitempty"`
-	KnowledgeBases []string          `json:"knowledge_bases,omitempty"`
-	Prompt         string            `json:"prompt,omitempty"`
-	PromptRef      string            `json:"prompt_ref,omitempty"`
-	Domains        []batchDomainJSON `json:"domains,omitempty"`
-	Temperature    *float64          `json:"temperature,omitempty"`
+	Version          string            `json:"version,omitempty"`
+	Model            string            `json:"model,omitempty"`
+	KnowledgeBases   []string          `json:"knowledge_bases,omitempty"`
+	KapaSourceGroups []string          `json:"kapa_source_groups,omitempty"`
+	Prompt           string            `json:"prompt,omitempty"`
+	PromptRef        string            `json:"prompt_ref,omitempty"`
+	Domains          []batchDomainJSON `json:"domains,omitempty"`
+	Temperature      *float64          `json:"temperature,omitempty"`
 	// Judge is false to skip judging; absent leaves it to the daemon's configuration.
 	Judge     *bool               `json:"judge,omitempty"`
 	Questions []batchQuestionJSON `json:"questions"`
@@ -68,15 +71,16 @@ func batchManifestBody(manifest *chat.BatchManifest, temperature float64, noJudg
 		judge = new(bool)
 	}
 	return batchManifestJSON{
-		Judge:          judge,
-		Version:        manifest.Version,
-		Model:          manifest.Model,
-		KnowledgeBases: manifest.KnowledgeBases,
-		Prompt:         manifest.Prompt,
-		PromptRef:      manifest.PromptRef,
-		Domains:        domains,
-		Temperature:    &temperature,
-		Questions:      questions,
+		Judge:            judge,
+		Version:          manifest.Version,
+		Model:            manifest.Model,
+		KnowledgeBases:   manifest.KnowledgeBases,
+		KapaSourceGroups: manifest.KapaSourceGroups,
+		Prompt:           manifest.Prompt,
+		PromptRef:        manifest.PromptRef,
+		Domains:          domains,
+		Temperature:      &temperature,
+		Questions:        questions,
 	}
 }
 
@@ -96,6 +100,19 @@ func batchResultsFrom(op *apiclient.Operation) []chat.BatchResult {
 		return nil
 	}
 	return results
+}
+
+// batchWarningsFrom decodes the warnings the daemon publishes in the operation
+// metadata (for example kapa.ai requested but not configured).
+func batchWarningsFrom(op *apiclient.Operation) []string {
+	raw, _ := op.Metadata["warnings"].([]any)
+	warnings := make([]string, 0, len(raw))
+	for _, w := range raw {
+		if s, ok := w.(string); ok {
+			warnings = append(warnings, s)
+		}
+	}
+	return warnings
 }
 
 // runBatchRemote posts a prepared manifest to the daemon, waits for the async
@@ -135,8 +152,19 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 		updateSpinner, stopSpinner = common.StartUpdatableSpinner(label)
 		spinning = true
 	}
+	// shown is the warnings printed live. The daemon groups a repeated problem
+	// into one entry that grows as more questions hit it, so only an entry's
+	// first sighting is printed here; the final grouped list follows the run.
+	var shown []string
 	judgeNoticed := false
 	printResults := func(op *apiclient.Operation) {
+		if warnings := batchWarningsFrom(op); len(shown) < len(warnings) {
+			haltSpinner()
+			for _, w := range warnings[len(shown):] {
+				fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
+				shown = append(shown, w)
+			}
+		}
 		results := batchResultsFrom(op)
 		if printed < len(results) {
 			// Stop the spinner before writing so its redraw does not garble the
@@ -177,6 +205,12 @@ func (cmd *answerCommand) runBatchRemote(dc *apiclient.Client, manifest *chat.Ba
 	}
 	printResults(op) // flush any results only present in the terminal view
 	haltSpinner()
+	if final := batchWarningsFrom(op); !slices.Equal(final, shown) {
+		fmt.Fprintln(os.Stderr, "Warnings for this run:")
+		for _, w := range final {
+			fmt.Fprintf(os.Stderr, "  %s\n", w)
+		}
+	}
 
 	// The operation metadata carries the structured results on success.
 	out := chat.BatchOutput{

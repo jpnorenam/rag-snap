@@ -9,6 +9,7 @@ import (
 
 	"github.com/canonical/go-snapctl/env"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
 )
@@ -129,6 +130,17 @@ func ResolveBackendURLs(ctx *common.Context) (map[string]string, error) {
 		backendOpenSearch: buildURL(osHost, osPort, "", getBool(ctx, confOpenSearchHTTPTLS, true)),
 		backendTika:       buildURL(tikaHost, tikaPort, tikaPath, getBool(ctx, confTikaHTTPTLS, false)),
 	}, nil
+}
+
+// ResolveKapaClient builds the daemon's kapa.ai client from kapa.enabled and
+// kapa.project.id config plus the KAPA_API_KEY/KAPA_PROJECT_ID environment, using
+// the same rule as the CLI (knowledge.ResolveKapaClient). It is resolved once at
+// server construction like the other backends, so a config or systemd drop-in
+// change needs a ragd restart. Returns nil when kapa.ai is disabled or not
+// configured.
+func ResolveKapaClient(ctx *common.Context) *knowledge.KapaClient {
+	// The daemon reads the API key from its environment only (a systemd drop-in).
+	return knowledge.ResolveKapaClient(knowledge.KapaSettings(ctx.Config, os.Getenv))
 }
 
 // ResolveSocketConfig builds the socket config from $SNAP_COMMON and the

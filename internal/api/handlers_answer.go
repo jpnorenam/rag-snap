@@ -30,7 +30,10 @@ type batchManifestRequest struct {
 	Version        string   `json:"version,omitempty"`
 	Model          string   `json:"model,omitempty"`
 	KnowledgeBases []string `json:"knowledge_bases,omitempty"`
-	Prompt         string   `json:"prompt,omitempty"`
+	// KapaSourceGroups selects the kapa.ai source groups to retrieve from, by id.
+	// Absent or empty means no kapa.ai retrieval.
+	KapaSourceGroups []string `json:"kapa_source_groups,omitempty"`
+	Prompt           string   `json:"prompt,omitempty"`
 	// PromptRef names a stored answer_system_prompt variant to run this batch on.
 	// It is mutually exclusive with the inline Prompt.
 	PromptRef string `json:"prompt_ref,omitempty"`
@@ -90,13 +93,16 @@ func (req batchManifestRequest) toManifest() *chat.BatchManifest {
 			Keywords: chat.KeywordList(q.Keywords),
 		}
 	}
+	// PromptRef is deliberately not copied: the handler resolves it against the
+	// prompt store before the run, and a run manifest carrying it is an error.
 	return &chat.BatchManifest{
-		Version:        req.Version,
-		Model:          req.Model,
-		KnowledgeBases: req.KnowledgeBases,
-		Prompt:         req.Prompt,
-		Domains:        req.domains(),
-		Questions:      questions,
+		Version:          req.Version,
+		Model:            req.Model,
+		KnowledgeBases:   req.KnowledgeBases,
+		KapaSourceGroups: req.KapaSourceGroups,
+		Prompt:           req.Prompt,
+		Domains:          req.domains(),
+		Questions:        questions,
 	}
 }
 
@@ -110,7 +116,12 @@ func (req batchManifestRequest) toManifest() *chat.BatchManifest {
 // retrieval on completion. Each result under the operation metadata's "results"
 // key carries the question's "id", "question", "answer", and — when the
 // manifest's "domains" block routed it — the "domain" pattern that matched, so
-// the routing is auditable per answer.
+// the routing is auditable per answer, and "retrieved" ({"local": n, "kapa": m})
+// when retrieval ran, recording how many local and kapa.ai hits grounded it.
+// Problems that degrade the run without failing it are listed under the
+// metadata's "warnings" key — for example a manifest selecting
+// "kapa_source_groups" while kapa.ai is not configured, or a kapa.ai request
+// failing for one question; the run continues on local knowledge in both cases.
 //
 // Unless the request sets "judge" to false, the answers are judged by Gemini as they
 // are produced. A judged result carries a "judgment" (confidence, rating, issues,
@@ -249,6 +260,7 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 				mu          sync.Mutex
 				done        []chat.BatchResult
 				lastResults time.Time
+				warnings    chat.BatchWarnings
 			)
 			publish := func(extra map[string]any) {
 				extra["results"] = append([]chat.BatchResult(nil), done...)
@@ -263,6 +275,14 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 				},
 				OnError: func(i, total int, _ chat.BatchQuestion, _ error) {
 					op.UpdateMetadata(map[string]any{"questions_total": total, "questions_done": i + 1})
+				},
+				// Problems that degrade the run without failing it (kapa.ai
+				// requested but unavailable, or a kapa.ai request failing) are
+				// published so the client can show them, never swallowed. A
+				// problem repeated across questions is one line naming them.
+				OnWarning: func(question, msg string) {
+					warnings.Add(question, msg)
+					op.UpdateMetadata(map[string]any{"warnings": warnings.Lines()})
 				},
 				OnAnswered: func(*chat.BatchOutput) {
 					op.UpdateMetadata(map[string]any{"phase": "judging", "questions_done": total})
@@ -285,9 +305,7 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 					publish(progress)
 				},
 			}
-			// kapa.ai retrieval is not yet wired into the daemon backend/client
-			// config, so batch answers served over the REST API run without it.
-			out, err := chat.RunBatch(ctx, s.clients.chatBackend(), knowledgeClient, nil, embeddingModelID, manifest, prompts, temperature, judge, hooks, s.ctx.Verbose)
+			out, err := chat.RunBatch(ctx, s.clients.chatBackend(), knowledgeClient, s.kapa, embeddingModelID, manifest, prompts, temperature, judge, hooks, s.ctx.Verbose)
 			if err != nil {
 				return err
 			}

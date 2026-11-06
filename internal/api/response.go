@@ -58,6 +58,10 @@ type syncResponse struct {
 	Status     string `json:"status"`
 	StatusCode int    `json:"status_code"`
 	Metadata   any    `json:"metadata"`
+	// Warnings lists problems that degraded the response without failing it
+	// (for example a search whose kapa.ai scope could not be applied). Omitted
+	// when empty, so existing responses are unchanged.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // asyncResponse references a background operation. The operation object is
@@ -84,6 +88,18 @@ func respondSync(w http.ResponseWriter, metadata any) {
 		Status:     statusText(statusCodeSuccess),
 		StatusCode: statusCodeSuccess,
 		Metadata:   metadata,
+	})
+}
+
+// respondSyncWarnings writes a 200 sync response wrapping metadata, with any
+// warnings listed alongside it.
+func respondSyncWarnings(w http.ResponseWriter, metadata any, warnings []string) {
+	writeJSON(w, http.StatusOK, syncResponse{
+		Type:       responseTypeSync,
+		Status:     statusText(statusCodeSuccess),
+		StatusCode: statusCodeSuccess,
+		Metadata:   metadata,
+		Warnings:   warnings,
 	})
 }
 

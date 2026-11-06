@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
@@ -45,70 +44,83 @@ func formatContext(hits []knowledge.SearchHit) string {
 // query. Local OpenSearch indexes and kapa.ai are queried in parallel when both
 // are available. Local hits appear first (more specific); kapa hits follow.
 // Returns an empty string when no sources are configured or retrieval yields nothing.
-func retrieveContext(session *Session, query, lexicalQuery string, verbose bool) string {
+// The counts record how many hits each source contributed; they are nil when no
+// source was active, so no retrieval was attempted.
+func retrieveContext(session *Session, query, lexicalQuery string, verbose bool) (string, *RetrievalCounts) {
 	hasLocal := session.KnowledgeClient != nil && len(session.ActiveIndexes) > 0 && session.EmbeddingModelID != ""
 	hasKapa := session.KapaClient != nil && len(session.ActiveKapaGroups) > 0
 
 	if !hasLocal && !hasKapa {
-		return ""
+		return "", nil
 	}
 
 	var (
-		localHits []knowledge.SearchHit
-		kapaHits  []knowledge.SearchHit
-		localErr  error
-		kapaErr   error
-		wg        sync.WaitGroup
+		localClient *knowledge.OpenSearchClient
+		indexes     []string
+		kapaClient  *knowledge.KapaClient
 	)
-
 	if hasLocal {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			localHits, localErr = session.KnowledgeClient.Search(
-				context.Background(),
-				session.ActiveIndexes,
-				query,
-				lexicalQuery,
-				session.EmbeddingModelID,
-				defaultRAGTopK,
-			)
-		}()
+		localClient, indexes = session.KnowledgeClient, session.ActiveIndexes
 	}
-
 	if hasKapa {
+		kapaClient = session.KapaClient
 		if verbose {
 			fmt.Printf("Kapa search: groups=%v\n", session.ActiveKapaGroups)
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			kapaHits, kapaErr = session.KapaClient.Search(context.Background(), query, defaultRAGTopK, session.ActiveKapaGroups)
-		}()
 	}
 
-	wg.Wait()
+	res := knowledge.RetrieveWithKapa(context.Background(), localClient, indexes, query, lexicalQuery,
+		session.EmbeddingModelID, defaultRAGTopK, kapaClient, session.ActiveKapaGroups)
 
-	if localErr != nil && verbose {
-		fmt.Printf("Knowledge search failed: %v\n", localErr)
+	// A retrieval failure never fails the turn: the answer goes ahead on
+	// whatever context is left, and the user is told what it is missing.
+	if msg := retrievalWarning(res); msg != "" {
+		if session.Warn != nil {
+			session.Warn(msg)
+		} else if verbose {
+			fmt.Printf("Warning: %s\n", msg)
+		}
 	}
-	if kapaErr != nil && verbose {
-		fmt.Printf("Kapa search failed: %v\n", kapaErr)
-	}
 
-	allHits := make([]knowledge.SearchHit, 0, len(localHits)+len(kapaHits))
-	allHits = append(allHits, localHits...)
-	allHits = append(allHits, kapaHits...)
-
-	if len(allHits) == 0 {
-		return ""
+	counts := &RetrievalCounts{Local: res.Local, Kapa: res.Kapa}
+	if len(res.Hits) == 0 {
+		return "", counts
 	}
 
 	if verbose {
-		fmt.Printf("Retrieved %d local + %d kapa results\n", len(localHits), len(kapaHits))
+		fmt.Printf("Retrieved %d local + %d kapa results\n", res.Local, res.Kapa)
 	}
 
-	return formatContext(allHits)
+	return formatContext(res.Hits), counts
+}
+
+// retrievalWarning describes what an answer is missing after a retrieval
+// failure, or returns "" when every queried source succeeded. The wording
+// depends on which sources ran, so it never claims a fallback that does not
+// exist.
+func retrievalWarning(res knowledge.CombinedSearch) string {
+	const noContext = "so this answer has no retrieved context"
+	switch {
+	case res.KapaErr != nil && res.LocalErr != nil:
+		return fmt.Sprintf("kapa.ai retrieval failed (%v), and local retrieval also failed (%v), %s",
+			res.KapaErr, res.LocalErr, noContext)
+	case res.KapaErr != nil && !res.LocalQueried:
+		return fmt.Sprintf("kapa.ai retrieval failed and no local knowledge bases are active, %s: %v", noContext, res.KapaErr)
+	case res.KapaErr != nil:
+		return fmt.Sprintf("kapa.ai retrieval failed, answering from local knowledge only: %v", res.KapaErr)
+	case res.LocalErr != nil && res.KapaQueried:
+		return fmt.Sprintf("local knowledge retrieval failed, answering from kapa.ai only: %v", res.LocalErr)
+	case res.LocalErr != nil:
+		return fmt.Sprintf("local knowledge retrieval failed, %s: %v", noContext, res.LocalErr)
+	}
+	return ""
+}
+
+// RetrievalCounts records how many hits each source contributed to an answer's
+// context: the audit trail for whether kapa.ai grounding took part.
+type RetrievalCounts struct {
+	Local int `json:"local"`
+	Kapa  int `json:"kapa"`
 }
 
 // rewriteSearchQuery uses the inference server to extract search keywords

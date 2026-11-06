@@ -22,6 +22,7 @@ var supported = map[string]bool{
 	"OPENSEARCH_USERNAME": true,
 	"OPENSEARCH_PASSWORD": true,
 	"CHAT_API_KEY":        true,
+	"KAPA_API_KEY":        true,
 }
 
 var (
@@ -108,7 +109,7 @@ func readFile(p string) (map[string]string, error) {
 	out := make(map[string]string, len(raw))
 	for k, v := range raw {
 		if !supported[k] {
-			return nil, fmt.Errorf("credentials file %s contains unsupported key %q (allowed: OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD, CHAT_API_KEY)", p, k)
+			return nil, fmt.Errorf("credentials file %s contains unsupported key %q (allowed: OPENSEARCH_USERNAME, OPENSEARCH_PASSWORD, CHAT_API_KEY, KAPA_API_KEY)", p, k)
 		}
 		// json.Unmarshal accepts null for a string, so require a JSON string literal.
 		var s string

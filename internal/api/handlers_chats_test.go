@@ -17,8 +17,10 @@ import (
 // chatStartMeta is the connect + resume metadata carried in the async envelope's
 // nested operation metadata.
 type chatStartMeta struct {
-	Model     string `json:"model"`
-	Websocket struct {
+	Model           string   `json:"model"`
+	KapaGroups      []string `json:"kapa_groups"`
+	KapaUnavailable bool     `json:"kapa_unavailable"`
+	Websocket       struct {
 		URL    string `json:"url"`
 		Secret string `json:"secret"`
 	} `json:"websocket"`
@@ -28,6 +30,10 @@ type chatStartMeta struct {
 		Turns        []chatstore.Turn `json:"turns"`
 		Bases        []string         `json:"bases"`
 		DroppedBases []string         `json:"dropped_bases"`
+		// kapa.ai selection restored from the saved chat, and whether it could
+		// not be applied because kapa.ai is not configured.
+		KapaGroups      []string `json:"kapa_groups"`
+		KapaUnavailable bool     `json:"kapa_unavailable"`
 	} `json:"chat"`
 }
 

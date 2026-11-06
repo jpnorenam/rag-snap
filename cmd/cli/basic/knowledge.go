@@ -3,6 +3,7 @@ package basic
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -603,6 +604,7 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 	var (
 		bases       []string
 		k           int
+		kapaGroups  []string
 		showSimilar bool
 	)
 
@@ -613,7 +615,9 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 			"If no bases are specified with --bases, the default base is searched.\n" +
 			"Results from all bases are merged and sorted by relevance score; --top caps the total.\n" +
 			"Only results that match the query (relevance score above 0) are shown. The rest are\n" +
-			"similar results, summarized but hidden unless " + knowledge.ShowSimilarFlag + " is given.",
+			"similar results, summarized but hidden unless " + knowledge.ShowSimilarFlag + " is given.\n" +
+			"With --kapa-groups, the given kapa.ai source groups are searched too; their results follow\n" +
+			"the local ones and always count as matches. List the group ids with /use-kapa in `chat`.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			query := args[0]
@@ -624,9 +628,12 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 					defaultBase, _ := knowledge.KnowledgeBaseNameFromIndex(knowledge.DefaultIndexName())
 					searchBases = []string{defaultBase}
 				}
-				hits, err := dc.Search(context.Background(), query, searchBases, k)
+				hits, warnings, err := dc.Search(context.Background(), query, searchBases, k, kapaGroups)
 				if err != nil {
 					return err
+				}
+				for _, w := range warnings {
+					fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 				}
 				views := make([]searchHitView, len(hits))
 				for i, h := range hits {
@@ -661,10 +668,24 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 				fullIndexNames = []string{knowledge.DefaultIndexName()}
 			}
 
-			results, err := client.SearchTop(context.Background(), fullIndexNames, query, query, modelID, k)
-			if err != nil {
+			var kapaClient *knowledge.KapaClient
+			if len(kapaGroups) > 0 {
+				if kapaClient = buildKapaClient(cmd.Context); kapaClient == nil {
+					fmt.Fprintln(os.Stderr, "Warning: kapa.ai is not configured (set kapa.project.id and export KAPA_API_KEY); showing local results only")
+				}
+			}
+			res := knowledge.SearchWithKapa(context.Background(), client, fullIndexNames,
+				query, query, modelID, k, kapaClient, kapaGroups)
+			if err := res.Err(); err != nil {
 				return fmt.Errorf("searching: %w", err)
 			}
+			if res.LocalErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: local knowledge search failed, showing kapa.ai results only: %v\n", res.LocalErr)
+			}
+			if res.KapaErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: kapa.ai search failed, showing local results only: %v\n", res.KapaErr)
+			}
+			results := res.Hits
 
 			views := make([]searchHitView, len(results))
 			for i, h := range results {
@@ -680,7 +701,8 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 	}
 
 	cobraCmd.Flags().StringSliceVarP(&bases, "bases", "b", nil, "Knowledge base name(s) to search (comma-separated string list, defaults to 'default')")
-	cobraCmd.Flags().IntVarP(&k, "top", "k", 10, "Maximum number of results, in total across all bases")
+	cobraCmd.Flags().IntVarP(&k, "top", "k", 10, "Maximum number of results, in total across all bases (kapa.ai adds up to as many again)")
+	cobraCmd.Flags().StringSliceVar(&kapaGroups, "kapa-groups", nil, "kapa.ai source group id(s) to search as well (comma-separated)")
 	cobraCmd.Flags().BoolVar(&showSimilar, strings.TrimPrefix(knowledge.ShowSimilarFlag, "--"), false, "Also show similar results that don't match the query")
 
 	return cobraCmd

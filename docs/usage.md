@@ -575,14 +575,22 @@ Found 118 files in openstack/nova
 Run a hybrid semantic + lexical search across one or more knowledge bases.
 
 ```
-rag-cli.rag knowledge search <query> [--bases <name,...>] [--top <k>] [--show-similar]
+rag-cli.rag knowledge search <query> [--bases <name,...>] [--top <k>] [--kapa-groups <id,...>] [--show-similar]
 ```
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--bases` | `-b` | `default` | Comma-separated list of knowledge base names to search |
-| `--top` | `-k` | `10` | Maximum number of results, in total across all searched bases |
+| `--top` | `-k` | `10` | Maximum number of results, in total across all searched bases. kapa.ai adds up to as many again |
+| `--kapa-groups` | | | Comma-separated kapa.ai source group **ids** to search as well (see [`/use-kapa`](#use-kapa)) |
 | `--show-similar` | | off | Also show the similar results that don't match the query |
+
+With `--kapa-groups`, kapa.ai results (index `kapa-canonical`, tag `[KAPA-CANONICAL]`) are listed
+after the local ones. They always count as matches: kapa.ai has already picked them as relevant,
+so they are never hidden as similar results. kapa.ai is searched only for the groups you name; if
+it is not configured or its request fails, a `Warning:` line says so and the local results are
+still shown. The same works the other way: if the local search fails but kapa.ai answers, the
+kapa.ai results are shown with a warning. The command fails only when no source returned results.
 
 Search always finds the chunks *nearest* to your query, even for a term that appears nowhere in
 your bases, so each result is checked against the reranker: a result **matches** when its
@@ -1070,13 +1078,43 @@ the session. Changes take effect on the very next prompt.
 
 Use Space to toggle, Enter to confirm, Esc/Ctrl-C to keep the current selection unchanged.
 
+#### `/use-kapa`
+
+Opens the same kind of menu for **kapa.ai source groups**: kapa.ai is a remote documentation
+search used alongside your local knowledge bases. Selected groups are queried on every following
+prompt, in parallel with the active knowledge bases; local results come first in the context.
+A session starts with no groups selected, and the selection is independent of `/use-knowledge`.
+
+```
+» /use-kapa
+
+  Select active Kapa source groups
+  > [x] MAAS
+    [x] Landscape
+    [ ] OpenStack
+```
+
+kapa.ai needs a project id in config and an API key in the environment (never in config):
+
+```bash
+sudo rag-cli.rag set kapa.project.id=<project-id>
+export KAPA_API_KEY=<key>      # or put it in ~/snap/rag-cli/common/credentials.json
+```
+
+When `ragd` is running, `/use-kapa` applies to the daemon's session, so the daemon needs the key
+too: see [Secrets](../INSTALL.md#secrets). If kapa.ai is not configured, `/use-kapa` says so. If
+a kapa.ai request fails during a chat, a `Warning:` line explains it and the answer uses your local
+knowledge bases only. The warning names what the answer is actually missing: if no local bases are
+active, or the local search failed too, it says the answer has no retrieved context.
+
 #### `/search`
 
-Retrieves matching chunks from the active knowledge bases and prints them, without generating an
-answer — retrieval only, no augmentation. It runs the same hybrid pipeline (BM25 + neural + rerank)
-that chat uses, over exactly the knowledge bases toggled with `/use-knowledge`, passing your terms
-verbatim (no query rewriting, no inference-server call). Useful for inspecting what RAG would feed
-the model for a given query.
+Retrieves matching chunks from the active knowledge bases and kapa.ai source groups and prints
+them, without generating an answer — retrieval only, no augmentation. It runs the same hybrid
+pipeline (BM25 + neural + rerank) that chat uses, over exactly the knowledge bases toggled with
+`/use-knowledge`, plus the kapa.ai groups selected with `/use-kapa`, passing your terms verbatim (no
+query rewriting, no inference-server call). Useful for inspecting what RAG would feed the model for
+a given query.
 
 ```
 » /search [-k N] [--show-similar] <query>
@@ -1090,8 +1128,8 @@ the model for a given query.
 
 Each result shows its relevance score, knowledge base name, knowledge-label tag (e.g.
 `[CANONICAL]`, `[UPSTREAM]`, or any label you assigned at ingest — see `knowledge label`), source
-ID, creation date, and the full (untruncated) chunk content. Results are ordered by score
-descending.
+ID, creation date, and the full (untruncated) chunk content. Local results are ordered by score
+descending; kapa.ai results (`[KAPA-CANONICAL]`) follow them, in the same order chat uses them.
 
 As with `knowledge search`, only results that **match** the query (relevance score above 0) are
 shown. The rest are summarized as similar results and hidden unless you add `--show-similar`.
@@ -1109,8 +1147,11 @@ When nothing matches, `/search` says so instead of showing unrelated chunks. Thi
 3 similar results don't match the query. Use --show-similar to show them.
 ```
 
-If no knowledge bases are active, `/search` tells you to select some with `/use-knowledge` first; an
-empty query or an invalid `-k` prints a short usage line.
+If neither knowledge bases nor kapa.ai groups are active, `/search` tells you to select some with
+`/use-knowledge` or `/use-kapa` first. kapa.ai alone works without an embedding model. If the
+kapa.ai request fails, a warning is printed and the local results are still shown; if the local
+search fails, the kapa.ai results are shown with a warning instead. An empty query or
+an invalid `-k` prints a short usage line.
 
 #### `/save`
 
@@ -1321,6 +1362,8 @@ version: "1.0"
 model: <model_id>             # optional; inherits from config or auto-detected from server
 knowledge_bases:              # optional; defaults to the default knowledge base
   - <name>
+kapa_source_groups:           # optional; kapa.ai source group ids to search as well (see /use-kapa)
+  - <group-id>
 prompt: <system_prompt>       # optional; overrides the default RAG system prompt for the whole batch
 prompt_ref: <variant_name>    # optional; use a stored answer_system_prompt variant (daemon only; not with 'prompt')
 domains:                      # optional; answer groups of questions within a stated requirement domain
@@ -1339,6 +1382,7 @@ questions:
 | `version` | Yes | Schema version. Use `"1.0"`. |
 | `model` | No | LLM model identifier. Falls back to the `chat.model` config value, then to server auto-detection. Auto-detection is unavailable on AWS Bedrock and with `chat.api=anthropic`; set `chat.model` there. |
 | `knowledge_bases` | No | List of knowledge base names to search for context. Defaults to the `default` base. |
+| `kapa_source_groups` | No | kapa.ai source group **ids** to search alongside the knowledge bases. Absent or empty means kapa.ai is not used. The browser UI's *Run a manifest* screen lists the groups by name and fills this in. If kapa.ai is not configured, the run prints a warning and answers from local knowledge only. Each result in the output JSON records what grounded it, e.g. `"retrieved": {"local": 30, "kapa": 14}`. |
 | `prompt` | No | Custom system prompt for the entire batch. Overrides the built-in RAG answer prompt. `source_rules` is appended to it. Mutually exclusive with `prompt_ref`. |
 | `prompt_ref` | No | Name of a stored `answer_system_prompt` variant to run the batch on (see [Prompt](#prompt)). Requires the `ragd` daemon; mutually exclusive with `prompt`. The resolved `variant@version` is recorded in the output JSON. |
 | `domains` | No | Routing table mapping question ids to requirement domains. Omit it and every question is answered the same way — see [Domain routing](#domain-routing). |

@@ -127,6 +127,10 @@ type Session struct {
 	EmbeddingModelID string
 	ActiveIndexes    []string
 	ActiveKapaGroups []string
+	// Warn, when set, receives retrieval problems the user should see even
+	// without --verbose, such as a failed kapa.ai request. Nil keeps the
+	// verbose-only printing.
+	Warn func(msg string)
 }
 
 // handleSlashCommand processes slash commands entered in the chat REPL.
@@ -142,7 +146,7 @@ func handleSlashCommand(input string, session *Session) bool {
 		return true
 	case cmdUseKapa:
 		if session.KapaClient == nil {
-			fmt.Println("Kapa is not configured. Set kapa.api.key and kapa.project.id.")
+			fmt.Println("Kapa is not configured. Set kapa.project.id and export KAPA_API_KEY.")
 		} else {
 			if err := selectKapaGroups(session); err != nil {
 				fmt.Printf("Error: %v\n", err)

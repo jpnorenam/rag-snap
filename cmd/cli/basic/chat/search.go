@@ -12,8 +12,10 @@ import (
 
 // searchUsage is printed when /search is invoked with missing or invalid args.
 var searchUsage = fmt.Sprintf("Usage: /search [-k N] [%[2]s] <query>\n"+
-	"  Retrieve matching chunks from the active knowledge bases (no answer is generated).\n"+
-	"  -k N            maximum number of results, in total across bases (default: %[1]d)\n"+
+	"  Retrieve matching chunks from the active knowledge bases and kapa.ai source groups\n"+
+	"  (no answer is generated). Select sources with /use-knowledge and /use-kapa.\n"+
+	"  -k N            maximum number of results, in total across bases (default: %[1]d);\n"+
+	"                  kapa.ai adds up to as many again\n"+
 	"  %-14[2]s  also show similar results that don't match the query", defaultRAGTopK, knowledge.ShowSimilarFlag)
 
 // searchArgs is a parsed /search argument string.
@@ -24,7 +26,7 @@ type searchArgs struct {
 }
 
 // handleSearch implements the /search slash command: a retrieval-only query
-// against the active knowledge bases. It runs the same hybrid pipeline as the
+// against the active knowledge bases and kapa.ai source groups. It runs the same hybrid pipeline as the
 // RAG loop but performs no query rewriting, no augmentation, and no LLM
 // generation — it simply prints the matching chunks with their metadata.
 func handleSearch(args string, session *Session) {
@@ -34,31 +36,44 @@ func handleSearch(args string, session *Session) {
 		return
 	}
 
-	// Preconditions mirror retrieveContext: without a client, active indexes,
-	// and an embedding model, the hybrid pipeline cannot run.
-	if session.KnowledgeClient == nil || session.EmbeddingModelID == "" {
-		fmt.Println("Knowledge retrieval is unavailable for this session.")
+	// Preconditions mirror retrieveContext: a source of either kind must be
+	// active, and local bases additionally need a client and embedding model
+	// for the hybrid pipeline. kapa.ai alone needs neither.
+	hasLocal := len(session.ActiveIndexes) > 0
+	hasKapa := session.KapaClient != nil && len(session.ActiveKapaGroups) > 0
+	if !hasLocal && !hasKapa {
+		fmt.Printf("No active knowledge sources. Select some with %s or %s first.\n", cmdUseKnowledge, cmdUseKapa)
 		return
 	}
-	if len(session.ActiveIndexes) == 0 {
-		fmt.Printf("No active knowledge bases. Select one with %s first.\n", cmdUseKnowledge)
-		return
+	if hasLocal && (session.KnowledgeClient == nil || session.EmbeddingModelID == "") {
+		if !hasKapa {
+			fmt.Println("Knowledge retrieval is unavailable for this session.")
+			return
+		}
+		fmt.Println("Warning: knowledge retrieval is unavailable for this session; searching kapa.ai only.")
+		hasLocal = false
 	}
 
 	// Verbatim terms for both the lexical (BM25) and neural/rerank query —
-	// no rewriteSearchQuery, so no inference-server round-trip.
-	hits, err := session.KnowledgeClient.SearchTop(
-		context.Background(),
-		session.ActiveIndexes,
-		parsed.terms,
-		parsed.terms,
-		session.EmbeddingModelID,
-		parsed.k,
-	)
-	if err != nil {
+	// no rewriteSearchQuery, so no inference-server round-trip. Local and
+	// kapa.ai run concurrently; local hits come first, as in the RAG loop.
+	var indexes []string
+	if hasLocal {
+		indexes = session.ActiveIndexes
+	}
+	res := knowledge.SearchWithKapa(context.Background(), session.KnowledgeClient, indexes,
+		parsed.terms, parsed.terms, session.EmbeddingModelID, parsed.k, session.KapaClient, session.ActiveKapaGroups)
+	if err := res.Err(); err != nil {
 		fmt.Printf("Search failed: %v\n", err)
 		return
 	}
+	if res.LocalErr != nil {
+		fmt.Printf("Warning: local knowledge search failed, showing kapa.ai results only: %v\n", res.LocalErr)
+	}
+	if res.KapaErr != nil {
+		fmt.Printf("Warning: kapa.ai search failed, showing local results only: %v\n", res.KapaErr)
+	}
+	hits := res.Hits
 
 	fmt.Print(formatSearchOutput(parsed.terms, directSearchHits(hits), parsed.showSimilar))
 }
@@ -81,7 +96,11 @@ func directSearchHits(hits []knowledge.SearchHit) []searchHit {
 	out := make([]searchHit, len(hits))
 	for i, h := range hits {
 		name, err := knowledge.KnowledgeBaseNameFromIndex(h.Index)
-		if err != nil {
+		switch {
+		case h.Index == knowledge.KapaIndexName:
+			// Same base name the daemon reports for kapa.ai hits.
+			name = "kapa.ai"
+		case err != nil:
 			name = h.Index
 		}
 		out[i] = searchHit{Score: h.Score, Base: name, Label: h.Label, SourceID: h.SourceID,

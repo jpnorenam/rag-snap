@@ -62,7 +62,11 @@ type Chat struct {
 	UpdatedAt time.Time `json:"updated_at"`
 	Model     string    `json:"model"`
 	Bases     []string  `json:"bases"`
-	Turns     []Turn    `json:"turns"`
+	// KapaGroups is the kapa.ai source-group selection (ids) at save time,
+	// restored as-is on resume. Records saved before the field existed decode it
+	// as empty (omitempty keeps their shape unchanged).
+	KapaGroups []string `json:"kapa_groups,omitempty"`
+	Turns      []Turn   `json:"turns"`
 	// Prompt records which chat_system_prompt resolution the session ran on, as a
 	// "variant@version" reference (empty for the built-in default). It is
 	// informational provenance: resuming re-resolves the prompt fresh rather than

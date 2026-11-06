@@ -8,6 +8,7 @@ export interface ApiEnvelope<T = unknown> {
   type: "sync" | "async" | "error";
   status?: string;
   status_code?: number;
+  warnings?: string[] | null;
   error_code?: number;
   error?: string;
   operation?: string;
@@ -92,6 +93,16 @@ async function request<T>(
 export async function getSync<T>(path: string): Promise<T> {
   const env = await request<T>("GET", path);
   return env.metadata as T;
+}
+
+// postSyncWithWarnings is postSync that also returns the response's top-level
+// warnings: problems that degraded the result without failing it.
+export async function postSyncWithWarnings<T>(
+  path: string,
+  body?: unknown
+): Promise<{ metadata: T; warnings: string[] }> {
+  const env = await request<T>("POST", path, body);
+  return { metadata: env.metadata as T, warnings: env.warnings ?? [] };
 }
 
 // postSync issues a request expecting a sync response and returns its metadata.
