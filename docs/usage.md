@@ -1077,7 +1077,8 @@ export KAPA_API_KEY=<key>      # or put it in ~/snap/rag-cli/common/credentials.
 When `ragd` is running, `/use-kapa` applies to the daemon's session, so the daemon needs the key
 too: see [Secrets](../INSTALL.md#secrets). If kapa.ai is not configured, `/use-kapa` says so. If
 a kapa.ai request fails during a chat, a `Warning:` line explains it and the answer uses your local
-knowledge bases only.
+knowledge bases only. The warning names what the answer is actually missing: if no local bases are
+active, or the local search failed too, it says the answer has no retrieved context.
 
 #### `/search`
 

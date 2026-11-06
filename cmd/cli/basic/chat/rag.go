@@ -73,16 +73,13 @@ func retrieveContext(session *Session, query, lexicalQuery string, verbose bool)
 	res := knowledge.SearchWithKapa(context.Background(), localClient, indexes, query, lexicalQuery,
 		session.EmbeddingModelID, defaultRAGTopK, kapaClient, session.ActiveKapaGroups)
 
-	if res.LocalErr != nil && verbose {
-		fmt.Printf("Knowledge search failed: %v\n", res.LocalErr)
-	}
-	if res.KapaErr != nil {
-		// A kapa.ai failure never fails the turn: the answer proceeds on the
-		// local context, but the user is told it is missing kapa.ai grounding.
+	// A retrieval failure never fails the turn: the answer goes ahead on
+	// whatever context is left, and the user is told what it is missing.
+	if msg := retrievalWarning(res); msg != "" {
 		if session.Warn != nil {
-			session.Warn(fmt.Sprintf("kapa.ai retrieval failed, answering from local knowledge only: %v", res.KapaErr))
+			session.Warn(msg)
 		} else if verbose {
-			fmt.Printf("Kapa search failed: %v\n", res.KapaErr)
+			fmt.Printf("Warning: %s\n", msg)
 		}
 	}
 
@@ -96,6 +93,28 @@ func retrieveContext(session *Session, query, lexicalQuery string, verbose bool)
 	}
 
 	return formatContext(res.Hits), counts
+}
+
+// retrievalWarning describes what an answer is missing after a retrieval
+// failure, or returns "" when every queried source succeeded. The wording
+// depends on which sources ran, so it never claims a fallback that does not
+// exist.
+func retrievalWarning(res knowledge.CombinedSearch) string {
+	const noContext = "so this answer has no retrieved context"
+	switch {
+	case res.KapaErr != nil && res.LocalErr != nil:
+		return fmt.Sprintf("kapa.ai retrieval failed (%v), and local retrieval also failed (%v), %s",
+			res.KapaErr, res.LocalErr, noContext)
+	case res.KapaErr != nil && !res.LocalQueried:
+		return fmt.Sprintf("kapa.ai retrieval failed and no local knowledge bases are active, %s: %v", noContext, res.KapaErr)
+	case res.KapaErr != nil:
+		return fmt.Sprintf("kapa.ai retrieval failed, answering from local knowledge only: %v", res.KapaErr)
+	case res.LocalErr != nil && res.KapaQueried:
+		return fmt.Sprintf("local knowledge retrieval failed, answering from kapa.ai only: %v", res.LocalErr)
+	case res.LocalErr != nil:
+		return fmt.Sprintf("local knowledge retrieval failed, %s: %v", noContext, res.LocalErr)
+	}
+	return ""
 }
 
 // RetrievalCounts records how many hits each source contributed to an answer's
