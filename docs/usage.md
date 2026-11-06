@@ -4,6 +4,9 @@
 > knowledge bases over an opt-in loopback listener. See the
 > [Local web UI guide](local-ui.md) (`rag-cli.rag ui`).
 
+`rag-cli.rag --version` prints the snap version and the commit the CLI was built from, for example
+`rag-cli 0.0.9 (commit cd3ac8925556)`. Include it when reporting a problem.
+
 ## Services
 
 `rag-cli` orchestrates three services. Only the first is mandatory for every command:
@@ -572,39 +575,63 @@ Found 118 files in openstack/nova
 Run a hybrid semantic + lexical search across one or more knowledge bases.
 
 ```
-rag-cli.rag knowledge search <query> [--bases <name,...>] [--top <k>] [--kapa-groups <id,...>]
+rag-cli.rag knowledge search <query> [--bases <name,...>] [--top <k>] [--kapa-groups <id,...>] [--show-similar]
 ```
 
 | Flag | Short | Default | Description |
 |---|---|---|---|
 | `--bases` | `-b` | `default` | Comma-separated list of knowledge base names to search |
-| `--top` | `-k` | `10` | Maximum number of results returned per index, and from kapa.ai |
+| `--top` | `-k` | `10` | Maximum number of results, in total across all searched bases. kapa.ai adds up to as many again |
 | `--kapa-groups` | | | Comma-separated kapa.ai source group **ids** to search as well (see [`/use-kapa`](#use-kapa)) |
+| `--show-similar` | | off | Also show the similar results that don't match the query |
 
 With `--kapa-groups`, kapa.ai results (index `kapa-canonical`, tag `[KAPA-CANONICAL]`) are listed
-after the local ones. kapa.ai is searched only for the groups you name; if it is not configured or
-its request fails, a `Warning:` line says so and the local results are still shown. The same
-works the other way: if the local search fails but kapa.ai answers, the kapa.ai results are shown
-with a warning. The command fails only when no source returned results.
+after the local ones. They always count as matches: kapa.ai has already picked them as relevant,
+so they are never hidden as similar results. kapa.ai is searched only for the groups you name; if
+it is not configured or its request fails, a `Warning:` line says so and the local results are
+still shown. The same works the other way: if the local search fails but kapa.ai answers, the
+kapa.ai results are shown with a warning. The command fails only when no source returned results.
 
-**Example — search the default base**
+Search always finds the chunks *nearest* to your query, even for a term that appears nowhere in
+your bases, so each result is checked against the reranker: a result **matches** when its
+relevance score is above 0, meaning the reranker judges it relevant to the query. Only matching
+results are shown. The others are **similar results**: the command says how many there are and
+hides them unless you pass `--show-similar`, which lists them after the matches under a
+separator. The total then follows them and says how it splits, e.g.
+`Total: 10 results (4 matching, 6 similar)`.
+
+**Example: search the default base**
 
 ```bash
 $ rag-cli.rag knowledge search "how does vector search work"
 
---- Result 1 (score: 0.9821, index: rag-kb-default) [CANONICAL] ---
+--- Result 1 (score: 7.4120, index: rag-snap-context-default) [CANONICAL] ---
   Source: rag-wiki
   Date:   2025-06-02T14:22:10Z
   Vector search (also called semantic search) finds documents by comparing high-dimensional …
 
-Total: 10 results
+Total: 4 results
+
+6 similar results don't match the query. Use --show-similar to show them.
 ```
 
-**Example — search across multiple bases**
+**Example: a term that isn't in the base**
+
+```bash
+$ rag-cli.rag knowledge search kafka
+No results match "kafka".
+
+10 similar results don't match the query. Use --show-similar to show them.
+```
+
+**Example: search across multiple bases**
 
 ```bash
 $ rag-cli.rag knowledge search "snap confinement" --bases docs,wiki-rag --top 5
 ```
+
+`--top 5` returns the best 5 results across both bases, not 5 from each. To see more, raise
+`--top`.
 
 ---
 
@@ -980,7 +1007,7 @@ rag-cli.rag chat [model_name] [--temperature <float>] [--prompt <variant>]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--temperature` | `0.3` | Sampling temperature (0.0–1.0). Lower values produce more deterministic responses; higher values allow more creative variation. |
+| `--temperature` | `0.3` | Sampling temperature (0.0–1.0). Lower values produce more deterministic responses; higher values allow more creative variation. Ignored with `chat.api=anthropic`: current Claude models reject sampling parameters. |
 | `--prompt` | (active) | Name of a `chat_system_prompt` variant to use for this session only (see [Prompt](#prompt)). Requires the `ragd` daemon. |
 
 **Example — auto-detect model**
@@ -1021,7 +1048,7 @@ Type your prompt, then ENTER to submit. CTRL-C to quit.
 |---|---|
 | Type a prompt, press Enter | Send to the LLM (with RAG context if available) |
 | `Tab` | Autocomplete slash commands |
-| Finish typing a slash command name | A dimmed inline hint shows its argument syntax (e.g. `/search [-k N] <query>`) |
+| Finish typing a slash command name | A dimmed inline hint shows its argument syntax (e.g. `/search [-k N] [--show-similar] <query>`) |
 | `Ctrl-C` (empty line) | Exit the session |
 | `Ctrl-C` (mid-prompt) | Cancel current input, stay in session |
 | Type `exit`, press Enter | Exit the session |
@@ -1090,24 +1117,34 @@ query rewriting, no inference-server call). Useful for inspecting what RAG would
 a given query.
 
 ```
-» /search [-k N] <query>
+» /search [-k N] [--show-similar] <query>
 ```
 
-- `<query>` — the keywords or question to retrieve for.
-- `-k N` — maximum number of results (default: 15). Also accepts `-k=N`.
+- `<query>`: the keywords or question to retrieve for.
+- `-k N`: maximum number of results, in total across the active bases (default: 15). Also
+  accepts `-k=N`.
+- `--show-similar`: also show the similar results that don't match the query. Can go anywhere
+  in the line. It takes no value: `--show-similar=true` is rejected rather than searched for.
 
 Each result shows its relevance score, knowledge base name, knowledge-label tag (e.g.
 `[CANONICAL]`, `[UPSTREAM]`, or any label you assigned at ingest — see `knowledge label`), source
 ID, creation date, and the full (untruncated) chunk content. Local results are ordered by score
 descending; kapa.ai results (`[KAPA-CANONICAL]`) follow them, in the same order chat uses them.
 
+As with `knowledge search`, only results that **match** the query (relevance score above 0) are
+shown. The rest are summarized as similar results and hidden unless you add `--show-similar`.
+When nothing matches, `/search` says so instead of showing unrelated chunks. This only affects
+`/search`: chat answers still retrieve context as before.
+
 ```
 » /search -k 5 ceph osd recovery
 
-[1] score 0.8421  ·  ops-docs  [CANONICAL]
+[1] score 6.8421  ·  ops-docs  [CANONICAL]
     source: ceph/recovery.md   created: 2026-03-11
     ────────────────────────────────────────────────────────
     <full chunk content>
+
+3 similar results don't match the query. Use --show-similar to show them.
 ```
 
 If neither knowledge bases nor kapa.ai groups are active, `/search` tells you to select some with
@@ -1305,15 +1342,18 @@ compliance questionnaires, and documentation audits.
 
 Run a list of questions from a YAML manifest through the RAG+LLM pipeline non-interactively.
 Each question is answered in sequence, printed to the terminal, and the full set of results is
-written to a timestamped JSON file in the current working directory.
+written to a timestamped JSON file in the current working directory. Unless judging is turned off,
+every answer is then [judged by Gemini](#judging-the-answers) and the run ends with the rows a
+reviewer needs to look at.
 
 ```
-rag-cli.rag answer batch <manifest.yaml> [--temperature <float>]
+rag-cli.rag answer batch <manifest.yaml> [--temperature <float>] [--no-judge]
 ```
 
 | Flag | Default | Description |
 |---|---|---|
-| `--temperature` | `0.1` | Sampling temperature (0.0–1.0). The low default keeps answers grounded and consistent across runs. Raise it for more varied phrasing. |
+| `--no-judge` | off | Skip judging for this run. To turn judging off for every run, set `judge.enabled=false`. |
+| `--temperature` | `0.1` | Sampling temperature (0.0–1.0). The low default keeps answers grounded and consistent across runs. Raise it for more varied phrasing. Ignored with `chat.api=anthropic`: current Claude models reject sampling parameters. |
 
 #### YAML schema
 
@@ -1340,7 +1380,7 @@ questions:
 | Field | Required | Description |
 |---|---|---|
 | `version` | Yes | Schema version. Use `"1.0"`. |
-| `model` | No | LLM model identifier. Falls back to the `chat.model` config value, then to server auto-detection. |
+| `model` | No | LLM model identifier. Falls back to the `chat.model` config value, then to server auto-detection. Auto-detection is unavailable on AWS Bedrock and with `chat.api=anthropic`; set `chat.model` there. |
 | `knowledge_bases` | No | List of knowledge base names to search for context. Defaults to the `default` base. |
 | `kapa_source_groups` | No | kapa.ai source group **ids** to search alongside the knowledge bases. Absent or empty means kapa.ai is not used. The browser UI's *Run a manifest* screen lists the groups by name and fills this in. If kapa.ai is not configured, the run prints a warning and answers from local knowledge only. Each result in the output JSON records what grounded it, e.g. `"retrieved": {"local": 30, "kapa": 14}`. |
 | `prompt` | No | Custom system prompt for the entire batch. Overrides the built-in RAG answer prompt. `source_rules` is appended to it. Mutually exclusive with `prompt_ref`. |
@@ -1453,6 +1493,17 @@ Answer: The product targets 99.9% uptime with a 4-hour RTO and 1-hour RPO for bu
 Answer: The product holds SOC 2 Type II, ISO 27001, and FedRAMP Moderate certifications.
 ---
 
+Answers saved to batch-results-20250225-143022.json; judging them now.
+
+Judge (gemini-3.1-pro-preview): 1 green · 1 yellow · 1 red · 0 not judged
+Rows are spreadsheet rows; row 2 is the first answer.
+
+Red:
+  row 4 [certifications]  "FedRAMP Moderate" is not in the retrieved context; remove it or verify against compliance.pdf.
+
+Yellow:
+  row 3 [slo]  "4-hour RTO" is supported, but "1-hour RPO" is not; verify against sla.pdf.
+
 Results saved to batch-results-20250225-143022.json
 ```
 
@@ -1463,33 +1514,129 @@ Results are written to `batch-results-YYYYMMDD-HHMMSS.json` in the current worki
 ```json
 {
   "generated_at": "2025-02-25T14:30:22Z",
-  "model": "mistral.mistral-large-3-675b-instruct",
+  "model": "global.anthropic.claude-sonnet-5-5",
   "prompt": "rfp-govco-2026@3",
   "results": [
     {
       "id": "security-policy",
       "question": "What is the data retention policy?",
       "answer": "Data is retained for 90 days by default, configurable up to 7 years for compliance tiers.",
-      "domain": "C*"
+      "domain": "C*",
+      "judgment": {
+        "confidence": 3,
+        "rating": "yellow",
+        "issues": ["unsupported_claim"],
+        "comment": "\"up to 7 years\" is not in the retrieved context; verify against retention.pdf."
+      }
     }
-  ]
+  ],
+  "judge": {
+    "model": "gemini-3.1-pro-preview",
+    "green": 0, "yellow": 1, "red": 0, "not_judged": 0,
+    "consistency": true
+  }
 }
 ```
 
-Two fields record how each answer was produced, and both are omitted when they do not apply:
+These fields record how each answer was produced and judged, and each is omitted when it does not apply:
 
 | Field | Present when | Description |
 |---|---|---|
 | `prompt` | A `prompt_ref` resolved | The `answer_system_prompt` variant that drove the run, as `variant@version`. Absent for the built-in default prompt and for an inline `prompt`. |
 | `results[].domain` | The question matched a `domains` entry | The `match` pattern of the entry that applied, which identifies exactly one entry. Absent when the manifest carried no `domains` block, or when the question matched no entry. |
+| `results[].judgment` | The run was judged | The verdict on this answer: `confidence` (1–5), `rating` (`green`, `yellow` or `red`), `issues`, and `comment`. A row the judge could not assess carries only `error`. See [Judging the answers](#judging-the-answers). |
+| `judge` | The run was judged | The judge model, the count per rating, and whether the cross-answer consistency check completed (`consistency`, with `consistency_error` when it did not). `consistency_findings` lists each kept finding once, with its `rows` (each a `row` and the quoted `phrase`), its `comment`, and `broad` when it was too wide to apply to rows; `consistency_discarded` counts findings whose quotes did not check out. |
+| `results[].judgment.pre_consistency_confidence` | The consistency check lowered that row's score | The score the row had before the cap. |
 
-> **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run)
-> prints the error and moves on. All answers collected before the failure are still written to the
+> **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run,
+> or the model declines to answer it) prints the error and moves on. All answers collected before the failure are still written to the
 > output file.
 
 > **Note on model selection:** If the inference server does not support model auto-detection
-> (e.g. AWS Bedrock), set the model explicitly in the manifest or configure a default with
+> (e.g. AWS Bedrock, or any backend with `chat.api=anthropic`), set the model explicitly in the
+> manifest or configure a default with
 > `sudo rag-cli.rag set --package chat.model="<model-id>"` once after installation.
+
+#### Judging the answers
+
+Every run is judged by Gemini unless judging is turned off. The judge tells a reviewer which answers
+can be pasted as they are and which need attention, and exactly what to check, so nobody has to
+review every answer from scratch.
+
+Each answer is checked against what it was written from: the manifest prompt's rules, the domain
+context, the question, and **the exact chunks retrieved for it**. The judge returns:
+
+| Field | Meaning |
+|---|---|
+| `confidence` | An anchored 1–5 score (below) |
+| `rating` | Derived from the score: **green** = 5, paste as is · **yellow** = 4–3, check or edit · **red** = 2–1, fix or answer |
+| `comment` | Quotes the problem and says what to do: remove it, verify it against a named source, or answer from one. Empty for a 5 |
+| `issues` | One or more of `unsupported_claim`, `contradicts_context`, `missed_context`, `incomplete`, `off_question`, `other_customer`, `rule_violation`, `gap` |
+
+| Score | Means |
+|---|---|
+| 5 | Every claim supported, the question fully answered, every rule followed |
+| 4 | Correct and supported, with a light edit: wording, a preamble, a sentence too many, a format slip |
+| 3 | A real edit or a check: a claim or figure to verify, part of the question unanswered, or a sentence to remove because it volunteers a limitation or breaks a section's rule |
+| 2 | An unsupported or contradicted claim, a different question answered, or another customer, bid or proposal named |
+| 1 | Wrong or fabricated in substance, or a gap |
+
+A problem fixed by deleting or rewording a phrase is never red, except naming another customer.
+
+The judge never corrects an answer from its own knowledge, but it does ask for checks. A figure,
+version, channel name or command example that looks malformed or implausible is flagged for
+verification, even when the context states it, and the judge does not supply a replacement value. Naming another customer,
+bid or proposal is always red, even when the retrieved context names it: knowledge bases often hold
+responses to other bids.
+
+Some checks are made locally, not by the model:
+
+- An answer that is the fixed no-context response is always red, since there is nothing to paste.
+  When retrieval found nothing, no call is made. When the model wrote that response despite having
+  context, the judge still reads it, and reports `missed_context` if the answer was there after all.
+- Markdown (`**bold**`, backticks, headings, lists) is flagged and caps the score at 4, because it
+  pastes into a spreadsheet cell as literal characters.
+- Word and sentence counts are computed locally and given to the judge, which compares them against
+  the prompt's length rule. A short opener such as "Supported." is reported separately and is not
+  counted as a sentence.
+
+After every answer has been judged, one more call reads all the answers together, without their
+chunks. It flags contradictions between rows, such as two answers giving different figures for the
+same thing. Each finding must quote, for every row it names, the phrase in that row's answer that
+conflicts. A row whose quote is not in its answer is dropped, and a finding left with fewer than two
+rows is discarded and counted. Each kept finding is listed once in the run summary. Each row it names
+gets a short note naming the other rows, and none of those rows stays green. A row whose score this
+lowered records its earlier score as `pre_consistency_confidence`.
+
+A finding that names more than 8 rows is not a contradiction: it is usually a remark about the whole
+run, such as customer names in every Reference field, which per-row judging already reports. Such a
+finding is listed once, marked as not applied to rows, and changes no row's comment or score.
+
+**How it runs.** Each answer is judged as soon as it is written, while later questions are still being
+answered, with up to `judge.concurrency` Gemini calls at a time. When the last answer lands, only a
+few judgments remain. A rate-limited call is retried up to three times. Judging never costs the
+answers: the results file is written as soon as answering finishes, and rewritten with the verdicts
+afterwards. A row the judge could not assess is marked *not judged*, with the reason.
+
+**Rows are spreadsheet rows.** The summary, the `comment` of a consistency finding, and the web UI
+all number results as they land when pasted under a header row, so the first answer is row 2.
+
+**What is sent.** Each answer, its question, the manifest prompt, the domain context and the
+retrieved chunks are sent to Google's Gemini API, under the same agreement and with the same pinned
+endpoint and `GEMINI_API_KEY` as [analysis](#answer-batch---build---analyze). The retrieved chunks
+are never written to the results file.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `judge.enabled` | `true` | Set to `false` to turn judging off for every run |
+| `judge.model` | _(unset)_ | The Gemini model that judges. Unset uses `analysis.model` |
+| `judge.reasoning` | `medium` | Reasoning effort per judge call: `minimal`, `low`, `medium` or `high` |
+| `judge.concurrency` | `4` | Most judge calls in flight at once. Raise it on a higher quota tier |
+
+All four are `package` keys, so `sudo rag-cli.rag set judge.<key>=<value>` works on any of them.
+Judging needs `GEMINI_API_KEY` and a model. Without them the run prints one notice and is answered
+unjudged; it never fails. For daemon runs, the key goes in the `ragd` service environment exactly as
+for analysis (see [Configuration](#configuration) under `--analyze`).
 
 ---
 
@@ -1718,6 +1865,8 @@ rag-cli.rag answer batch --build <document> --analyze [--context <file>]... [--o
 | `--context` | _(none)_ | A supporting document that adds background, repeatable. The RFP itself is `--build` |
 | `--instructions` | _(none)_ | Instructions that steer the analysis — granularity, scope, which questions to include. See [Instructions](#instructions) |
 | `--instructions-file` | _(none)_ | Read the instructions from a file under your home directory. Mutually exclusive with `--instructions` |
+| `--sheets` | _(all tabs)_ | Spreadsheet tabs to answer, by name or 1-based position, comma-separated, ranges allowed. See [Choosing tabs](#choosing-tabs) |
+| `--context-sheets` | _(none)_ | Spreadsheet tabs sent only as background, with no questions taken from them. Same syntax as `--sheets` |
 | `--output` | `<document-name>.yaml` | Output manifest path |
 
 > **Analysis sends your document content to a third party: Google's Gemini API.** It is off by
@@ -1831,6 +1980,38 @@ rag-cli.rag answer batch --build ~/rfp/lafika.pdf --analyze \
   #   Split every matrix row into one question per requirement.
   #   Only the Annexure A compliance matrix.
   ```
+
+#### Choosing tabs
+
+RFP workbooks usually carry tabs that hold no questions: a read-me, a cover sheet, a sizing
+appendix, a bill of quantities. Don't ask for those in the instructions. Choose them exactly:
+
+```bash
+rag-cli.rag answer batch --build ~/rfp/telco-rfp.xlsx --analyze \
+  --sheets 2-7 --context-sheets "Read Me"
+```
+
+- `--sheets` lists the tabs to answer. Questions are extracted and counted from these alone.
+- `--context-sheets` lists tabs sent as **background**: the model reads them (the target design, the
+  sizing) to write a better prompt and domain contexts, but takes no question from them.
+- Once either flag is given, **every tab not listed is left out** and is not sent at all.
+- A tab is named by its name (case does not matter) or its 1-based position in the workbook, and
+  `2-7` is a range of positions. Positions are often easier: Excel cuts tab names at 31 characters,
+  and a tab's number is what you see. An unknown tab stops the command before anything is sent, and
+  lists every tab with its position.
+- The scope is applied before triage, so the estimate and the extraction measure the same tabs, and
+  the scope is listed in the conveyance report and recorded in the manifest's header:
+
+  ```
+  # Sheet scope for telco-rfp.xlsx:
+  #   1 Read Me: context
+  #   2 1 Hardware: answer
+  #   …
+  #   8 App B Sizing & BoQ: exclude
+  ```
+
+Tab scope applies to a spreadsheet RFP (`--build`). Context documents are sent whole, and a PDF or
+DOCX is scoped with `--instructions`.
 
 Instructions steer how the **manifest** is generated. To change how **answers** are written, edit the
 prompt: in the web UI, the model-written part of the generated prompt is editable on the review step,

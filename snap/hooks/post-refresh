@@ -19,6 +19,12 @@ exec 2> >(logger --stderr --priority error --tag=$tag)
 snapctl unset config.package.kapa.api.key || true
 snapctl unset config.user.kapa.api.key || true
 
+# Answer judge. Keep in sync with the install hook, which documents each key.
+seed judge.enabled "true"
+seed judge.model ""
+seed judge.reasoning "medium"
+seed judge.concurrency "4"
+
 # Retired keys. analysis.http.* addressed a configurable (gateway) endpoint; analysis
 # now calls the Gemini API only, so the keys are gone. An install that seeded them
 # would otherwise keep showing them in `rag get`, and a stale user-layer value would

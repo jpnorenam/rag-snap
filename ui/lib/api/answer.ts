@@ -1,4 +1,4 @@
-import { postAsync, postAsyncForm, postSync } from "./envelope";
+import { postAsync, postAsyncForm, postSync, postSyncForm } from "./envelope";
 import type { OperationView } from "./operations";
 
 // BatchQuestion is a single question in a prepared manifest. `id`, `question`,
@@ -254,6 +254,49 @@ export interface ConveyanceReport {
   converted: boolean;
   detail?: string;
   bytes: number;
+  // sheets lists a converted spreadsheet's tabs with the scope each was conveyed under.
+  sheets?: SheetInfo[];
+}
+
+// SheetScopeValue is what analysis does with one tab of a spreadsheet RFP: extract
+// questions from it, send it only as background, or leave it out entirely.
+export type SheetScopeValue = "answer" | "context" | "exclude";
+
+// SheetInfo is one tab as the daemon lists it: its 1-based position in workbook order,
+// its name and its data rows. `scope` is set once a scope has been applied.
+export interface SheetInfo {
+  position: number;
+  name: string;
+  data_rows: number;
+  scope?: SheetScopeValue;
+}
+
+// SheetInventory is POST /1.0/answer/analyze/sheets: a document's tabs, empty for a
+// format that has none.
+export interface SheetInventory {
+  format: string;
+  sheets: SheetInfo[];
+}
+
+// listSheets asks the daemon for a document's tabs. No model call, no session.
+export async function listSheets(file: File): Promise<SheetInventory> {
+  const form = new FormData();
+  form.append("file", file);
+  const inv = await postSyncForm<Partial<SheetInventory>>("/1.0/answer/analyze/sheets", form);
+  return { format: inv.format ?? "", sheets: inv.sheets ?? [] };
+}
+
+// sheetScopeHeaderLines is analysis.SheetScopeHeaderLines: the provenance lines
+// recording each scoped document's tabs, empty when nothing was scoped.
+export function sheetScopeHeaderLines(reports: ConveyanceReport[]): string[] {
+  const out: string[] = [];
+  for (const r of reports) {
+    const sheets = r.sheets ?? [];
+    if (!sheets.some((s) => s.scope && s.scope !== "answer")) continue;
+    out.push(`Sheet scope for ${r.filename}:`);
+    for (const s of sheets) out.push(`  ${s.position} ${s.name}: ${s.scope}`);
+  }
+  return out;
 }
 
 // Triage is the first pass: what the documents are, before any manifest exists.
@@ -283,6 +326,8 @@ export interface AnalyzeMetadata {
   triage: Triage;
   // The operator's instructions the session is working to, echoed by the daemon.
   instructions: string;
+  // The RFP's tabs with the scope the session works to; empty for a document with none.
+  sheets: SheetInfo[];
 }
 
 // ANALYSIS_INSTRUCTIONS_MAX is analysis.MaxInstructionsLength: the daemon rejects
@@ -449,12 +494,14 @@ export interface InterviewAnswers {
 export async function analyzeDocuments(
   file: File,
   contextFiles: File[] = [],
-  instructions = ""
+  instructions = "",
+  sheets?: Record<string, SheetScopeValue>
 ): Promise<TrackedOperation> {
   const form = new FormData();
   form.append("file", file);
   for (const f of contextFiles) form.append("context", f);
   if (instructions.trim()) form.append("instructions", instructions.trim());
+  if (sheets && Object.keys(sheets).length > 0) form.append("sheets", JSON.stringify(sheets));
   const { operation, metadata } = await postAsyncForm<OperationView>("/1.0/answer/analyze", form);
   return { operation, view: metadata };
 }
@@ -496,6 +543,7 @@ export function parseAnalyzeMetadata(meta: Record<string, unknown>): AnalyzeMeta
     expiresAt: typeof meta.expires_at === "string" ? meta.expires_at : "",
     model: typeof meta.model === "string" ? meta.model : "",
     instructions: typeof meta.instructions === "string" ? meta.instructions : "",
+    sheets: Array.isArray(meta.sheets) ? (meta.sheets as SheetInfo[]) : [],
     triage: {
       title: raw.title,
       issuer: raw.issuer,

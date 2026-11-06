@@ -63,7 +63,7 @@ func TestRunBatchReportsKapaFailureAndContinues(t *testing.T) {
 
 	var warnings []string
 	hooks := BatchHooks{OnWarning: func(msg string) { warnings = append(warnings, msg) }}
-	out, err := RunBatch(context.Background(), stubInference(t), nil, kapa, "", kapaManifest(), PromptConfig{}, 0.1, hooks, false)
+	out, err := RunBatch(context.Background(), BackendConfig{API: APIOpenAI, BaseURL: stubInference(t)}, nil, kapa, "", kapaManifest(), PromptConfig{}, 0.1, nil, hooks, false)
 	if err != nil {
 		t.Fatalf("RunBatch: %v", err)
 	}
@@ -103,7 +103,7 @@ func TestRunBatchReportsKapaFailureAndContinues(t *testing.T) {
 func TestRunBatchReportsUnconfiguredKapa(t *testing.T) {
 	var warnings []string
 	hooks := BatchHooks{OnWarning: func(msg string) { warnings = append(warnings, msg) }}
-	out, err := RunBatch(context.Background(), stubInference(t), nil, nil, "", kapaManifest(), PromptConfig{}, 0.1, hooks, false)
+	out, err := RunBatch(context.Background(), BackendConfig{API: APIOpenAI, BaseURL: stubInference(t)}, nil, nil, "", kapaManifest(), PromptConfig{}, 0.1, nil, hooks, false)
 	if err != nil {
 		t.Fatalf("RunBatch: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestRunBatchNoWarningWithoutKapaSelection(t *testing.T) {
 
 	var warnings []string
 	hooks := BatchHooks{OnWarning: func(msg string) { warnings = append(warnings, msg) }}
-	out, err := RunBatch(context.Background(), stubInference(t), nil, nil, "", manifest, PromptConfig{}, 0.1, hooks, false)
+	out, err := RunBatch(context.Background(), BackendConfig{API: APIOpenAI, BaseURL: stubInference(t)}, nil, nil, "", manifest, PromptConfig{}, 0.1, nil, hooks, false)
 	if err != nil {
 		t.Fatalf("RunBatch: %v", err)
 	}

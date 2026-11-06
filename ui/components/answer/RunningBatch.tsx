@@ -17,16 +17,22 @@ interface Props {
 
 // RunningBatch shows live progress for a batch run. Progress comes from the
 // operation's questions_done/questions_total metadata; a single spinner is the
-// fallback when the operation exposes no per-question counts.
+// fallback when the operation exposes no per-question counts. Once every question
+// is answered, a judged run reports phase "judging" with judged_done/judged_total,
+// and the view follows it.
 export default function RunningBatch({ op, onCancelRun }: Props) {
-  const done = numberMeta(op, "questions_done");
-  const total = numberMeta(op, "questions_total");
+  const judging = op?.metadata?.phase === "judging";
+  const done = numberMeta(op, judging ? "judged_done" : "questions_done");
+  const total = numberMeta(op, judging ? "judged_total" : "questions_total");
   const status = op ? statusOf(op) : "running";
+  const noun = judging ? "answer" : "question";
 
   return (
     <section className="answer-flow">
       <div className="answer-flow__head">
-        <h2 className="p-heading--4 u-no-margin--bottom">Answering questions</h2>
+        <h2 className="p-heading--4 u-no-margin--bottom">
+          {judging ? "Judging answers" : "Answering questions"}
+        </h2>
         <button
           type="button"
           className="p-button--base u-no-margin--bottom"
@@ -40,11 +46,24 @@ export default function RunningBatch({ op, onCancelRun }: Props) {
           kapa.ai grounding says so before it finishes. */}
       <RunWarnings warnings={runWarnings(op?.metadata)} />
 
+      {typeof op?.metadata?.judge_unavailable === "string" && op.metadata.judge_unavailable !== "" && (
+        <div className="p-notification--information">
+          <div className="p-notification__content">
+            <h3 className="p-notification__title">Answers will not be judged</h3>
+            <p className="p-notification__message">
+              {op.metadata.judge_unavailable} To stop this notice, run{" "}
+              <code>sudo rag-cli.rag set judge.enabled=false</code>.
+            </p>
+          </div>
+        </div>
+      )}
+
       <div className="answer-running" aria-live="polite">
         {total !== null && total > 0 ? (
           <>
             <p className="u-no-margin--bottom">
-              Answered {done ?? 0} of {total} question{total === 1 ? "" : "s"}…
+              {judging ? "Judged" : "Answered"} {done ?? 0} of {total} {noun}
+              {total === 1 ? "" : "s"}…
             </p>
             <div
               className="answer-running__bar"
@@ -60,7 +79,7 @@ export default function RunningBatch({ op, onCancelRun }: Props) {
             </div>
           </>
         ) : (
-          <Spinner label={`Answering questions… (${status})`} />
+          <Spinner label={`${judging ? "Judging answers" : "Answering questions"}… (${status})`} />
         )}
         <p className="u-text--muted p-text--small">
           This runs as a background operation — you can track or cancel it from the operations

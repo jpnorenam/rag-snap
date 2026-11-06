@@ -50,10 +50,11 @@ export interface ServiceStatus {
   // Inference detail.
   llm_model?: string;
 
-  // Tika detail.
+  // Tika and ragd detail: the service's version (for ragd, the snap version).
   version?: string;
 
   // ragd detail.
+  commit?: string;
   api_version?: string;
   listeners?: Listeners;
 }

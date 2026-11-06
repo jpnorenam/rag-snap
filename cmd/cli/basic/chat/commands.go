@@ -31,7 +31,7 @@ type slashCommand struct {
 var slashCommands = []slashCommand{
 	{name: cmdUseKnowledge},
 	{name: cmdUseKapa},
-	{name: cmdSearch, syntax: "[-k N] <query>"},
+	{name: cmdSearch, syntax: "[-k N] [" + knowledge.ShowSimilarFlag + "] <query>"},
 	{name: cmdSave, syntax: "[title]"},
 	{name: cmdHistory},
 }

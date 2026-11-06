@@ -182,6 +182,13 @@ async function requestForm<T>(path: string, form: FormData): Promise<ApiEnvelope
   return env;
 }
 
+// postSyncForm uploads a multipart form and expects a sync response, returning its
+// metadata.
+export async function postSyncForm<T>(path: string, form: FormData): Promise<T> {
+  const env = await requestForm<T>(path, form);
+  return env.metadata as T;
+}
+
 // postAsyncForm uploads a multipart form and expects an async operation (used by
 // file-upload ingest and archive import).
 export async function postAsyncForm<T>(

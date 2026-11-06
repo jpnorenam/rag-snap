@@ -298,6 +298,10 @@ func (c *KapaClient) Search(ctx context.Context, query string, limit int, source
 			Content:  chunk.Content,
 			SourceID: chunk.SourceURL,
 			Label:    LabelKapa,
+			// kapa.ai has already chosen these as relevant, and their scores
+			// are rank-derived, not the reranker scores MatchScoreThreshold
+			// is calibrated for, so they always count as matches.
+			Matched: true,
 		}
 	}
 	return hits, nil
@@ -328,11 +332,38 @@ func (s CombinedSearch) Err() error {
 	return nil
 }
 
-// SearchWithKapa runs local hybrid search over indexes and kapa.ai retrieval
-// over groups concurrently. Either side is skipped when it has no client or
+// SearchWithKapa is the local + kapa.ai search for the search surfaces (k
+// search, /search, the REST API): like SearchTop, k caps the local hits in
+// total across indexes. kapa.ai contributes up to k more.
+func SearchWithKapa(ctx context.Context, local *OpenSearchClient, indexes []string, query, lexicalQuery, embeddingModelID string,
+	k int, kapa *KapaClient, groups []string) CombinedSearch {
+	var localSearch localSearchFunc
+	if local != nil {
+		localSearch = local.SearchTop
+	}
+	return searchWithKapa(ctx, localSearch, indexes, query, lexicalQuery, embeddingModelID, k, kapa, groups)
+}
+
+// RetrieveWithKapa is the local + kapa.ai search for the chat RAG loop: like
+// Search, each index returns up to k hits, so every active base can contribute
+// context.
+func RetrieveWithKapa(ctx context.Context, local *OpenSearchClient, indexes []string, query, lexicalQuery, embeddingModelID string,
+	k int, kapa *KapaClient, groups []string) CombinedSearch {
+	var localSearch localSearchFunc
+	if local != nil {
+		localSearch = local.Search
+	}
+	return searchWithKapa(ctx, localSearch, indexes, query, lexicalQuery, embeddingModelID, k, kapa, groups)
+}
+
+// localSearchFunc is OpenSearchClient.Search or SearchTop.
+type localSearchFunc func(ctx context.Context, indexes []string, query, lexicalQuery, embeddingModelID string, k int) ([]SearchHit, error)
+
+// searchWithKapa runs local hybrid search over indexes and kapa.ai retrieval
+// over groups concurrently. Either side is skipped when it has no search or
 // nothing selected. It is the one implementation of the local + kapa.ai merge,
 // shared by the CLI search, chat retrieval and the daemon's search endpoint.
-func SearchWithKapa(ctx context.Context, local *OpenSearchClient, indexes []string, query, lexicalQuery, embeddingModelID string,
+func searchWithKapa(ctx context.Context, local localSearchFunc, indexes []string, query, lexicalQuery, embeddingModelID string,
 	k int, kapa *KapaClient, groups []string) CombinedSearch {
 	var (
 		res                 CombinedSearch
@@ -344,7 +375,7 @@ func SearchWithKapa(ctx context.Context, local *OpenSearchClient, indexes []stri
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			localHits, res.LocalErr = local.Search(ctx, indexes, query, lexicalQuery, embeddingModelID, k)
+			localHits, res.LocalErr = local(ctx, indexes, query, lexicalQuery, embeddingModelID, k)
 		}()
 	}
 	if kapa != nil && len(groups) > 0 {

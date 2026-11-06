@@ -13,6 +13,7 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
+	"github.com/jpnorenam/rag-snap/internal/buildinfo"
 	"github.com/jpnorenam/rag-snap/internal/chatstore"
 	"github.com/jpnorenam/rag-snap/internal/webui"
 )
@@ -371,6 +372,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	// path has two — the interview between them is conditioned on what triage found.
 	mux.HandleFunc("POST /1.0/answer/analyze", s.requireAuth(s.handleAnswerAnalyze))
 	mux.HandleFunc("POST /1.0/answer/analyze/generate", s.requireAuth(s.handleAnswerAnalyzeGenerate))
+	mux.HandleFunc("POST /1.0/answer/analyze/sheets", s.requireAuth(s.handleAnswerAnalyzeSheets))
 
 	// Check a manifest without running it. Synchronous: no model call, no run.
 	mux.HandleFunc("POST /1.0/answer/check", s.requireAuth(s.handleAnswerCheck))
@@ -424,19 +426,26 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 // Return server information.
 //
 // Server metadata plus a read-only, secret-free summary of effective config and
-// backend readiness for diagnostics.
+// backend readiness for diagnostics. "version" is the installed snap version
+// ("dev" outside a snap) and "commit" the source commit the daemon was built
+// from (a "-dirty" suffix marks uncommitted changes; omitted when unknown).
 //
 //	Responses:
 //	  200: syncResponse
 //	  403: errorResponse
 func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
-	respondSync(w, map[string]any{
+	info := map[string]any{
+		"version":        buildinfo.Version(),
 		"api_version":    apiVersion,
 		"api_extensions": s.extensions(),
 		"auth":           s.authState(r),
 		"backends":       s.backends.snapshot(),
 		"config":         s.configSummary(),
-	})
+	}
+	if c := buildinfo.Commit(); c != "" {
+		info["commit"] = c
+	}
+	respondSync(w, info)
 }
 
 // extensions returns the advertised feature list for this daemon.
@@ -447,10 +456,14 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 // unavailable rather than offering it and failing at submit time, so advertising it
 // unconditionally would defeat the point of advertising it at all.
 func (s *Server) extensions() []string {
-	out := make([]string, len(apiExtensions), len(apiExtensions)+1)
+	out := make([]string, len(apiExtensions), len(apiExtensions)+2)
 	copy(out, apiExtensions)
 	if ok, _ := s.analysisAvailable(); ok {
 		out = append(out, "answer_analyze")
+	}
+	// Advertised on the same terms: only when batch runs will actually be judged.
+	if ok, _ := s.judgeAvailable(); ok {
+		out = append(out, "answer_judge")
 	}
 	return out
 }

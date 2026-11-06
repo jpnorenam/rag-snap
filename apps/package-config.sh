@@ -14,6 +14,16 @@ register_package_key() {
   fi
 }
 
+# Chat backend wire protocol:
+#   sudo rag set chat.api=anthropic
+# openai    — OpenAI Chat Completions: a local Inference snap, or a third party's
+#             OpenAI-compatible route (e.g. Bedrock bedrock-runtime …/openai/v1). Default.
+# anthropic — Anthropic Messages API, e.g. Claude on Bedrock: chat.http.host=
+#             bedrock-runtime.<region>.amazonaws.com, chat.http.path=anthropic,
+#             chat.model=global.anthropic.claude-sonnet-5-5. chat.model is required (no model
+#             listing) and sampling temperature is not sent. CHAT_API_KEY is the bearer.
+register_package_key chat.api "openai"
+
 # Google Drive OAuth2 credentials:
 #   sudo rag set gdrive.client.id=<client-id>
 #   sudo rag set gdrive.client.secret=<client-secret>
@@ -57,6 +67,18 @@ register_package_key analysis.reasoning.questions "medium"
 register_package_key analysis.reasoning.strategy "high"
 register_package_key analysis.answer.words "100"
 register_package_key analysis.answer.limit "soft"
+
+# Answer judge. Every `answer batch` run is judged by Gemini: each answer is
+# checked against the context it was written from and given a confidence score,
+# rating and comment. It is ON by default (the Gemini agreement covers sending
+# answers and knowledge-base chunks) and needs GEMINI_API_KEY (same rules as
+# analysis above) plus a model. judge.model empty falls back to analysis.model.
+#   sudo rag set judge.enabled=false
+# judge.concurrency bounds the Gemini calls in flight; raise it on a higher quota tier.
+register_package_key judge.enabled "true"
+register_package_key judge.model ""
+register_package_key judge.reasoning "medium"
+register_package_key judge.concurrency "4"
 
 # REST API daemon (ragd) socket. Members of api.socket.group (plus root) may use
 # the local unix socket; access is enforced by the daemon's SO_PEERCRED check, not

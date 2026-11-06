@@ -148,7 +148,11 @@ func (c *Client) TriageWith(ctx context.Context, conv *Conveyance, cat *Catalogu
 	}
 	system := Grounding() + "\n\n" + cat.Prompt() + operatorSection(instructions)
 
-	parts := append([]part{textPart(triageInstruction)}, documentParts(conv)...)
+	instruction := triageInstruction
+	if conv.HasContextSheets() {
+		instruction += contextSheetsNote
+	}
+	parts := append([]part{textPart(instruction)}, documentParts(conv)...)
 
 	data, _, err := c.complete(ctx, "triage", system, parts, "rfp_triage", triageSchema(), c.settings.ReasoningStrategy, triageMaxOutputTokens)
 	if err != nil {

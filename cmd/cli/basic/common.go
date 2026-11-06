@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"time"
 
+	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
@@ -177,6 +178,18 @@ func kapaSettings(ctx *common.Context) (enabled bool, projectID, apiKey string) 
 		v, _, _ := credentials.Lookup(name)
 		return v
 	})
+}
+
+// chatBackend resolves the inference backend: the wire protocol selected by
+// chat.api (unset → openai) and the chat base URL from serverApiUrls. The daemon
+// resolves the same key the same way (internal/api clientCache.chatBackend).
+func chatBackend(ctx *common.Context, apiUrls map[string]string) (chat.BackendConfig, error) {
+	value, _ := config.GetString(ctx.Config, chat.ConfAPI)
+	api, err := chat.ResolveAPI(value)
+	if err != nil {
+		return chat.BackendConfig{}, err
+	}
+	return chat.BackendConfig{API: api, BaseURL: apiUrls[openAi]}, nil
 }
 
 func serverApiUrls(ctx *common.Context) (map[string]string, error) {

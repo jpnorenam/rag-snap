@@ -32,6 +32,10 @@ func TestSearchWithKapaSkipsUnselectedSources(t *testing.T) {
 	if len(res.Hits) != 2 || res.Hits[0].Content != "one" || res.Hits[1].Content != "two" || res.Hits[0].Index != KapaIndexName {
 		t.Errorf("hits = %+v, want kapa.ai hits in kapa.ai's order", res.Hits)
 	}
+	// Their rank-derived scores are not reranker scores, so they always match.
+	if !res.Hits[0].Matched || !res.Hits[1].Matched {
+		t.Errorf("kapa.ai hits matched = %v, %v, want both true", res.Hits[0].Matched, res.Hits[1].Matched)
+	}
 	if res.Kapa != 2 || res.Local != 0 {
 		t.Errorf("counts local=%d kapa=%d, want 0 and 2", res.Local, res.Kapa)
 	}

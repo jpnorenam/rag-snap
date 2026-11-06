@@ -91,10 +91,20 @@ func newClient(s Settings, baseURL string, verbose bool) (*Client, error) {
 	if err := Validate(s); err != nil {
 		return nil, err
 	}
+	api, err := newGenaiClient(baseURL)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{settings: s, api: api, verbose: verbose}, nil
+}
 
-	// Every field the SDK would otherwise resolve from the environment is set here,
-	// so GOOGLE_API_KEY, GOOGLE_GENAI_USE_VERTEXAI / _ENTERPRISE and
-	// GOOGLE_GEMINI_BASE_URL on the host are inert.
+// newGenaiClient builds the SDK client every Gemini call goes through — analysis and
+// the answer judge alike, so the two can never differ in where they send content.
+//
+// Every field the SDK would otherwise resolve from the environment is set here,
+// so GOOGLE_API_KEY, GOOGLE_GENAI_USE_VERTEXAI / _ENTERPRISE and
+// GOOGLE_GEMINI_BASE_URL on the host are inert.
+func newGenaiClient(baseURL string) (*genai.Client, error) {
 	api, err := genai.NewClient(context.Background(), &genai.ClientConfig{
 		APIKey:      resolveKey(),
 		Backend:     genai.BackendGeminiAPI,
@@ -103,7 +113,7 @@ func newClient(s Settings, baseURL string, verbose bool) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating the Gemini client: %w", err)
 	}
-	return &Client{settings: s, api: api, verbose: verbose}, nil
+	return api, nil
 }
 
 // Settings returns the resolved configuration. Safe to print: it carries no key.

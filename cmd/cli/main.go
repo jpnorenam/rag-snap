@@ -13,6 +13,7 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
 	"github.com/jpnorenam/rag-snap/cmd/cli/others"
 	"github.com/jpnorenam/rag-snap/cmd/cli/others/debug"
+	"github.com/jpnorenam/rag-snap/internal/buildinfo"
 	"github.com/jpnorenam/rag-snap/pkg/credentials"
 	"github.com/jpnorenam/rag-snap/pkg/storage"
 	"github.com/spf13/cobra"
@@ -44,7 +45,11 @@ func main() {
 			"Use this command to configure the active engine, or switch to an alternative engine.",
 		PersistentPreRunE: persistentPreRunE,
 		Use:               instanceName,
+		// --version names the build, as the UI footer does for ragd, so a CLI
+		// bug report can say which commit it came from.
+		Version: cliVersion(),
 	}
+	rootCmd.SetVersionTemplate("{{.Name}} {{.Version}}\n")
 
 	// Add custom text after the help message - only show service management if snap has services
 	if env.Snap() != "" {
@@ -107,4 +112,13 @@ func persistentPreRunE(cmd *cobra.Command, args []string) error {
 		return os.Setenv("VERBOSE", "true")
 	}
 	return nil
+}
+
+// cliVersion is the snap version and, when known, the commit the CLI was built
+// from: "0.0.9 (commit cd3ac8925556)".
+func cliVersion() string {
+	if c := buildinfo.Commit(); c != "" {
+		return fmt.Sprintf("%s (commit %s)", buildinfo.Version(), c)
+	}
+	return buildinfo.Version()
 }

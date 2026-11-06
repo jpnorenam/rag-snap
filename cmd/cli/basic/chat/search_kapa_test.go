@@ -50,7 +50,7 @@ func TestSearchKapaFailureIsReported(t *testing.T) {
 	if !strings.Contains(out, "Warning: kapa.ai search failed") {
 		t.Errorf("output = %q, want a kapa.ai failure warning", out)
 	}
-	if !strings.Contains(out, "No results found.") {
+	if !strings.Contains(out, knowledge.NoMatchesMessage("FAILKAPA query")) {
 		t.Errorf("output = %q, want the (empty) local results still shown", out)
 	}
 }

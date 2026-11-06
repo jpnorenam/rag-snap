@@ -29,6 +29,9 @@ const kapaBaseLabel = "kapa.ai"
 // searchResult is the API view of a single hit. Label is the hit's resolved
 // knowledge label (stored chunk label, with index-name fallback for chunks
 // ingested before labels existed), already resolved by the knowledge package.
+// Matched is true when the relevance score clears knowledge.MatchScoreThreshold;
+// clients show matched hits and hide the rest as similar results, so the
+// threshold lives only on the server.
 type searchResult struct {
 	Score     float64 `json:"score"`
 	Base      string  `json:"base"`
@@ -36,6 +39,7 @@ type searchResult struct {
 	CreatedAt string  `json:"created_at"`
 	Label     string  `json:"label"`
 	Content   string  `json:"content"`
+	Matched   bool    `json:"matched"`
 }
 
 // swagger:route POST /1.0/search search search
@@ -43,17 +47,28 @@ type searchResult struct {
 // Hybrid search over knowledge bases.
 //
 // Runs hybrid (neural + lexical) retrieval over the named bases. Requires a
-// configured embedding model when bases are given.
+// configured embedding model when bases are given. The count caps the total
+// number of local hits across all bases.
 //
-// "kapa_groups" (source-group ids) additionally searches kapa.ai, concurrently.
-// Local hits are listed first, ordered by score, followed by kapa.ai hits in
-// kapa.ai's order (their scores are rank-derived and not comparable); a kapa.ai
-// hit has base "kapa.ai" and label "kapa-canonical". Absent or empty
-// "kapa_groups" means kapa.ai is not queried. When kapa.ai is not configured or
-// its request fails, the local hits are still returned and the response's
-// top-level "warnings" says kapa.ai could not be applied. Likewise, when the
-// local search fails but kapa.ai succeeds, the kapa.ai hits are returned with a
-// warning; the request fails only when no queried source succeeded.
+// Each local hit's score is the cross-encoder reranker's relevance score: a
+// logit, positive when the reranker judges the chunk relevant to the query and
+// negative when it does not. Each hit carries "matched": true when its score
+// is greater than 0 (the match threshold, exclusive). Search always returns the
+// nearest chunks, even for a query that nothing matches, so clients should use
+// "matched" rather than comparing scores: the threshold is owned by the server
+// and may change with the reranker. A hit without "matched" comes from an
+// older daemon and counts as matching.
+//
+// "kapa_groups" (source-group ids) additionally searches kapa.ai, concurrently,
+// for up to "count" more hits. Local hits are listed first, ordered by score,
+// followed by kapa.ai hits in kapa.ai's order (their scores are rank-derived and
+// not comparable); a kapa.ai hit has base "kapa.ai", label "kapa-canonical" and
+// is always "matched". Absent or empty "kapa_groups" means kapa.ai is not
+// queried. When kapa.ai is not configured or its request fails, the local hits
+// are still returned and the response's top-level "warnings" says kapa.ai could
+// not be applied. Likewise, when the local search fails but kapa.ai succeeds,
+// the kapa.ai hits are returned with a warning; the request fails only when no
+// queried source succeeded.
 //
 //	Responses:
 //	  200: syncResponse
@@ -136,6 +151,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			CreatedAt: h.CreatedAt,
 			Label:     h.Label,
 			Content:   h.Content,
+			Matched:   h.Matched,
 		})
 	}
 	respondSyncWarnings(w, results, warnings)

@@ -326,6 +326,8 @@ function metadataToQAFile(metadata: Record<string, unknown>): QAFile {
   return {
     generated_at: typeof metadata.generated_at === "string" ? metadata.generated_at : "",
     model: typeof metadata.model === "string" ? metadata.model : "",
+    ...(typeof metadata.prompt === "string" && metadata.prompt ? { prompt: metadata.prompt } : {}),
+    ...(metadata.judge ? { judge: metadata.judge as QAFile["judge"] } : {}),
     results: (metadata.results as QAFile["results"]) ?? [],
   };
 }

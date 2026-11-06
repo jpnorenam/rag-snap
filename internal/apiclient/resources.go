@@ -81,6 +81,16 @@ type SearchHit struct {
 	CreatedAt string  `json:"created_at"`
 	Label     string  `json:"label"`
 	Content   string  `json:"content"`
+	// Matched is the daemon's verdict on whether the hit matches the query. It
+	// is nil when the daemon predates the field.
+	Matched *bool `json:"matched"`
+}
+
+// IsMatched reports whether the hit matches the query. A hit from a daemon
+// that predates the matched field counts as matching, which shows every hit,
+// as those daemons' clients did.
+func (h SearchHit) IsMatched() bool {
+	return h.Matched == nil || *h.Matched
 }
 
 // ListKnowledge returns all knowledge bases.
