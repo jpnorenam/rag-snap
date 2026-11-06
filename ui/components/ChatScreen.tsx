@@ -24,7 +24,9 @@ const SLASH_COMMANDS: { name: string; syntax: string }[] = [
 ];
 
 // A transient banner shown for save results and command feedback (distinct from
-// the fatal `error` connection banner).
+// the fatal `error` connection banner). Several can be shown at once, so one
+// never hides another (a resumed chat can report both a dropped kapa.ai
+// selection and skipped knowledge bases).
 interface Notice {
   type: "positive" | "information" | "caution";
   message: string;
@@ -44,7 +46,7 @@ export default function ChatScreen() {
   const [input, setInput] = useState("");
   const [connState, setConnState] = useState<ConnState>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
+  const [notices, setNotices] = useState<Notice[]>([]);
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
   const [kbState, setKbState] = useState<"loading" | "connected" | "unavailable">("loading");
   const [activeBases, setActiveBases] = useState<string[]>([]);
@@ -75,6 +77,15 @@ export default function ChatScreen() {
   const kapaGroupsRef = useRef<string[]>([]);
   activeBasesRef.current = activeBases;
   kapaGroupsRef.current = kapaGroups;
+
+  // addNotice shows a notice alongside any already shown, unless the same
+  // message is already up.
+  const addNotice = useCallback((n: Notice) => {
+    setNotices((prev) => (prev.some((p) => p.message === n.message) ? prev : [...prev, n]));
+  }, []);
+  const dismissNotice = useCallback((message: string) => {
+    setNotices((prev) => prev.filter((p) => p.message !== message));
+  }, []);
 
   // Matching slash commands while the user is still typing the command (before a
   // space starts the arguments), for the composer hint list.
@@ -154,15 +165,15 @@ export default function ChatScreen() {
           // The daemon's effective selection; an error means kapa.ai is not
           // configured there, so nothing was applied.
           setKapaGroups(frame.kapa_groups ?? []);
-          if (frame.error) setNotice({ type: "caution", message: frame.error });
+          if (frame.error) addNotice({ type: "caution", message: frame.error });
           break;
         case "warning":
           // Non-fatal: the turn keeps streaming (e.g. kapa.ai failed and the
           // answer uses local knowledge only).
-          setNotice({ type: "caution", message: frame.content ?? "warning" });
+          addNotice({ type: "caution", message: frame.content ?? "warning" });
           break;
         case "saved":
-          setNotice({ type: "positive", message: `Saved chat as “${frame.title ?? "Untitled chat"}”.` });
+          addNotice({ type: "positive", message: `Saved chat as “${frame.title ?? "Untitled chat"}”.` });
           break;
         case "error":
           setError(frame.error ?? "chat error");
@@ -177,7 +188,7 @@ export default function ChatScreen() {
           break;
       }
     },
-    [appendToAssistant]
+    [appendToAssistant, addNotice]
   );
 
   // openConnection starts a session (fresh or resumed) and opens its websocket,
@@ -233,14 +244,14 @@ export default function ChatScreen() {
       setKapaGroups(session.kapaGroups);
     }
     if (session.kapaUnavailable) {
-      setNotice({
+      addNotice({
         type: "caution",
         message: "kapa.ai is not configured on the daemon, so the selected source groups were not applied.",
       });
     }
     setConnState("connected");
     return conn;
-  }, [activeBases, connState, kapaGroups, openConnection, promptChoice]);
+  }, [activeBases, connState, kapaGroups, openConnection, promptChoice, addNotice]);
 
   // resumeChat starts a new session seeded from a saved chat, replacing the
   // transcript and active-base selection with the restored state.
@@ -252,6 +263,7 @@ export default function ChatScreen() {
       awaitingDone.current = false;
       setConnState("connecting");
       setError(null);
+      setNotices([]);
       try {
         const { conn, session } = await openConnection({ resume: id });
         connRef.current = conn;
@@ -263,7 +275,7 @@ export default function ChatScreen() {
           setActiveBases(session.restored.bases ?? []);
           setKapaGroups(session.restored.kapa_groups ?? []);
           if (session.restored.kapa_unavailable) {
-            setNotice({
+            addNotice({
               type: "caution",
               message:
                 "This chat used kapa.ai source groups, but kapa.ai is not configured on the daemon, so answers use local knowledge only.",
@@ -271,7 +283,7 @@ export default function ChatScreen() {
           }
           const dropped = session.restored.dropped_bases ?? [];
           if (dropped.length > 0) {
-            setNotice({
+            addNotice({
               type: "information",
               message: `Some saved knowledge bases no longer exist and were skipped: ${dropped.join(", ")}.`,
             });
@@ -283,7 +295,7 @@ export default function ChatScreen() {
         setConnState("error");
       }
     },
-    [openConnection]
+    [openConnection, addNotice]
   );
 
   // handleSlashInput routes a slash command entered in the composer. `/save`
@@ -297,7 +309,7 @@ export default function ChatScreen() {
           if (connRef.current && connState === "connected") {
             connRef.current.save(rest.join(" "));
           } else {
-            setNotice({
+            addNotice({
               type: "information",
               message: "There's nothing to save yet — ask a question first.",
             });
@@ -307,13 +319,13 @@ export default function ChatScreen() {
           setHistoryOpen(true);
           break;
         default:
-          setNotice({
+          addNotice({
             type: "information",
             message: `Unknown command ${verb}. Available: ${SLASH_COMMANDS.map((c) => c.name).join(", ")}.`,
           });
       }
     },
-    [connState]
+    [connState, addNotice]
   );
 
   const send = useCallback(async () => {
@@ -522,16 +534,20 @@ export default function ChatScreen() {
           </div>
         )}
 
-        {notice && (
-          <div className={`p-notification--${notice.type}`} role="status">
+        {notices.map((notice) => (
+          <div key={notice.message} className={`p-notification--${notice.type}`} role="status">
             <div className="p-notification__content">
               <p className="p-notification__message">{notice.message}</p>
-              <button type="button" className="p-button u-no-margin--bottom" onClick={() => setNotice(null)}>
+              <button
+                type="button"
+                className="p-button u-no-margin--bottom"
+                onClick={() => dismissNotice(notice.message)}
+              >
                 Dismiss
               </button>
             </div>
           </div>
-        )}
+        ))}
 
         {error && (
           <div className="p-notification--negative" role="alert">
