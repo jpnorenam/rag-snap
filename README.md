@@ -6,8 +6,9 @@ orchestrator over three external services:
 
 - **OpenSearch** (the `knowledge` store) — embeddings, ingest/search pipelines, indexes, ML models.
 - **An inference server** (the `chat` backend) — either a local
-  [Inference snap](https://github.com/canonical/inference-snaps) or a third-party
-  OpenAI-compatible API, e.g. [AWS Bedrock](docs/bedrock_guide.md).
+  [Inference snap](https://github.com/canonical/inference-snaps), a third-party
+  OpenAI-compatible API, or the Anthropic Messages API (e.g. Claude on
+  [AWS Bedrock](docs/bedrock_guide.md)).
 - **Apache Tika** (the `tika` service) — text extraction from documents. Bundled with the snap.
 
 You interact with it either through the CLI (`rag-cli.rag`) or a local browser UI served by the
@@ -21,6 +22,10 @@ export`/`k import` move knowledge bases between machines without re-embedding.
 
 ## Getting started
 
+```bash
+sudo snap install rag-cli
+```
+
 See **[INSTALL.md](INSTALL.md)** for the full install and configuration walkthrough — prerequisites,
 installing the snap, configuring backends, secrets, and enabling the browser UI.
 
@@ -32,3 +37,4 @@ installing the snap, configuring backends, secrets, and enabling the browser UI.
 - [docs/rest-api.md](docs/rest-api.md) — REST API (`ragd`) reference
 - [docs/bedrock_guide.md](docs/bedrock_guide.md) — AWS Bedrock API key walkthrough
 - [docs/opensearch-on-aws.md](docs/opensearch-on-aws.md) — create a dedicated OpenSearch backend on AWS
+- [docs/release.md](docs/release.md) — release checklist for maintainers

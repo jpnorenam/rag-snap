@@ -24,6 +24,39 @@ register_package_key() {
 #             listing) and sampling temperature is not sent. CHAT_API_KEY is the bearer.
 register_package_key chat.api "openai"
 
+# Chat backend endpoint and model. Registered empty: there is no default backend,
+# and an empty value reads exactly like an unset key ("config key ... is not set").
+# Registering them lets a plain user-layer `rag set chat.http.host=...` work
+# without --package. Examples (Claude on Bedrock):
+#   sudo rag set chat.http.host=bedrock-runtime.us-east-2.amazonaws.com
+#   sudo rag set chat.http.port=443
+#   sudo rag set chat.http.tls=true
+#   sudo rag set chat.http.path=anthropic
+#   sudo rag set chat.model=global.anthropic.claude-sonnet-5-5
+register_package_key chat.http.host ""
+register_package_key chat.http.port ""
+register_package_key chat.http.path ""
+register_package_key chat.http.tls ""
+register_package_key chat.model ""
+
+# Knowledge store (OpenSearch). Defaults to a local OpenSearch snap; point it at a
+# remote cluster with, e.g.:
+#   sudo rag set knowledge.http.host=10.0.0.5
+register_package_key knowledge.http.host "127.0.0.1"
+register_package_key knowledge.http.port "9200"
+register_package_key knowledge.http.tls "true"
+
+# Embedding and rerank model IDs, written by `rag knowledge init` (through ragd) or
+# set by hand from its output. Registered empty until then.
+register_package_key knowledge.model.embedding ""
+register_package_key knowledge.model.rerank ""
+
+# Bundled Tika server (the tika-server daemon). Fixed: tika-start.sh listens on
+# 127.0.0.1:9998, so these only change if that script does.
+register_package_key tika.http.host "127.0.0.1"
+register_package_key tika.http.port "9998"
+register_package_key tika.http.path "tika"
+
 # Google Drive OAuth2 credentials:
 #   sudo rag set gdrive.client.id=<client-id>
 #   sudo rag set gdrive.client.secret=<client-secret>
@@ -87,7 +120,10 @@ register_package_key judge.concurrency "4"
 # group members can reach it; the peercred check is the gate.
 #   sudo rag set api.socket.group=<group>
 #   sudo rag set api.socket.mode=<mode>
-register_package_key api.socket.group "rag"
+# The default is `sudo`: on Ubuntu the installing user is in it, and its members
+# can already act as root, so the default grants nobody new access. (It was `rag`,
+# a group that normally does not exist; installs that stored it keep it.)
+register_package_key api.socket.group "sudo"
 register_package_key api.socket.mode "0666"
 
 # Opt-in loopback (local REST API + browser UI) listener, OFF by default. The bind

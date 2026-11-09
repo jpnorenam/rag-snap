@@ -1,13 +1,33 @@
 name: rag-cli
 base: core26
 
-version: &snap-version "0.0.9"
-summary: RAG CLI application
+# The version comes from the git tag being built (v1.0.0 -> 1.0.0); see the
+# go-cli part's override-build, which calls `craftctl set version=...`.
+adopt-info: go-cli
+title: RAG CLI
+summary: Build local knowledge bases and answer questions and RFPs with them
 description: |
-  This snap configures OpenSearch snap models, pipelines, and indexes
-  for a RAG implementation connected to the Inference snap or third-party inference services.
+  rag-cli builds knowledge bases from your documents, web pages and repositories,
+  and answers questions grounded in them, from the command line or a local browser UI.
 
-grade: devel
+  It orchestrates three services:
+
+  * OpenSearch stores the embeddings and runs retrieval and reranking.
+  * A chat backend generates the answers: Claude through the Anthropic Messages API
+    (for example on AWS Bedrock), any OpenAI-compatible API, or a local Inference snap.
+  * Apache Tika, bundled in this snap, extracts text from documents.
+
+  Beyond interactive chat, `rag answer batch` answers a whole questionnaire (such as an
+  RFP) from a manifest and exports the results. Knowledge bases can be exported and
+  imported between machines without re-embedding.
+website: https://github.com/jpnorenam/rag-snap
+source-code: https://github.com/jpnorenam/rag-snap
+issues: https://github.com/jpnorenam/rag-snap/issues
+# license: PENDING. The license, the publisher account and the listing visibility
+# (public or private) for the 1.0.0 release are pending a decision by the repository
+# owner (JP). Fill this in before tagging v1.0.0; see docs/release.md.
+
+grade: stable
 # confinement: devmode
 confinement: strict
 
@@ -56,7 +76,7 @@ parts:
   go-cli:
     plugin: go
     build-snaps:
-      - go/1.24/stable
+      - go/1.26/stable
       - node/20/stable
     # git reads the commit the snap is built from (shown in the UI footer).
     build-packages:
@@ -94,6 +114,13 @@ parts:
         COMMIT="${COMMIT}-dirty"
       fi
       echo "Building from commit: ${COMMIT:-unknown}"
+
+      # Snap version from the nearest v* tag (see snap/local/derive-version.sh);
+      # the build fails if it is not a valid snap version.
+      case "${COMMIT}" in *-dirty) DIRTY=dirty ;; *) DIRTY= ;; esac
+      VERSION="$(sh "${CRAFT_PROJECT_DIR}/snap/local/derive-version.sh" "${CRAFT_PROJECT_DIR}" ${DIRTY})"
+      echo "Snap version: ${VERSION}"
+      craftctl set version="${VERSION}"
       # -buildvcs=false: the commit is injected explicitly above, so Go must not
       # try (and possibly fail) to stamp VCS info from the copied tree.
       LDFLAGS="-w -s -X github.com/jpnorenam/rag-snap/internal/buildinfo.commit=${COMMIT}"
@@ -204,8 +231,10 @@ apps:
       - desktop
 
   tika-server:
+    # Enabled and started on install: it needs no secrets or config, and listens on
+    # 127.0.0.1 only (tika-start.sh). Disable with
+    # `sudo snap stop --disable rag-cli.tika-server`.
     daemon: simple
-    install-mode: disable
     command: bin/tika-start.sh
     restart-condition: always
     restart-delay: 20s
@@ -225,8 +254,10 @@ apps:
       LD_LIBRARY_PATH: "${LD_LIBRARY_PATH}:${KNN_LIB_DIR}"
 
   ragd:
-    # REST API daemon. Opt-in like tika-server: present but disabled on install,
-    # started explicitly with `snap start rag-cli.ragd`. Runs as root. The daemon
+    # REST API daemon. Opt-in: present but disabled on install, and started with
+    # `snap start --enable rag-cli.ragd` once its secrets are in place (a setup step
+    # will do this). It must not start at install: while running it serves every CLI
+    # command, and without secrets those commands fail with 401. Runs as root. The daemon
     # creates the unix socket itself and chmods it world-connectable (0666); it
     # does NOT chown it to api.socket.group, because the strict-confinement seccomp
     # profile denies chowning to an arbitrary group (it would crash the daemon —

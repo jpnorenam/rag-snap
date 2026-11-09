@@ -22,13 +22,17 @@ process state.
 
 ### Enabling the services at boot
 
-Both the Tika and `ragd` daemons ship as `install-mode: disable`, and the OpenSearch snap does the
-same. That means snapd creates their systemd units but never enables them, so **a freshly installed
-machine comes back from every reboot with all services down** until they are enabled once:
+`rag-cli.tika-server` is enabled and started when the snap is installed. It needs no secrets, and
+it listens on `127.0.0.1` only, so it isn't reachable from the network. To turn it off:
+`sudo snap stop --disable rag-cli.tika-server`.
+
+`rag-cli.ragd` ships as `install-mode: disable`, and the OpenSearch snap does the same: snapd
+creates their systemd units but doesn't enable them, so they stay down across reboots until you
+enable them once. `ragd` stays off on purpose: while it runs it serves every CLI command, so start
+it only once its secrets are in place (see [INSTALL.md](../INSTALL.md#secrets)):
 
 ```bash
 sudo snap start --enable opensearch
-sudo snap start --enable rag-cli.tika-server
 sudo snap start --enable rag-cli.ragd      # only if you use the REST API or web UI
 ```
 
@@ -44,9 +48,10 @@ rag-cli.tika-server   enabled  active  -
 rag-cli.ragd          enabled  active  -
 ```
 
-This is a one-time operation per machine. It survives reboots and snap refreshes: `install-mode`
-applies only to a service being installed for the first time, never to a refresh of one that is
-already enabled.
+This is a one-time operation per machine. It survives reboots and snap refreshes: install modes
+apply only to a service being installed for the first time, and a refresh keeps each service's
+enabled or disabled state. An install older than 1.0.0 whose Tika was never enabled therefore stays
+that way after refreshing; run `sudo snap start --enable rag-cli.tika-server` once.
 
 > **`snap enable` is not the command you want.** `snap enable <snap>` controls whether the whole
 > snap is available at all, and reports `already enabled` when it has nothing to do — it does not

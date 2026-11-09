@@ -29,9 +29,11 @@ surface — the loopback listener binds `127.0.0.1` only and refuses any non-loo
 > **⚠️ Group membership is root-equivalent for the RAG stack.**
 > A connection over the socket is granted **full, unscoped access** to every endpoint —
 > there is no per-endpoint authorization. Any user in the configured access group (default
-> `rag`) can create and delete knowledge bases, ingest and export data, run chat and batch
+> `sudo`) can create and delete knowledge bases, ingest and export data, run chat and batch
 > answering, and read the daemon's effective configuration. Treat membership in this group
-> as equivalent to root access over the RAG stack and grant it accordingly.
+> as equivalent to root access over the RAG stack and grant it accordingly. The default, `sudo`,
+> is a group whose members can already become root, so it grants nobody new power, but it does
+> let them use the API without a password prompt. Pick a narrower group if that matters.
 
 Access is decided per connection from the peer's operating-system credentials
 (`SO_PEERCRED`). A peer is admitted only if its effective user is `root` or a member of the
@@ -102,7 +104,7 @@ Two package-scoped config keys (user-overridable) control the socket:
 
 | Key | Default | Purpose |
 |---|---|---|
-| `api.socket.group` | `rag` | Host group whose members (plus `root`) are granted access. Enforced by the daemon's `SO_PEERCRED` check, **not** by the socket's file ownership. |
+| `api.socket.group` | `sudo` | Host group whose members (plus `root`) are granted access. Installs older than 1.0.0 keep the value they stored (often `rag`). Enforced by the daemon's `SO_PEERCRED` check, **not** by the socket's file ownership. |
 | `api.socket.mode` | `0666` | Octal file mode for the socket. Defaults to world-connectable; the peercred check is the access gate. |
 
 The daemon creates the socket at `$SNAP_COMMON/ragd/unix.socket`
@@ -121,8 +123,9 @@ To grant a user access, add them to the group and start a fresh login session (o
 so the new membership is visible to the peercred check:
 
 ```bash
-# Override the access group if desired (must already exist as a package key)
-sudo rag set api.socket.group=rag
+# Override the access group if desired, e.g. a dedicated group narrower than sudo
+sudo rag-cli.rag set --package api.socket.group=rag
+sudo snap restart rag-cli.ragd
 
 # Add a user to the group, then start a new session so the membership takes effect.
 # No daemon restart is needed — the peercred check reads group membership live.
@@ -135,19 +138,19 @@ message naming the group to join.
 
 ### Using the CLI without `sudo`
 
-The default group, `rag`, usually doesn't exist on a fresh host, so until you act only `root`
-can reach the daemon. Running the CLI as `sudo` is **not** a workaround: the snap's `home`
-interface doesn't let `root` read files in another user's home directory, so any command that
-takes a file from your home fails:
+The default group is `sudo`, which the installing user on Ubuntu is already in, so on a fresh
+1.0.0+ install you can run the CLI as yourself with no setup. Run it that way: using `sudo` is
+**not** equivalent, because the snap's `home` interface doesn't let `root` read files in another
+user's home directory, so any command that takes a file from your home fails:
 
 ```
 $ sudo rag-cli.rag answer batch ./prompt.yaml
 Error: loading batch manifest: reading manifest file: open ./prompt.yaml: permission denied
 ```
 
-Run without `sudo` and give your own user access instead. The quickest way is to point
-`api.socket.group` at a group you're already in. The daemon reads this key at startup, so
-restart it after the change:
+If you're not in the access group (for example, an install older than 1.0.0 that kept the old
+`rag` default, which usually doesn't exist), point `api.socket.group` at a group you're already
+in. The daemon reads this key at startup, so restart it after the change:
 
 ```bash
 sudo rag-cli.rag set --package api.socket.group=sudo   # any existing group you belong to

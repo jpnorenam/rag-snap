@@ -36,8 +36,8 @@ done
 snapctl unset config.package.analysis.http || true
 snapctl unset config.user.analysis.http || true
 
-# A refresh preserves whatever startup state the services already had, so an operator who
-# enabled them once needs nothing here. Only a service that has never been enabled stays
-# disabled, and it needs --enable to survive the next reboot:
+# A refresh preserves whatever startup state the services already had. tika-server is
+# enabled on fresh installs, but an install that predates that and never enabled it stays
+# disabled after this refresh; enable it once, with --enable so it survives reboots:
 #
-# snap start --enable $SNAP_INSTANCE_NAME.tika-server
+#   sudo snap start --enable $SNAP_INSTANCE_NAME.tika-server

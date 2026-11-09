@@ -389,7 +389,7 @@ rag-cli.rag ui --no-browser
 
 When the listener is disabled, `rag ui` explains how to enable it (via
 `api.loopback.enabled`) rather than failing silently. You must be a member of the API access
-group (default `rag`) to reach the daemon over the unix socket and launch the UI.
+group (default `sudo`) to reach the daemon over the unix socket and launch the UI.
 
 ---
 
@@ -403,7 +403,7 @@ credentials do not exist for TCP connections, so the loopback listener authentic
   (`0600`)** under `$SNAP_COMMON` (`ragd/ui.token`). Under strict confinement the daemon
   cannot chown the file to the API access group, so it does **not** try to; clients obtain the
   token value over the **peercred-gated `GET /1.0`** instead of reading the file. Any user who
-  can reach the unix socket (root or a member of the API access group, default `rag`) can
+  can reach the unix socket (root or a member of the API access group, default `sudo`) can
   therefore retrieve it — the same trust boundary as the socket. The token is reused across
   restarts.
 - Requests to `/1.0/...` over the loopback listener must present the token (as a

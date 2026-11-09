@@ -27,8 +27,8 @@ func StatusCommand(ctx *common.Context) *cobra.Command {
 
 	cobraCmd := &cobra.Command{
 		Use:               "status",
-		Short:             "Show the status",
-		Long:              "Show the status of the inference snap",
+		Short:             "Show the status of rag-cli and its backends",
+		Long:              "Show the status of rag-cli and its backends: the knowledge store (OpenSearch), the chat backend, and Tika",
 		GroupID:           groupID,
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: cobra.NoFileCompletions,

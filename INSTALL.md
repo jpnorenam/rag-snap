@@ -81,8 +81,7 @@ Pick one:
 
 ### Tika (the `tika` service)
 
-Bundled with the snap — nothing to install separately. It's started in
-[Configure the backends](#configure-the-backends) below.
+Bundled with the snap — nothing to install or configure. It starts when the snap is installed.
 
 ---
 
@@ -91,8 +90,14 @@ Bundled with the snap — nothing to install separately. It's started in
 From the Snap store:
 
 ```bash
-sudo snap install rag-cli --channel edge
+sudo snap install rag-cli
 ```
+
+This installs the `stable` release. For the latest build of `main`, add `--channel edge`.
+
+Installing starts the bundled Tika server (`rag-cli.tika-server`) and registers working defaults
+for it and for a local OpenSearch, so neither needs configuring unless yours is elsewhere. The
+`ragd` daemon stays off until you enable it (see [Enable the browser UI](#enable-the-browser-ui)).
 
 Or build and install locally:
 
@@ -105,9 +110,12 @@ sudo snap install --dangerous ./rag-cli_*.snap
 
 ## Configure the backends
 
-Set these with `sudo rag-cli.rag set --package <key>=<value>`. Substitute your real hosts —
-`127.0.0.1` below is just the common case; a remote/external OpenSearch cluster works the same
-way, just use its real host/port.
+Only the chat backend has no default, so it is the one thing you must configure. Set it with
+`sudo rag-cli.rag set --package <key>=<value>`, as below. A plain `rag-cli.rag set <key>=<value>`
+(without `--package`) is also accepted for these keys, but it stores an override that takes
+precedence over every package value from then on, including any team defaults applied later. Use
+`--package` unless you specifically want an override. `rag-cli.rag get <key>` shows the effective
+value.
 
 `chat.api` selects the wire protocol the chat backend speaks: `openai` (OpenAI Chat
 Completions, the default) or `anthropic` (the Anthropic Messages API).
@@ -158,47 +166,34 @@ sudo rag-cli.rag set --package chat.http.port="8324"
 sudo rag-cli.rag set --package chat.http.path="v1"
 ```
 
-**Knowledge (OpenSearch) — use your cluster's real host:**
+**Knowledge (OpenSearch):** the default is a local OpenSearch snap at `127.0.0.1:9200` over TLS.
+To use a remote or external cluster, set its real host (and port, if not 9200):
 
 ```bash
-sudo rag-cli.rag set --package knowledge.http.host="127.0.0.1"   # or a remote host, e.g. a cluster IP
+sudo rag-cli.rag set --package knowledge.http.host="10.0.0.5"   # your cluster's host
 sudo rag-cli.rag set --package knowledge.http.port="9200"
-sudo rag-cli.rag set --package knowledge.http.tls="true"
 ```
 
-**Tika (bundled, always local):**
-
-```bash
-sudo rag-cli.rag set --package tika.http.host="127.0.0.1"
-sudo rag-cli.rag set --package tika.http.port="9998"
-sudo rag-cli.rag set --package tika.http.path="tika"
-sudo snap start --enable rag-cli.tika-server
-```
+**Tika:** bundled and preconfigured (`127.0.0.1:9998`, path `tika`). It starts at install and
+listens on loopback only. If you never ingest documents, you can turn it off with
+`sudo snap stop --disable rag-cli.tika-server`.
 
 Check everything with `rag-cli.rag status`.
 
-`--enable` matters: the Tika daemon ships disabled at boot, and plain `snap start` would run it
-only until the next reboot. The same applies to OpenSearch and, if you use the REST API or web UI,
-to `ragd`:
+Enable OpenSearch so it survives reboots. `--enable` matters: plain `snap start` would run it only
+until the next reboot. The same applies to `ragd`, which you enable later in
+[Enable the browser UI](#enable-the-browser-ui), once its secrets are in place:
 
 ```bash
 sudo snap start --enable opensearch
-sudo snap start --enable rag-cli.ragd
 ```
 
-Confirm both columns read `enabled active` — `snap services | grep -E 'opensearch|rag-cli'`. See
+Confirm the services read `enabled active` with `snap services | grep -E 'opensearch|rag-cli'`
+(`rag-cli.ragd` stays `disabled inactive` until you enable it). See
 [Services](docs/usage.md#services) for the reasoning and for recovery after an unclean shutdown.
 
-If you run `ragd`, give your own user access to it so CLI commands don't need `sudo`. Under
-`sudo`, the snap can't read files in your home directory, such as a batch manifest. The default
-access group `rag` usually doesn't exist, so point it at a group you're already in:
-
-```bash
-sudo rag-cli.rag set --package api.socket.group=sudo
-sudo snap restart rag-cli.ragd
-```
-
-See [Using the CLI without `sudo`](docs/rest-api.md#using-the-cli-without-sudo) for the details.
+> **Upgrading from an install older than 1.0.0:** a refresh keeps every value and service state you
+> already had. If you never enabled Tika, run `sudo snap start --enable rag-cli.tika-server` once.
 
 ---
 
@@ -342,7 +337,13 @@ rag-cli.rag ui
 rag-cli.rag ui --no-browser
 ```
 
-You must be `root` or a member of the daemon's access group (default `rag`) to reach it. See
+You must be `root` or a member of the daemon's access group to reach it. The default group is
+`sudo`, which the installing user on Ubuntu is already in, so run CLI commands as yourself rather
+than with `sudo`: under `sudo`, the snap can't read files in your home directory, such as a batch
+manifest. To use another group, run `sudo rag-cli.rag set --package api.socket.group=<group>` and
+then `sudo snap restart rag-cli.ragd`. Installs older than 1.0.0 keep the group they stored (often
+`rag`, which usually doesn't exist); switch them to `sudo` the same way. See
+[Using the CLI without `sudo`](docs/rest-api.md#using-the-cli-without-sudo) and
 [docs/local-ui.md](docs/local-ui.md) for navigating the UI, the trust model, and troubleshooting.
 
 ---

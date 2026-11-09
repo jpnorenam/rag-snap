@@ -48,7 +48,9 @@ const (
 
 // Defaults applied when a key is unset.
 const (
-	defaultSocketGroup = "rag"
+	// defaultSocketGroup matches the package default registered by
+	// apps/package-config.sh: on Ubuntu the installing user is in `sudo`.
+	defaultSocketGroup = "sudo"
 	// defaultSocketMode is 0666 (world-connectable) because the socket cannot be
 	// chowned to api.socket.group under strict confinement; the SO_PEERCRED check
 	// is the access gate, not the file mode. See socket.go / design Decision 1.

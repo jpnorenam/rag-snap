@@ -7,32 +7,18 @@ exec 1> >(tee >(logger --tag=$tag))
 # Redirect stderr to stderr+syslog
 exec 2> >(logger --stderr --priority error --tag=$tag)
 
-#
-# Set generic configurations
-#
+# Backend secrets (OPENSEARCH_USERNAME/PASSWORD, CHAT_API_KEY, KAPA_API_KEY, GEMINI_API_KEY)
+# are never set here: this hook is one-shot and does not persist into the ragd daemon's
+# runtime environment. See the `ragd` app's environment comment in snapcraft.yaml for how
+# operators inject them.
 
-# sudo $SNAP_INSTANCE_NAME set --package chat.http.host="127.0.0.1"
-# sudo $SNAP_INSTANCE_NAME set --package chat.http.port="8324"
-# sudo $SNAP_INSTANCE_NAME set --package chat.http.path="v1"
-# sudo $SNAP_INSTANCE_NAME set --package knowledge.http.host="127.0.0.1"
-# sudo $SNAP_INSTANCE_NAME set --package knowledge.http.port="9200"
-# sudo $SNAP_INSTANCE_NAME set --package knowledge.http.tls="true"
-# sudo $SNAP_INSTANCE_NAME set --package tika.http.path="tika"
-# sudo $SNAP_INSTANCE_NAME set --package tika.http.port="9998"
-# sudo $SNAP_INSTANCE_NAME set --package tika.http.host="127.0.0.1"
-# sudo $SNAP_INSTANCE_NAME set --package verbose="false"
-#
-# Backend secrets (OPENSEARCH_USERNAME/PASSWORD, CHAT_API_KEY, KAPA_API_KEY) are never set here: this hook
-# is one-shot and does not persist into the ragd daemon's runtime environment. See the
-# `ragd` app's environment comment in snapcraft.yaml for how operators inject them.
-
-# Register the package-layer config keys (shared with post-refresh).
+# Register the package-layer config keys and their defaults (shared with post-refresh):
+# the bundled Tika, a local OpenSearch, and empty chat/model keys. See package-config.sh.
 . "$SNAP/bin/package-config.sh"
+
+# Services: snapd enables and starts tika-server on install (it needs no secrets).
+# ragd is install-mode: disable on purpose: once running it serves every CLI command,
+# and right after install it has no secrets, so commands would fail with 401. Enable it
+# once its secrets are in place, with --enable so it survives reboots:
 #
-# Both daemons below are install-mode: disable, so snapd creates their systemd units but
-# leaves them stopped AND disabled at boot. Always start them with --enable: plain
-# `snap start` runs them for the current boot only, and they vanish at the next reboot.
-# (`snap enable <snap>` is unrelated -- it controls the whole snap, not service startup.)
-#
-# sudo snap start --enable $SNAP_INSTANCE_NAME.tika-server
-# sudo snap start --enable $SNAP_INSTANCE_NAME.ragd
+#   sudo snap start --enable $SNAP_INSTANCE_NAME.ragd
