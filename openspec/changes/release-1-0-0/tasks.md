@@ -26,7 +26,7 @@
 
 - [x] 5.1 Add a `checks` job to `.github/workflows/snap-publish.yml`: `actions/setup-go` (Go 1.26), `go vet ./...`, `go test ./...`, then `actions/setup-node` and `npm ci && npm run build` in `ui/`
 - [x] 5.2 Make `build-and-publish` `needs: checks`, and set `fetch-depth: 0` on its checkout so tags reach the snap build
-- [ ] 5.3 Run the workflow by manual dispatch on the branch: confirm checks run, the snap builds with a `0.0.0+git…` or `1.0.0+git…` version, and nothing is published
+- [x] 5.3 Run the workflow by manual dispatch on the branch: confirm checks run, the snap builds with a `0.0.0+git…` or `1.0.0+git…` version, and nothing is published
 
 ## 6. Documentation
 
