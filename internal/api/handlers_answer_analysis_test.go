@@ -176,7 +176,7 @@ func TestAnswerCheckReturnsFindingsSynchronously(t *testing.T) {
 		t.Error("references must be reported as not checked when the knowledge store is unreachable")
 	}
 	if got.KapaChecked {
-		t.Error("kapa must be reported as not checked: the daemon does not wire kapa retrieval")
+		t.Error("kapa must be reported as not checked: this daemon has no kapa client")
 	}
 }
 
@@ -196,7 +196,7 @@ func TestAnswerCheckRejectsAManifestWithNoQuestions(t *testing.T) {
 }
 
 func TestAnswerCheckDoesNotFlagKapaGroupsItCannotVerify(t *testing.T) {
-	// The daemon has no kapa client, so a manifest naming kapa groups must not have
+	// This daemon has no kapa client, so a manifest naming kapa groups must not have
 	// them reported as non-existent — that would be a fabricated finding on a valid
 	// manifest.
 	sock, _ := startTestServer(t, map[string]string{})
@@ -204,6 +204,7 @@ func TestAnswerCheckDoesNotFlagKapaGroupsItCannotVerify(t *testing.T) {
 
 	body := `{
 	  "version": "1.0",
+	  "kapa_source_groups": ["g-maas"],
 	  "prompt": "Be direct, no filler. At most 100 words. Say when no context is available.",
 	  "questions": [{"id": "C1", "question": "SR-IOV"}]
 	}`
@@ -231,9 +232,10 @@ func TestAnswerCheckDoesNotFlagKapaGroupsItCannotVerify(t *testing.T) {
 // in the shape POST /1.0/answer/batch accepts, with no field dropped in transit.
 func TestGeneratedManifestShapeIsAcceptedByTheBatchEndpoint(t *testing.T) {
 	generated := &chat.BatchManifest{
-		Version:        "1.0",
-		KnowledgeBases: []string{"vendor-rfp"},
-		Prompt:         "Be direct, no filler. At most 100 words. Say when no context is available.",
+		Version:          "1.0",
+		KnowledgeBases:   []string{"vendor-rfp"},
+		KapaSourceGroups: []string{"g-maas"},
+		Prompt:           "Be direct, no filler. At most 100 words. Say when no context is available.",
 		Domains: []chat.Domain{
 			{Match: "C*", Context: "Section C.", Keywords: chat.KeywordList{"SR-IOV"}},
 		},
@@ -262,6 +264,9 @@ func TestGeneratedManifestShapeIsAcceptedByTheBatchEndpoint(t *testing.T) {
 	}
 	if len(round.KnowledgeBases) != 1 || round.KnowledgeBases[0] != "vendor-rfp" {
 		t.Errorf("knowledge_bases dropped: %v", round.KnowledgeBases)
+	}
+	if len(round.KapaSourceGroups) != 1 || round.KapaSourceGroups[0] != "g-maas" {
+		t.Errorf("kapa_source_groups dropped: %v", round.KapaSourceGroups)
 	}
 	if round.Prompt != generated.Prompt {
 		t.Error("prompt dropped or altered in transit")

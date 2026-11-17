@@ -292,7 +292,7 @@ func TestCheckUnknownKapaGroupIsADefect(t *testing.T) {
 }
 
 func TestCheckDoesNotFlagKapaGroupsWhenKapaWasNotConsulted(t *testing.T) {
-	// The daemon does not wire kapa retrieval, so it passes KapaChecked false with an
+	// When kapa is not configured, or its listing failed, the caller passes KapaChecked false with an
 	// empty list. Conflating that with "kapa has no groups" would report every kapa
 	// group in a perfectly valid manifest as a defect — a fabricated finding.
 	m := &BatchManifest{

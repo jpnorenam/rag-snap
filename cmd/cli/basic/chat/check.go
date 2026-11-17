@@ -115,9 +115,9 @@ type CheckRefs struct {
 	// KapaGroups holds the source groups that exist, and KapaChecked says whether
 	// kapa was consulted at all. The two are separate because an empty list means
 	// something quite different in each case: consulted-and-empty makes every named
-	// group a defect, while not-consulted must report nothing. The daemon does not
-	// wire kapa retrieval, so it always passes KapaChecked false, and conflating the
-	// two would flag every kapa group in a valid manifest.
+	// group a defect, while not-consulted must report nothing. Callers leave
+	// KapaChecked false when kapa is not configured or its listing failed, since
+	// conflating the two would flag every kapa group in a valid manifest.
 	KapaGroups  []string
 	KapaChecked bool
 }

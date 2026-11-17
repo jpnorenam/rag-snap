@@ -82,9 +82,10 @@ func (s *Server) analysisClient() (*analysis.Client, *analysis.Catalogue, error)
 	if err != nil {
 		return nil, nil, err
 	}
-	// Kapa retrieval is not wired into the daemon, so the catalogue offers no source
-	// groups here and a generated manifest selects none.
-	cat, err := analysis.LoadCatalogue(context.Background(), knowledgeClient, nil)
+	// The kapa.ai source groups are offered alongside the knowledge bases when the
+	// daemon resolved a kapa client. A nil client, or a listing that fails, leaves the
+	// catalogue without groups, so a generated manifest selects none.
+	cat, err := analysis.LoadCatalogue(context.Background(), knowledgeClient, s.kapa)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -555,25 +556,32 @@ func (s *Server) checkRefs() *chat.CheckRefs {
 	for _, kb := range cat.KnowledgeBases {
 		refs.KnowledgeBases = append(refs.KnowledgeBases, kb.Name)
 	}
-	// KapaChecked stays false: kapa retrieval is not wired into the daemon, so it
-	// cannot report whether a source group exists, and claiming otherwise would flag
-	// every kapa group in a valid manifest.
+	// Kapa is reported as checked only when the source groups were actually listed.
+	// Without a client, or when the listing fails, KapaChecked stays false: marking it
+	// checked with an empty list would flag every kapa group in a valid manifest.
+	if s.kapa != nil {
+		if groups, err := s.kapaGroups.get(context.Background(), s.kapa.ListSourceGroups); err == nil {
+			refs.KapaChecked = true
+			for _, g := range groups {
+				// Both forms resolve, as at run time: a manifest may name a group by
+				// its identifier or its display name.
+				refs.KapaGroups = append(refs.KapaGroups, g.ID, g.Name)
+			}
+		}
+	}
 	return refs
 }
 
 // manifestToJSON renders a manifest in the shape POST /1.0/answer/batch accepts, so a
 // client can submit what it received without converting anything.
 func manifestToJSON(m *chat.BatchManifest) batchManifestRequest {
-	// KapaSourceGroups is deliberately not carried: the batch endpoint has no such
-	// field because kapa retrieval is not wired into the daemon, and a field accepted
-	// then silently ignored would be worse than an absent one. A manifest generated
-	// here selects no kapa groups anyway, since the catalogue offers none.
 	out := batchManifestRequest{
-		Version:        m.Version,
-		Model:          m.Model,
-		KnowledgeBases: m.KnowledgeBases,
-		Prompt:         m.Prompt,
-		PromptRef:      m.PromptRef,
+		Version:          m.Version,
+		Model:            m.Model,
+		KnowledgeBases:   m.KnowledgeBases,
+		KapaSourceGroups: m.KapaSourceGroups,
+		Prompt:           m.Prompt,
+		PromptRef:        m.PromptRef,
 	}
 	for _, d := range m.Domains {
 		out.Domains = append(out.Domains, batchDomainRequest{
