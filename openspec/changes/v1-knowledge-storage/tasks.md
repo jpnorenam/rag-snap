@@ -2,9 +2,9 @@
 
 ## 1. Spikes (verify assumptions before building)
 
-- [ ] 1.1 Against the bundled OpenSearch version, create a test generation with `index.blocks.read_only: true` and record that document writes and mapping/`_meta` updates are rejected, search and `GET _mapping` work, and delete works after setting the block to `false`; delete the test indexes afterwards and note the results in design.md (Decision 7)
-- [ ] 1.2 Using the bundled elasticdump, export data from an alias that points at a generation and import it into a fresh generation with no ingest pipeline; verify chunk counts match and the same query returns the same top hit; note the results in design.md (Decision 9)
-- [ ] 1.3 Confirm `POST /_aliases` with a remove + add pair switches searches with no window where the alias resolves to zero or two indexes, and verify with a script that searches continuously during the switch
+- [x] 1.1 Against the bundled OpenSearch version, compare `index.blocks.read_only` and `index.blocks.write` on a test generation (document writes, mapping/`_meta` updates, search, `GET _mapping`, alias changes, delete); delete the test indexes afterwards and note the results and the chosen block in design.md (Decision 7)
+- [x] 1.2 Using the bundled elasticdump, export data from an alias that points at a generation and import it into a fresh generation with no ingest pipeline; verify chunk counts match and the same query returns the same top hit; note the results in design.md (Decision 9)
+- [x] 1.3 Confirm `POST /_aliases` with a remove + add pair switches searches with no window where the alias resolves to zero or two indexes, and verify with a script that searches continuously during the switch
 
 ## 2. Generation layout and name resolution
 
@@ -28,7 +28,7 @@
 ## 4. Read-only knowledge bases
 
 - [ ] 4.1 Store `read_only` in the generation `_meta` and add `ErrReadOnly` checks to ingest, batch ingest, forget, set label, delete and user-initiated import in the shared `knowledge` package; unit-test that each function refuses a read-only base
-- [ ] 4.2 Apply and clear `index.blocks.read_only` as described in design.md Decision 7 (set on read-only generations, cleared before deleting a generation); verify a direct `curl` write to a read-only generation is rejected
+- [ ] 4.2 Apply `index.blocks.write` to read-only generations as described in design.md Decision 7; verify a direct `curl` document write to a read-only generation is rejected and that swapping and deleting it still work
 - [ ] 4.3 Map `ErrReadOnly` to a `409` with a clear message in the REST handlers and to a clear CLI error; verify with a base marked read-only in a test (set `_meta` directly)
 - [ ] 4.4 Document read-only bases in `docs/usage.md` (what is refused and what still works); verify the wording matches the CLI error text
 

@@ -69,14 +69,20 @@ SHALL still work, as SHALL replacement of the base through a generation rebuild.
 
 ### Requirement: Storage-level write protection
 
-A read-only base's generation SHALL reject document writes and mapping changes at the
-OpenSearch level, so writes that bypass the application are also refused. Deleting the
-generation SHALL remain possible.
+A read-only base's generation SHALL reject document writes, updates and deletes at the
+OpenSearch level, so content changes that bypass the application are also refused. Moving the
+base's name to another generation and deleting the generation SHALL remain possible.
 
 #### Scenario: Direct write to a read-only generation
 
 - **WHEN** a document write is sent directly to OpenSearch for a read-only base's generation
 - **THEN** OpenSearch rejects the write
+
+#### Scenario: Replacing and removing a protected generation
+
+- **WHEN** a read-only base is replaced or deleted
+- **THEN** the name moves to the new generation and the old generation is deleted without
+  first lifting its protection
 
 ### Requirement: Source identity is scoped to a knowledge base
 

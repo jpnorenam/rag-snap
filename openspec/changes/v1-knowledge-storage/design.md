@@ -100,10 +100,10 @@ overwrite the live ones before the swap.
 lock(kb) → create generation G2 (writable, from template)
         → load content (import data / sources / groups, or future sync)
         → refresh, verify counts against the manifest
-        → if base is read-only: apply read-only block to G2
+        → if base is read-only: apply the write block to G2
         → POST /_aliases { remove G1, add G2 }          ← atomic switch
         → wait 5 s (searches already running on G1 finish)
-        → delete records of G1, clear block on G1, delete G1 → unlock(kb)
+        → delete records of G1, delete G1 → unlock(kb)
 on any failure before the switch: delete G2 and its records, unlock; G1 untouched
 ```
 
@@ -119,20 +119,37 @@ single-index alias. The forced re-ingest reads the previous record first, so it 
 verification and description fields and decide whether `last_changed_at` moves (checksum
 comparison).
 
-### 7. Read-only: package check + `index.blocks.read_only`
+### 7. Read-only: package check + `index.blocks.write`
 
 The read-only flag is stored in the generation's mapping `_meta` (`read_only: true`) and copied
 to each new generation by the rebuild primitive. Every mutating function in the `knowledge`
 package (ingest, batch ingest, forget, set label, delete base, import without the rebuild path)
 checks it first and returns a typed `ErrReadOnly`; the CLI prints it and the API maps it to
-`409`. The generation also gets `index.blocks.read_only: true`, which rejects document writes and
-mapping/settings changes while still allowing searches and mapping reads. Deleting such a
-generation first sets the block to `false` (block settings stay updatable), then deletes. The
-first task verifies this behavior against the bundled OpenSearch version before building on it.
+`409`. The generation also gets `index.blocks.write: true`, which rejects every document write,
+update and delete while still allowing search, mapping reads, alias changes and deleting the
+index, so swaps and deletes need no extra steps. Label and `_meta` edits are not blocked by
+OpenSearch; the package check guards them, and a sync rewrites them anyway.
 
-*Alternatives:* `index.blocks.write` alone (does not block mapping changes);
+*Alternatives:* `index.blocks.read_only` (also blocks mapping changes, but blocks alias changes
+and delete, so every swap would need unblock → switch → block, with a window where the new
+generation relies on the package check alone; rejected after the spike below);
 `read_only_allow_delete` (can be released automatically by the disk watermark logic);
 `index.blocks.metadata` (also blocks reading the mapping, which breaks label reads).
+
+*Spike result (task 1.1, OpenSearch 2.19.6):*
+
+| Request on the blocked index | `blocks.read_only: true` | `blocks.write: true` |
+|---|---|---|
+| Document write, bulk, delete-by-query | 403 | 403 |
+| Mapping `_meta` update, new field | 403 | allowed |
+| Settings change (other than blocks) | not tested | allowed |
+| Mapping read, search | allowed | allowed |
+| Add or remove an alias | **403** | allowed |
+| Delete the index | **403** (allowed after clearing the block) | allowed |
+
+`read_only` blocks alias changes, so the swap in Decision 5 would fail on a blocked generation
+unless the old generation's block is cleared first and the new generation's block applied after
+the switch. Decision: use `blocks.write`.
 
 ### 8. Legacy (v0) detection
 
@@ -153,6 +170,16 @@ manifest carries the settings. Import checks the manifest before any write: vers
 the embedding model must match exactly. Data is loaded into the new generation with elasticdump
 (no ingest pipeline, embeddings kept); records are written by Go with the new `kb` and
 `generation`.
+
+*Spike result (task 1.2):* the bundled elasticdump (node 20.19.0) exported a 39-chunk base
+through an alias and imported it into a fresh generation with no ingest pipeline: 39 chunks, the
+same document IDs, and identical top-3 k-NN hits and scores for the same vector. Exported
+records carry the generation name in `_index`; elasticdump ignores it and writes to the output
+index. Search hits through an alias report the generation in `_index`, confirming Decision 3.
+
+*Spike result (task 1.3):* 4 threads searched continuously (1,316 searches) while the alias was
+switched 40 times with a remove + add pair: no empty results, no results mixing generations, no
+errors.
 
 Import paths: new base → build first generation, then add the alias; existing base without force
 → refuse (unchanged); existing base with force → rebuild-and-swap. A read-only base can only be
@@ -180,8 +207,10 @@ source metadata modal shows origin and freshness fields. Follows the `ui-convent
 - [A search running when the old generation is deleted fails] → 5 s grace before deletion.
 - [elasticdump behavior against generations and aliases is assumed] → spike task first: export
   from an alias, import into a generation, compare chunk counts and a search result.
-- [`index.blocks.read_only` semantics differ by OpenSearch version] → spike task verifies writes,
-  mapping changes, mapping reads, search and delete against the bundled version.
+- [Block semantics differ by OpenSearch version] → verified on 2.19.6 (Decision 7); re-check
+  when the OpenSearch snap moves to a new major version.
+- [`blocks.write` does not stop direct mapping edits] → the package check guards labels and
+  `_meta`; a direct `curl` edit is possible but a sync rewrites them.
 - [Crash between switch and cleanup leaves an orphaned old generation] → `knowledge init` sweep
   of unaliased, unlocked generations.
 - [Stale lock blocks rebuilds after a crash] → one-hour expiry; the error names the lock owner and
