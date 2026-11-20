@@ -583,7 +583,7 @@ func TestSplitOpener(t *testing.T) {
 		"Supported. One. Two. Three. Four. Five.":         {"Supported.", "One. Two. Three. Four. Five."},
 		"No hidden licensing. Canonical does not charge.": {"No hidden licensing.", "Canonical does not charge."},
 		// H1: a long first sentence is the answer, not an opener.
-		"Subscription-based; there is no perpetual licence. More.": {"", "Subscription-based; there is no perpetual licence. More."},
+		"Subscription-based; there is no perpetual licence. More.": {"", "Subscription-based; there is no perpetual licence. More."}, //nolint:misspell // British spelling, as in real RFP answers
 		"Supported.":           {"", "Supported."},
 		"Version 1.32 is LTS.": {"", "Version 1.32 is LTS."},
 	} {

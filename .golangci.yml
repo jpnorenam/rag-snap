@@ -73,6 +73,14 @@ linters:
       - linters: [govet]
         text: 'shadow: declaration of "err" shadows'
 
+      # LLM prompt text is tuned against British-English RFPs ("Included in
+      # licence"); rewording it changes model behavior, so misspell must not
+      # touch the files that hold prompts, schema descriptions or rubrics.
+      - path: 'cmd/cli/basic/analysis/(generate|triage|judge_prompt|judge_schema)\.go$'
+        linters: [misspell]
+      - path: 'cmd/cli/basic/chat/(prompts|refine)\.go$'
+        linters: [misspell]
+
       # Don't enforce context-aware HTTP/net helpers in tests
       - path: "_test\\.go"
         linters: [noctx]

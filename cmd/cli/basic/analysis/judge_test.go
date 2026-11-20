@@ -236,7 +236,7 @@ func TestConsistencyKeepsOnlyVerifiedRows(t *testing.T) {
 		t.Errorf("discarded = %d, want 3: the unknown row, the unquoted row and the empty comment", got.Discarded)
 	}
 	if body := fs.requests[0].rawBody(); !strings.Contains(body, "Row 5 [A4]") {
-		t.Error("answers should be labelled by spreadsheet row")
+		t.Error("answers should be labeled by spreadsheet row")
 	}
 }
 

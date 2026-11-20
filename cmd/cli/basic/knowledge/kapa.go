@@ -165,7 +165,7 @@ type kapaProject struct {
 // can tell which project the CLI is pointed at.
 func (c *KapaClient) ProjectName(ctx context.Context) (string, error) {
 	url := fmt.Sprintf("%s/org/v1/projects/%s/", c.baseURL, c.projectID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return "", fmt.Errorf("kapa: creating project request: %w", err)
 	}
@@ -234,7 +234,7 @@ func (c *KapaClient) ListSourceGroups(ctx context.Context) ([]SourceGroup, error
 				}
 				if _, ok := seen[g.ID]; !ok {
 					seen[g.ID] = struct{}{}
-					groups = append(groups, SourceGroup(g))
+					groups = append(groups, SourceGroup{ID: g.ID, Name: g.Name}) //nolint:staticcheck // S1016: keep SourceGroup decoupled from the decoding struct's fields
 				}
 			}
 		}

@@ -1,6 +1,7 @@
 package basic
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -217,13 +218,13 @@ func (cmd *answerCommand) runBuild(docPath, outputPath string, previewOnly, noRe
 	case "xlsx":
 		var tikaURL string
 		if tikaURL, extractErr = rfpTikaURL(cmd.Context); extractErr == nil {
-			questions, extractErr = rfpExtractXLSX(docPath, tikaURL)
+			questions, extractErr = rfpExtractXLSX(context.Background(), docPath, tikaURL)
 		}
 
 	case "pdf", "docx":
 		var tikaURL string
 		if tikaURL, extractErr = rfpTikaURL(cmd.Context); extractErr == nil {
-			questions, extractErr = rfpExtractText(docPath, tikaURL)
+			questions, extractErr = rfpExtractText(context.Background(), docPath, tikaURL)
 		}
 	}
 

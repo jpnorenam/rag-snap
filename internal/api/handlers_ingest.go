@@ -247,7 +247,7 @@ func ingestOneItem(ctx context.Context, client *knowledge.OpenSearchClient, tika
 	case "gitea":
 		return ingestGiteaRepo(ctx, client, tikaURL, index, item, force)
 	case "url":
-		path, _, cleanup, err := processing.CrawlURL(item.URL)
+		path, _, cleanup, err := processing.CrawlURL(ctx, item.URL)
 		if err != nil {
 			return fmt.Errorf("crawling URL: %w", err)
 		}

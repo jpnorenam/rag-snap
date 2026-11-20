@@ -93,12 +93,7 @@ func (c *OpenSearchClient) SetDefaultLabel(ctx context.Context, indexName, label
 // stored in the index _meta (true) or derived from the naming convention (false).
 func (c *OpenSearchClient) GetDefaultLabel(ctx context.Context, indexName string) (label string, stored bool, err error) {
 	path := fmt.Sprintf("/%s/_mapping", indexName)
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return "", false, fmt.Errorf("creating mapping request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return "", false, fmt.Errorf("getting index mapping: %w", err)
 	}
@@ -184,12 +179,7 @@ func (c *OpenSearchClient) updateLabelByQuery(ctx context.Context, indexName, la
 	}
 
 	path := fmt.Sprintf("/%s/_update_by_query?conflicts=proceed", indexName)
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return 0, fmt.Errorf("creating update request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return 0, fmt.Errorf("updating labels: %w", err)
 	}
@@ -217,12 +207,7 @@ func (c *OpenSearchClient) putMapping(ctx context.Context, indexName string, bod
 	}
 
 	path := fmt.Sprintf("/%s/_mapping", indexName)
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodPut, path, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return fmt.Errorf("creating mapping request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodPut, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("updating index mapping: %w", err)
 	}

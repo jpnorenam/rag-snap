@@ -167,7 +167,7 @@ func testConveyance(t *testing.T) *Conveyance {
 	t.Helper()
 	c := NewConverter("")
 	path := writeFile(t, "matrix.csv", complianceCSV)
-	conv, err := c.ConveyAll(path, nil)
+	conv, err := c.ConveyAll(t.Context(), path, nil)
 	if err != nil {
 		t.Fatalf("ConveyAll: %v", err)
 	}
@@ -579,7 +579,7 @@ func TestPDFIsSentInlineAsADocumentPart(t *testing.T) {
 	c := testClient(t, fs)
 
 	const pdf = "%PDF-1.7\nbody\n"
-	conv, err := NewConverter("").ConveyAll(writeFile(t, "rfp.pdf", pdf), nil)
+	conv, err := NewConverter("").ConveyAll(t.Context(), writeFile(t, "rfp.pdf", pdf), nil)
 	if err != nil {
 		t.Fatalf("ConveyAll: %v", err)
 	}

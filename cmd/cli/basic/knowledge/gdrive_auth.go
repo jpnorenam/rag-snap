@@ -12,12 +12,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
+	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/pkg/storage"
 )
 
@@ -150,22 +149,6 @@ func pkceVerifier() (string, error) {
 func pkceChallenge(verifier string) string {
 	h := sha256.Sum256([]byte(verifier))
 	return base64.RawURLEncoding.EncodeToString(h[:])
-}
-
-// openBrowser attempts to open url in the user's default browser.
-func openBrowser(rawURL string) {
-	var cmd string
-	var args []string
-	switch runtime.GOOS {
-	case "linux":
-		cmd, args = "xdg-open", []string{rawURL}
-	case "darwin":
-		cmd, args = "open", []string{rawURL}
-	default:
-		return
-	}
-	// The browser outlives this call, so it is started without a cancelable context.
-	_ = exec.CommandContext(context.Background(), cmd, args...).Start()
 }
 
 // driveFlowTimeout bounds how long a loopback OAuth flow waits for the user to
@@ -334,7 +317,7 @@ func runLoopbackFlow(ctx context.Context, clientID, clientSecret string) (*Drive
 	fmt.Printf("\nTo authenticate with Google Drive, open the following URL in your browser:\n\n")
 	fmt.Printf("  %s\n\n", flow.ConsentURL())
 	fmt.Printf("Attempting to open your browser automatically...\n")
-	openBrowser(flow.ConsentURL())
+	common.OpenBrowser(flow.ConsentURL())
 	fmt.Printf("Waiting for authorization")
 
 	// Animate dots on a ticker until Await returns.

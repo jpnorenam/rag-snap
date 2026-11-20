@@ -4,13 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"syscall"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
@@ -93,7 +90,7 @@ func (c *OpenSearchClient) CreateIndex(ctx context.Context, indexName string) er
 // server to become ready (see checkServer), so it suits callers that can afford to
 // block while a starting OpenSearch comes up — ingest, search, init.
 func NewClient(baseURL string) (*OpenSearchClient, error) {
-	if err := handshake(baseURL); err != nil {
+	if err := common.Handshake(context.Background(), baseURL, "Connecting to OpenSearch", "9200"); err != nil {
 		return nil, err
 	}
 
@@ -284,37 +281,6 @@ func newOpenSearchClient(baseURL, username, password string) (*opensearchapi.Cli
 	return client, nil
 }
 
-func handshake(baseURL string) error {
-	stopProgress := common.StartProgressSpinner("Connecting to OpenSearch")
-	defer stopProgress()
-
-	parsedURL, err := url.Parse(baseURL)
-	if err != nil {
-		return fmt.Errorf("invalid base URL: %w", err)
-	}
-	host := parsedURL.Hostname()
-	port := parsedURL.Port()
-	if port == "" {
-		if parsedURL.Scheme == "https" {
-			port = "443"
-		} else {
-			port = "9200"
-		}
-	}
-	dialer := &net.Dialer{Timeout: 5 * time.Second}
-	conn, err := dialer.DialContext(context.Background(), "tcp", net.JoinHostPort(host, port))
-	if errors.Is(err, syscall.ECONNREFUSED) {
-		return fmt.Errorf("connection refused\n\n%s\n%s",
-			common.SuggestServerStartup(),
-			common.SuggestServerLogs())
-	} else if err != nil {
-		return err
-	}
-	conn.Close()
-
-	return nil
-}
-
 func checkServer(client *opensearchapi.Client) error {
 	stopProgress := common.StartProgressSpinner("Waiting for OpenSearch to be ready")
 	defer stopProgress()
@@ -388,12 +354,7 @@ func (c *OpenSearchClient) IndexExists(ctx context.Context, indexName string) (b
 // Returns 0 and no error if the index does not yet exist.
 func (c *OpenSearchClient) CountDocuments(ctx context.Context, indexName string) (int, error) {
 	path := fmt.Sprintf("/%s/_count", indexName)
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return 0, fmt.Errorf("creating count request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return 0, fmt.Errorf("counting documents: %w", err)
 	}
@@ -421,12 +382,7 @@ func (c *OpenSearchClient) CountDocuments(ctx context.Context, indexName string)
 // and the credentials are accepted, which is what a status view needs to claim the
 // knowledge store is usable.
 func (c *OpenSearchClient) Ping(ctx context.Context) error {
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, "/", nil)
-	if err != nil {
-		return fmt.Errorf("creating ping request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodGet, "/", nil)
 	if err != nil {
 		return fmt.Errorf("pinging OpenSearch: %w", err)
 	}
@@ -439,12 +395,22 @@ func (c *OpenSearchClient) Ping(ctx context.Context) error {
 	return nil
 }
 
-// newAuthenticatedRequest creates an HTTP request with basic authentication.
-func (c *OpenSearchClient) newAuthenticatedRequest(ctx context.Context, method, path string, body io.Reader) (*http.Request, error) {
+// perform builds a basic-authenticated request for path on the OpenSearch base URL and
+// sends it. Use it for every raw REST call so none can drop ctx or the credentials.
+func (c *OpenSearchClient) perform(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	return c.performAs(ctx, method, path, "", body)
+}
+
+// performAs is perform with an explicit Content-Type; "" keeps the JSON default
+// that headerTransport applies.
+func (c *OpenSearchClient) performAs(ctx context.Context, method, path, contentType string, body io.Reader) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, method, c.url+path, body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.SetBasicAuth(c.username, c.password)
-	return req, nil
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	return c.client.Client.Perform(req)
 }

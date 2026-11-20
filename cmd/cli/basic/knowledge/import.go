@@ -189,13 +189,7 @@ func synthesizeSourcesFromIndex(ctx context.Context, client *OpenSearchClient, t
 	}
 
 	path := fmt.Sprintf("/%s/_search", targetIndex)
-	req, err := client.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(body))
-	if err != nil {
-		return 0, fmt.Errorf("building aggregation request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := client.client.Client.Perform(req)
+	resp, err := client.perform(ctx, http.MethodPost, path, bytes.NewReader(body))
 	if err != nil {
 		return 0, fmt.Errorf("running aggregation: %w", err)
 	}

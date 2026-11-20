@@ -92,7 +92,7 @@ func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputP
 	converter := analysis.NewConverter(tikaURL)
 
 	stop := common.StartProgressSpinner("Reading documents")
-	conveyance, err := converter.ConveyAllWith(docPath, contextPaths, scope)
+	conveyance, err := converter.ConveyAllWith(context.Background(), docPath, contextPaths, scope)
 	stop()
 	if err != nil {
 		return err

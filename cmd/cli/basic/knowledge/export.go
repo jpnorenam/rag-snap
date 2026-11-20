@@ -139,14 +139,19 @@ func ExportKnowledgeBase(ctx context.Context, client *OpenSearchClient, kbName s
 	sourcesPath := filepath.Join(outputDir, "sources.json")
 	fmt.Printf("Exporting source metadata to %s...\n", sourcesPath)
 	metaInputURL := client.AuthenticatedURL("/" + sourcesIndexName)
-	searchBody := fmt.Sprintf(`{"query":{"term":{"index_name":%q}}}`, indexName)
+	searchBody, err := json.Marshal(map[string]any{
+		"query": map[string]any{"term": map[string]any{"index_name": indexName}},
+	})
+	if err != nil {
+		return fmt.Errorf("encoding source metadata query: %w", err)
+	}
 	if err := runElasticdump(ctx, bin, nodeDir, []string{
 		"--input=" + metaInputURL,
 		"--output=" + sourcesPath,
 		"--type=data",
 		"--limit=100",
 		"--tlsVerification=false",
-		"--searchBody=" + searchBody,
+		"--searchBody=" + string(searchBody),
 	}, os.Stdout, os.Stderr); err != nil {
 		return fmt.Errorf("exporting source metadata: %w", err)
 	}

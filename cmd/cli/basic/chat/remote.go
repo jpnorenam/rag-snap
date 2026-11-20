@@ -220,7 +220,7 @@ func remoteSetActiveBases(ctx context.Context, dc *apiclient.Client, session *ap
 // sends the choice as a set-active-kapa-groups frame. It returns the effective
 // selection the daemon acknowledged; ok is false when nothing changed (kapa.ai
 // not configured, no groups, or the menu was cancelled).
-func remoteSetKapaGroups(ctx context.Context, dc *apiclient.Client, session *apiclient.ChatSession, current []string) ([]string, bool, error) {
+func remoteSetKapaGroups(ctx context.Context, dc *apiclient.Client, session *apiclient.ChatSession, current []string) (groups []string, ok bool, err error) {
 	stop := common.StartProgressSpinner("Fetching Kapa source groups")
 	listing, err := dc.ListKapaSourceGroups(ctx)
 	stop()

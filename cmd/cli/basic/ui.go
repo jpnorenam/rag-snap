@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
@@ -84,17 +82,14 @@ func (cmd *uiCommand) run(_ *cobra.Command, _ []string) error {
 
 	fmt.Printf("Opening the UI at %s/ui/\n", strings.TrimSuffix(ui.URL, "/"))
 	fmt.Printf("If your browser does not open automatically, visit:\n\n  %s\n", loginURL)
-	openBrowser(loginURL)
+	common.OpenBrowser(loginURL)
 	return nil
 }
 
 // reportDisabled explains how to enable the loopback listener rather than
 // failing silently (task 5.3).
 func (cmd *uiCommand) reportDisabled() error {
-	return fmt.Errorf(
-		"the local UI is disabled.\n\nEnable it with:\n  sudo %s set api.loopback.enabled=true\n  sudo snap restart %s.ragd\n\nThen run `%s ui` again",
-		snapName(), snapName(), snapName(),
-	)
+	return fmt.Errorf("the local UI is disabled\n\n%s", common.SuggestEnableUI(snapName()))
 }
 
 // buildLoginURL builds the daemon's /ui/login token-handoff URL from the
@@ -129,19 +124,4 @@ func cliCommand() string {
 		return name + ".rag"
 	}
 	return "rag-cli"
-}
-
-// openBrowser attempts to open url in the user's default browser.
-func openBrowser(rawURL string) {
-	var cmd string
-	var args []string
-	switch runtime.GOOS {
-	case "linux":
-		cmd, args = "xdg-open", []string{rawURL}
-	case "darwin":
-		cmd, args = "open", []string{rawURL}
-	default:
-		return
-	}
-	_ = exec.CommandContext(context.Background(), cmd, args...).Start()
 }

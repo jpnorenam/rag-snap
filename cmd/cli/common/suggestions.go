@@ -51,3 +51,23 @@ func SuggestServiceManagement() string {
 
 	return fmt.Sprintf("\nUse \"snap logs|start|stop|restart %v\" for service management.\n", instanceName)
 }
+
+// SuggestSavePageAsFile suggests ingesting a JavaScript-rendered page from a
+// saved copy instead of fetching it.
+func SuggestSavePageAsFile() string {
+	return "The page likely requires JavaScript to render its content.\n" +
+		"Try rendering it in a browser, saving the page as HTML, then using --file instead."
+}
+
+// SuggestListQuestionFormat suggests the list-based question format when Tika
+// found no HTML tables in a document.
+func SuggestListQuestionFormat() string {
+	return "Tip: Tika may not recognize PDF tables as HTML <table> elements.\n" +
+		"Re-run and choose 'Numbered / bulleted list or question marks' instead."
+}
+
+// SuggestEnableUI returns the commands that enable the daemon's loopback
+// listener, which serves the local UI, for the snap named snapName.
+func SuggestEnableUI(snapName string) string {
+	return fmt.Sprintf("Enable it with:\n  sudo %[1]s set api.loopback.enabled=true\n  sudo snap restart %[1]s.ragd\n\nThen run `%[1]s ui` again.", snapName)
+}

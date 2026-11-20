@@ -131,7 +131,7 @@ func processSingleJob(ctx context.Context, client *OpenSearchClient, tikaURL str
 		return ingestAndIndex(ctx, client, tikaURL, path, sourceID, targetIndex, job.Label, force)
 
 	case "url":
-		crawled, _, cleanup, err := processing.CrawlURL(job.Source)
+		crawled, _, cleanup, err := processing.CrawlURL(ctx, job.Source)
 		if err != nil {
 			return fmt.Errorf("crawling URL: %w", err)
 		}

@@ -56,7 +56,7 @@ type sheetsResponse struct {
 	} `json:"sheets"`
 }
 
-func postSheets(t *testing.T, client *http.Client, filename, content string) (int, sheetsResponse, string) {
+func postSheets(t *testing.T, client *http.Client, filename, content string) (code int, decoded sheetsResponse, text string) {
 	t.Helper()
 	body, contentType := multipartFile(t, filename, content, nil)
 	resp, err := client.Post("http://unix/1.0/answer/analyze/sheets", contentType, body)

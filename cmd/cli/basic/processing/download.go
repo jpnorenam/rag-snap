@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	trafilatura "github.com/markusmobius/go-trafilatura"
@@ -23,18 +24,26 @@ type WebMetadata struct {
 	PublishDate string
 }
 
+// crawlTimeout bounds a whole page fetch, body included, so a server that hangs
+// or trickles its response cannot block an ingest indefinitely.
+const crawlTimeout = 2 * time.Minute
+
+// crawlClient fetches pages for CrawlURL. Unlike http.DefaultClient, it has a timeout.
+var crawlClient = &http.Client{Timeout: crawlTimeout}
+
 // CrawlURL fetches url, extracts its main content via go-trafilatura, writes the
 // resulting HTML to a temp file, and returns the path, extracted metadata, a
 // cleanup function, and any error. Size limits from MaxIngestFileSize still apply.
-func CrawlURL(url string) (filePath string, meta *WebMetadata, cleanup func(), err error) {
+// Cancelling ctx aborts the fetch.
+func CrawlURL(ctx context.Context, url string) (filePath string, meta *WebMetadata, cleanup func(), err error) {
 	stopProgress := common.StartProgressSpinner("Fetching page")
 
-	req, httpErr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, http.NoBody) //nolint:gosec // URL comes from authenticated CLI input
+	req, httpErr := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody) //nolint:gosec // URL comes from authenticated CLI input
 	if httpErr != nil {
 		stopProgress()
 		return "", nil, nil, fmt.Errorf("fetching %s: %w", url, httpErr)
 	}
-	resp, httpErr := http.DefaultClient.Do(req)
+	resp, httpErr := crawlClient.Do(req)
 	if httpErr != nil {
 		stopProgress()
 		return "", nil, nil, fmt.Errorf("fetching %s: %w", url, httpErr)
@@ -85,12 +94,8 @@ func CrawlURL(url string) (filePath string, meta *WebMetadata, cleanup func(), e
 
 	contentText := strings.TrimSpace(result.ContentText)
 	if len(contentText) < minExtractedChars {
-		return "", nil, nil, fmt.Errorf(
-			"extracted only %d characters of text from %s (raw HTML was %d bytes)\n"+
-				"The page likely requires JavaScript to render its content.\n"+
-				"Try rendering it in a browser, saving the page as HTML, then using --file instead",
-			len(contentText), url, len(bodyBytes),
-		)
+		return "", nil, nil, fmt.Errorf("extracted only %d characters of text from %s (raw HTML was %d bytes)\n%s",
+			len(contentText), url, len(bodyBytes), common.SuggestSavePageAsFile())
 	}
 
 	// Render the extracted content node back to HTML for the downstream Tika pipeline.

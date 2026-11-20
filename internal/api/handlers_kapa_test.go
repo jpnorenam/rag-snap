@@ -63,7 +63,7 @@ func startTestServerWithKapa(t *testing.T, kapa *knowledge.KapaClient) *http.Cli
 }
 
 // getKapaGroups requests the listing and decodes a successful response.
-func getKapaGroups(t *testing.T, client *http.Client) (int, kapaSourceGroupsView, string) {
+func getKapaGroups(t *testing.T, client *http.Client) (code int, groups kapaSourceGroupsView, errMsg string) {
 	t.Helper()
 	resp, err := client.Get("http://unix/1.0/kapa/source-groups")
 	if err != nil {
@@ -168,7 +168,7 @@ func TestKapaSourceGroupsRequiresAuth(t *testing.T) {
 }
 
 // postSearch posts body to POST /1.0/search and decodes the envelope.
-func postSearch(t *testing.T, client *http.Client, body string) (int, []searchResult, []string) {
+func postSearch(t *testing.T, client *http.Client, body string) (code int, results []searchResult, warnings []string) {
 	t.Helper()
 	resp, err := client.Post("http://unix/1.0/search", "application/json", strings.NewReader(body))
 	if err != nil {

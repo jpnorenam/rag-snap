@@ -86,7 +86,7 @@ func (c *OpenSearchClient) IngestSource(ctx context.Context, tikaURL string, opt
 		}
 	}
 
-	result, err := processing.Ingest(tikaURL, opts.FilePath, opts.SourceID)
+	result, err := processing.Ingest(ctx, tikaURL, opts.FilePath, opts.SourceID)
 	if err != nil {
 		return fmt.Errorf("ingest pipeline failed: %w", err)
 	}

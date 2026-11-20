@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
-	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -44,7 +42,7 @@ func FindModelName(backend BackendConfig) (string, error) {
 
 // Client runs the interactive chat REPL against the inference server addressed by
 // backend, with RAG retrieval when a knowledge client is given.
-func Client(backend BackendConfig, knowledgeClient *knowledge.OpenSearchClient, kapaClient *knowledge.KapaClient, embeddingModelID string, llmModelName string, prompts PromptConfig, temperature float64, verbose bool) error {
+func Client(backend BackendConfig, knowledgeClient *knowledge.OpenSearchClient, kapaClient *knowledge.KapaClient, embeddingModelID, llmModelName string, prompts PromptConfig, temperature float64, verbose bool) error {
 	fmt.Printf("Using inference server at %v\n", backend.BaseURL)
 
 	llm, err := NewBackend(backend)
@@ -53,7 +51,7 @@ func Client(backend BackendConfig, knowledgeClient *knowledge.OpenSearchClient, 
 	}
 
 	// Check if server is reachable
-	if err := handshake(backend.BaseURL); err != nil {
+	if err := common.Handshake(context.Background(), backend.BaseURL, "Connecting to server", "80"); err != nil {
 		return err
 	}
 
@@ -114,7 +112,7 @@ func Client(backend BackendConfig, knowledgeClient *knowledge.OpenSearchClient, 
 		return fmt.Errorf("error initializing readline: %w", err)
 	}
 	defer func() { rl.Close() }()
-	//rl.CaptureExitSignal() // Should readline capture and handle the exit signal? - Can be used to interrupt the chat response stream.
+	// rl.CaptureExitSignal() // Should readline capture and handle the exit signal? - Can be used to interrupt the chat response stream.
 	log.SetOutput(rl.Stderr())
 
 	// The configured prompt is sent unconditionally — retrieval availability
@@ -145,7 +143,7 @@ func Client(backend BackendConfig, knowledgeClient *knowledge.OpenSearchClient, 
 		prompt, err := rl.Readline()
 		clearSlashHints()
 		if errors.Is(err, readline.ErrInterrupt) {
-			if len(prompt) == 0 {
+			if prompt == "" {
 				break
 			} else {
 				continue
@@ -184,8 +182,8 @@ func Client(backend BackendConfig, knowledgeClient *knowledge.OpenSearchClient, 
 			continue
 		}
 
-		if len(prompt) > 0 {
-			rl.SaveHistory(prompt)
+		if prompt != "" {
+			_ = rl.SaveHistory(prompt) // history is a convenience; a write failure must not end the chat
 			if err := handlePrompt(llm, conv, prompt, session, verbose); err != nil {
 				return err
 			}
@@ -193,35 +191,6 @@ func Client(backend BackendConfig, knowledgeClient *knowledge.OpenSearchClient, 
 	}
 	fmt.Println("Closing chat")
 
-	return nil
-}
-
-func handshake(baseURL string) error {
-	stopProgress := common.StartProgressSpinner("Connecting to server")
-	defer stopProgress()
-
-	parsedURL, err := url.Parse(baseURL)
-	if err != nil {
-		return fmt.Errorf("invalid base URL: %w", err)
-	}
-	host := parsedURL.Hostname()
-	port := parsedURL.Port()
-	if port == "" {
-		if parsedURL.Scheme == "https" {
-			port = "443"
-		} else {
-			port = "80"
-		}
-	}
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 5*time.Second)
-	if errors.Is(err, syscall.ECONNREFUSED) {
-		return fmt.Errorf("connection refused\n\n%s\n%s",
-			common.SuggestServerStartup(),
-			common.SuggestServerLogs())
-	} else if err != nil {
-		return err
-	}
-	conn.Close()
 	return nil
 }
 
@@ -307,10 +276,9 @@ func handlePrompt(backend Backend, conv *conversation, prompt string, session *S
 
 	// Rewrite the query for richer BM25 matching using conversation context.
 	// On the first turn (no history) this returns the original prompt.
-	lexicalQuery := prompt
 	ragContext := ""
 	if hasContext {
-		lexicalQuery = rewriteSearchQuery(backend, conv.model, conv.history, prompt, verbose)
+		lexicalQuery := rewriteSearchQuery(backend, conv.model, conv.history, prompt, verbose)
 		// Retrieve RAG context from knowledge base (no-op when unavailable).
 		ragContext, _ = retrieveContext(session, prompt, lexicalQuery, verbose)
 	}
@@ -392,9 +360,8 @@ func streamError(err error) error {
 }
 
 func filterInput(r rune) (rune, bool) {
-	switch r {
 	// block CtrlZ feature
-	case readline.CharCtrlZ:
+	if r == readline.CharCtrlZ {
 		return r, false
 	}
 	return r, true

@@ -152,12 +152,7 @@ func (c *OpenSearchClient) indexSourceMetadata(ctx context.Context, meta SourceM
 	}
 
 	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, url.PathEscape(meta.SourceID))
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodPut, path, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodPut, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("error indexing source metadata: %w", err)
 	}
@@ -190,12 +185,7 @@ func (c *OpenSearchClient) updateSourceStatus(ctx context.Context, sourceID, sta
 	}
 
 	path := fmt.Sprintf("/%s/_update/%s", sourcesIndexName, url.PathEscape(sourceID))
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return fmt.Errorf("error updating source status: %w", err)
 	}
@@ -216,12 +206,7 @@ func (c *OpenSearchClient) GetSourceMetadata(ctx context.Context, sourceID strin
 
 func (c *OpenSearchClient) getSourceMetadata(ctx context.Context, sourceID string) (*SourceMetadata, error) {
 	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, url.PathEscape(sourceID))
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodGet, path, nil)
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("error getting source metadata: %w", err)
 	}
@@ -277,12 +262,7 @@ func (c *OpenSearchClient) listSourceMetadata(ctx context.Context, indexName str
 	}
 
 	path := fmt.Sprintf("/%s/_search", sourcesIndexName)
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("error listing source metadata: %w", err)
 	}
@@ -337,11 +317,7 @@ func (c *OpenSearchClient) SourceCountsByIndex(ctx context.Context) (map[string]
 	}
 
 	path := fmt.Sprintf("/%s/_search", sourcesIndexName)
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, fmt.Errorf("error creating request: %w", err)
-	}
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("error aggregating source metadata: %w", err)
 	}
@@ -383,12 +359,7 @@ func (c *OpenSearchClient) DeleteSourceMetadata(ctx context.Context, sourceID st
 
 func (c *OpenSearchClient) deleteSourceMetadata(ctx context.Context, sourceID string) error {
 	path := fmt.Sprintf("/%s/_doc/%s", sourcesIndexName, url.PathEscape(sourceID))
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodDelete, path, nil)
-	if err != nil {
-		return fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return fmt.Errorf("error deleting source metadata: %w", err)
 	}
@@ -423,12 +394,7 @@ func (c *OpenSearchClient) deleteChunksBySourceID(ctx context.Context, indexName
 	}
 
 	path := fmt.Sprintf("/%s/_delete_by_query", indexName)
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return 0, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return 0, fmt.Errorf("error deleting chunks: %w", err)
 	}
@@ -466,12 +432,7 @@ func (c *OpenSearchClient) DeleteSourceMetadataByIndex(ctx context.Context, inde
 	}
 
 	path := fmt.Sprintf("/%s/_delete_by_query", sourcesIndexName)
-	req, err := c.newAuthenticatedRequest(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return 0, fmt.Errorf("error creating request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req)
+	resp, err := c.perform(ctx, http.MethodPost, path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return 0, fmt.Errorf("error deleting source metadata: %w", err)
 	}

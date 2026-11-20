@@ -131,7 +131,7 @@ func (s *Server) handleAnswerBuild(w http.ResponseWriter, r *http.Request) {
 			if tabular {
 				// Inspect pass: parse into tables and publish them for the
 				// client to choose a column; extract nothing here.
-				tables, err := parseTables(format, stagedPath, tikaURL)
+				tables, err := parseTables(ctx, format, stagedPath, tikaURL)
 				if err != nil {
 					return err
 				}
@@ -154,7 +154,7 @@ func (s *Server) handleAnswerBuild(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// Free-text pass: extract in one shot (unchanged behavior).
-			questions, err := extractTextQuestions(stagedPath, tikaURL)
+			questions, err := extractTextQuestions(ctx, stagedPath, tikaURL)
 			if err != nil {
 				return err
 			}
@@ -315,7 +315,7 @@ func toBuildQuestionsJSON(questions []rfp.Question) []buildQuestionJSON {
 // The parsing itself lives in the rfp package so that this path, the CLI's and the
 // analysis path cannot disagree about how a sheet gets its name; this function is
 // only the Tika call in front of it.
-func parseTables(format, path, tikaURL string) ([]rfp.SheetTable, error) {
+func parseTables(ctx context.Context, format, path, tikaURL string) ([]rfp.SheetTable, error) {
 	switch format {
 	case "xlsx":
 		if tikaURL == "" {
@@ -325,7 +325,7 @@ func parseTables(format, path, tikaURL string) ([]rfp.SheetTable, error) {
 		if err != nil {
 			return nil, fmt.Errorf("creating Tika client: %w", err)
 		}
-		htmlContent, err := tikaClient.ExtractHTML(path)
+		htmlContent, err := tikaClient.ExtractHTML(ctx, path)
 		if err != nil {
 			return nil, fmt.Errorf("tika extraction failed: %w", err)
 		}
@@ -463,7 +463,7 @@ func columnAvgLen(t rfp.SheetTable, col int) int {
 // extractTextQuestions extracts questions from a PDF/DOCX via Tika HTML in
 // list/paragraph mode across all pages, then applies the TOC filter. Unchanged
 // free-text path.
-func extractTextQuestions(path, tikaURL string) ([]rfp.Question, error) {
+func extractTextQuestions(ctx context.Context, path, tikaURL string) ([]rfp.Question, error) {
 	if tikaURL == "" {
 		return nil, fmt.Errorf("tika service is not configured — cannot extract from this document type")
 	}
@@ -471,7 +471,7 @@ func extractTextQuestions(path, tikaURL string) ([]rfp.Question, error) {
 	if err != nil {
 		return nil, fmt.Errorf("creating Tika client: %w", err)
 	}
-	htmlRaw, err := tikaClient.ExtractHTML(path)
+	htmlRaw, err := tikaClient.ExtractHTML(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("tika extraction failed: %w", err)
 	}

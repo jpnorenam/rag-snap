@@ -1,6 +1,7 @@
 package analysis
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -156,16 +157,16 @@ func NewConverter(tikaURL string) *Converter {
 // ConveyAll conveys the primary document followed by each context document, in order.
 // It fails on the first document it cannot convey: a context document silently dropped
 // would change the generated manifest with no signal to the operator.
-func (c *Converter) ConveyAll(primaryPath string, contextPaths []string) (*Conveyance, error) {
-	return c.ConveyAllWith(primaryPath, contextPaths, nil)
+func (c *Converter) ConveyAll(ctx context.Context, primaryPath string, contextPaths []string) (*Conveyance, error) {
+	return c.ConveyAllWith(ctx, primaryPath, contextPaths, nil)
 }
 
 // ConveyAllWith is ConveyAll with the operator's sheet scope, which applies to the
 // primary document only: context documents are conveyed whole.
-func (c *Converter) ConveyAllWith(primaryPath string, contextPaths []string, scope SheetScope) (*Conveyance, error) {
+func (c *Converter) ConveyAllWith(ctx context.Context, primaryPath string, contextPaths []string, scope SheetScope) (*Conveyance, error) {
 	var out Conveyance
 
-	doc, report, err := c.convey(primaryPath, RolePrimary, scope)
+	doc, report, err := c.convey(ctx, primaryPath, RolePrimary, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +174,7 @@ func (c *Converter) ConveyAllWith(primaryPath string, contextPaths []string, sco
 	out.Report = append(out.Report, report)
 
 	for _, p := range contextPaths {
-		doc, report, err := c.Convey(p, RoleContext)
+		doc, report, err := c.Convey(ctx, p, RoleContext)
 		if err != nil {
 			return nil, fmt.Errorf("context document %s: %w", filepath.Base(p), err)
 		}
@@ -200,11 +201,11 @@ func (c *Converter) ConveyAllWith(primaryPath string, contextPaths []string, sco
 // spreadsheet or a word-processor document at all, and the file types they do accept
 // are read as pure text with markup discarded — so uploading the original, or Tika's
 // HTML, would lose the table structure this conversion exists to keep.
-func (c *Converter) Convey(path string, role Role) (Document, DocumentReport, error) {
-	return c.convey(path, role, nil)
+func (c *Converter) Convey(ctx context.Context, path string, role Role) (Document, DocumentReport, error) {
+	return c.convey(ctx, path, role, nil)
 }
 
-func (c *Converter) convey(path string, role Role, scope SheetScope) (Document, DocumentReport, error) {
+func (c *Converter) convey(ctx context.Context, path string, role Role, scope SheetScope) (Document, DocumentReport, error) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return Document{}, DocumentReport{}, fmt.Errorf("cannot access file: %w", err)
@@ -223,11 +224,11 @@ func (c *Converter) convey(path string, role Role, scope SheetScope) (Document, 
 
 	switch format {
 	case "pdf":
-		return c.conveyPDF(path, name, role, info.Size())
+		return c.conveyPDF(ctx, path, name, role, info.Size())
 	case "xlsx", "csv":
-		return c.conveyTabular(path, name, format, role, scope)
+		return c.conveyTabular(ctx, path, name, format, role, scope)
 	case "docx":
-		return c.conveyProse(path, name, format, role)
+		return c.conveyProse(ctx, path, name, format, role)
 	default:
 		return Document{}, DocumentReport{}, fmt.Errorf(
 			"unsupported file type %q — analysis reads PDF, XLSX, CSV, DOCX", filepath.Ext(name))
@@ -237,7 +238,7 @@ func (c *Converter) convey(path string, role Role, scope SheetScope) (Document, 
 // conveyPDF sends the original bytes so the model applies its own document
 // understanding to layout, tables and figures rather than receiving a flattened
 // transcription.
-func (c *Converter) conveyPDF(path, name string, role Role, size int64) (Document, DocumentReport, error) {
+func (c *Converter) conveyPDF(ctx context.Context, path, name string, role Role, size int64) (Document, DocumentReport, error) {
 	if limit := c.Limits.MaxPDFBytes; limit > 0 && size > limit {
 		return Document{}, DocumentReport{}, fmt.Errorf(
 			"%s is %s, above the %s per-document limit for a PDF", name, humanBytes(size), humanBytes(limit))
@@ -251,7 +252,7 @@ func (c *Converter) conveyPDF(path, name string, role Role, size int64) (Documen
 	detail := "conveyed as PDF bytes, page count unknown"
 	if c.TikaURL != "" {
 		if tikaClient, err := processing.NewTikaClient(c.TikaURL); err == nil {
-			if meta, metaErr := tikaClient.ExtractMetadata(path); metaErr == nil && meta.Pages > 0 {
+			if meta, metaErr := tikaClient.ExtractMetadata(ctx, path); metaErr == nil && meta.Pages > 0 {
 				pages = meta.Pages
 				detail = fmt.Sprintf("conveyed as PDF bytes, %d pages", pages)
 			}
@@ -283,7 +284,7 @@ func (c *Converter) conveyPDF(path, name string, role Role, size int64) (Documen
 // order, names and data-row counts. It runs the same conversion conveyance does, so the
 // sheets an operator scopes are the sheets analysis sees. A PDF or DOCX has no sheets
 // and returns an empty list with its format.
-func (c *Converter) Inventory(path string) ([]SheetInfo, string, error) {
+func (c *Converter) Inventory(ctx context.Context, path string) ([]SheetInfo, string, error) {
 	if _, err := os.Stat(path); err != nil {
 		return nil, "", fmt.Errorf("cannot access file: %w", err)
 	}
@@ -291,7 +292,7 @@ func (c *Converter) Inventory(path string) ([]SheetInfo, string, error) {
 	format := rfp.DetectFormat(path, "")
 	switch format {
 	case "xlsx", "csv":
-		tables, err := c.readTables(path, name, format)
+		tables, err := c.readTables(ctx, path, name, format)
 		if err != nil {
 			return nil, format, err
 		}
@@ -320,8 +321,8 @@ func workbookSheetNames(path, format string) []string {
 
 // conveyTabular converts a spreadsheet or CSV to Markdown tables, keeping every row,
 // every column and every sheet name of every sheet the scope does not exclude.
-func (c *Converter) conveyTabular(path, name, format string, role Role, scope SheetScope) (Document, DocumentReport, error) {
-	sheets, err := c.readTables(path, name, format)
+func (c *Converter) conveyTabular(ctx context.Context, path, name, format string, role Role, scope SheetScope) (Document, DocumentReport, error) {
+	sheets, err := c.readTables(ctx, path, name, format)
 	if err != nil {
 		return Document{}, DocumentReport{}, err
 	}
@@ -354,19 +355,19 @@ func (c *Converter) conveyTabular(path, name, format string, role Role, scope Sh
 	detail := fmt.Sprintf("converted to Markdown tables: %d sheet(s), %d data row(s), all columns kept",
 		len(sheets), rows)
 	if Scoped(inv) {
-		var answered, context, excluded int
+		var answered, contextSheets, excluded int
 		for _, s := range inv {
 			switch s.Scope {
 			case ScopeAnswer:
 				answered++
 			case ScopeContext:
-				context++
+				contextSheets++
 			default:
 				excluded++
 			}
 		}
 		detail = fmt.Sprintf("converted to Markdown tables: %d of %d sheet(s) answered, %d context only, %d excluded; %d data row(s) conveyed, all columns kept",
-			answered, len(inv), context, excluded, rows)
+			answered, len(inv), contextSheets, excluded, rows)
 	}
 
 	doc := Document{Filename: name, Format: format, Role: role, Path: PathConverted, Text: text}
@@ -377,7 +378,7 @@ func (c *Converter) conveyTabular(path, name, format string, role Role, scope Sh
 }
 
 // readTables converts a spreadsheet or CSV to its tables.
-func (c *Converter) readTables(path, name, format string) ([]rfp.SheetTable, error) {
+func (c *Converter) readTables(ctx context.Context, path, name, format string) ([]rfp.SheetTable, error) {
 	var sheets []rfp.SheetTable
 
 	switch format {
@@ -394,7 +395,7 @@ func (c *Converter) readTables(path, name, format string) ([]rfp.SheetTable, err
 		if err != nil {
 			return nil, fmt.Errorf("creating Tika client: %w", err)
 		}
-		htmlContent, err := tikaClient.ExtractHTML(path)
+		htmlContent, err := tikaClient.ExtractHTML(ctx, path)
 		if err != nil {
 			return nil, fmt.Errorf("tika extraction of %s failed: %w", name, err)
 		}
@@ -422,7 +423,7 @@ func (e *UnreadableDocumentError) Unwrap() error { return e.Err }
 // Markdown tables the same way a spreadsheet's are; the surrounding prose is kept as
 // text. Uploading the original is not an option — no mainstream API accepts the
 // format — and uploading Tika's HTML would have its tags stripped.
-func (c *Converter) conveyProse(path, name, format string, role Role) (Document, DocumentReport, error) {
+func (c *Converter) conveyProse(ctx context.Context, path, name, format string, role Role) (Document, DocumentReport, error) {
 	if c.TikaURL == "" {
 		return Document{}, DocumentReport{}, fmt.Errorf(
 			"reading %s needs the tika service, which is not configured", name)
@@ -431,7 +432,7 @@ func (c *Converter) conveyProse(path, name, format string, role Role) (Document,
 	if err != nil {
 		return Document{}, DocumentReport{}, fmt.Errorf("creating Tika client: %w", err)
 	}
-	htmlContent, err := tikaClient.ExtractHTML(path)
+	htmlContent, err := tikaClient.ExtractHTML(ctx, path)
 	if err != nil {
 		return Document{}, DocumentReport{}, fmt.Errorf("tika extraction of %s failed: %w", name, err)
 	}

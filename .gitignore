@@ -78,3 +78,7 @@ hackathon-ux-harness-kit*/
 /*.txt
 /*.yaml
 !/rest-api.yaml
+/.idea/workspace.xml
+/.idea/vcs.xml
+/.idea/rag-snap.iml
+/.idea/inspectionProfiles/profiles_settings.xml

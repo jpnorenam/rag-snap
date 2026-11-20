@@ -222,7 +222,7 @@ func TestConveyScopedWorkbook(t *testing.T) {
 	c := NewConverter(fakeTika(t, tabs))
 	path := fakeWorkbook(t, tabs)
 
-	conv, err := c.ConveyAllWith(path, nil, SheetScope{"2": ScopeAnswer, "3": ScopeAnswer, "Read Me": ScopeContext})
+	conv, err := c.ConveyAllWith(t.Context(), path, nil, SheetScope{"2": ScopeAnswer, "3": ScopeAnswer, "Read Me": ScopeContext})
 	if err != nil {
 		t.Fatalf("ConveyAllWith: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestConveyUnscopedWorkbookIsUnchanged(t *testing.T) {
 	c := NewConverter(fakeTika(t, tabs))
 	path := fakeWorkbook(t, tabs)
 
-	conv, err := c.ConveyAll(path, nil)
+	conv, err := c.ConveyAll(t.Context(), path, nil)
 	if err != nil {
 		t.Fatalf("ConveyAll: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestScopeOnADocumentWithoutSheetsIsRejected(t *testing.T) {
 	c := NewConverter("")
 	for _, name := range []string{"rfp.pdf", "matrix.csv"} {
 		path := writeFile(t, name, "%PDF-1.7\n")
-		_, err := c.ConveyAllWith(path, nil, SheetScope{"1": ScopeAnswer})
+		_, err := c.ConveyAllWith(t.Context(), path, nil, SheetScope{"1": ScopeAnswer})
 		if err == nil || !strings.Contains(err.Error(), "applies only to a spreadsheet") {
 			t.Errorf("%s: want the not-a-spreadsheet error, got %v", name, err)
 		}
@@ -288,15 +288,15 @@ func TestScopeOnADocumentWithoutSheetsIsRejected(t *testing.T) {
 func TestInventory(t *testing.T) {
 	tabs := []string{"Read Me", "1 Hardware"}
 	c := NewConverter(fakeTika(t, tabs))
-	inv, format, err := c.Inventory(fakeWorkbook(t, tabs))
+	inv, format, err := c.Inventory(t.Context(), fakeWorkbook(t, tabs))
 	if err != nil || format != "xlsx" || len(inv) != 2 || inv[1].Name != "1 Hardware" || inv[1].DataRows != 1 {
 		t.Errorf("Inventory = %+v, %q, %v", inv, format, err)
 	}
-	inv, format, err = c.Inventory(writeFile(t, "rfp.pdf", "%PDF-1.7\n"))
+	inv, format, err = c.Inventory(t.Context(), writeFile(t, "rfp.pdf", "%PDF-1.7\n"))
 	if err != nil || format != "pdf" || inv == nil || len(inv) != 0 {
 		t.Errorf("a PDF has an empty inventory, got %+v, %q, %v", inv, format, err)
 	}
-	if _, _, err := c.Inventory(writeFile(t, "notes.txt", "x")); err == nil {
+	if _, _, err := c.Inventory(t.Context(), writeFile(t, "notes.txt", "x")); err == nil {
 		t.Error("an unsupported type must be rejected")
 	}
 }

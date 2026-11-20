@@ -466,7 +466,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 			var metadataPath string // stored in SourceMetadata.FilePath
 			var webMeta *processing.WebMetadata
 			if urlFlag != "" {
-				crawled, wm, cleanup, err := processing.CrawlURL(urlFlag)
+				crawled, wm, cleanup, err := processing.CrawlURL(context.Background(), urlFlag)
 				if err != nil {
 					return fmt.Errorf("crawling URL: %w", err)
 				}
@@ -490,7 +490,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 			if formatFlag == "rfp" {
 				result, err = processing.IngestRFP(filePath, sourceID)
 			} else {
-				result, err = processing.Ingest(apiUrls[tika], filePath, sourceID)
+				result, err = processing.Ingest(context.Background(), apiUrls[tika], filePath, sourceID)
 			}
 			if err != nil {
 				return fmt.Errorf("ingesting document: %w", err)

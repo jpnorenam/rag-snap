@@ -29,7 +29,7 @@ func TestConveyCSVKeepsEveryColumn(t *testing.T) {
 	c := NewConverter("")
 	path := writeFile(t, "matrix.csv", complianceCSV)
 
-	doc, report, err := c.Convey(path, RolePrimary)
+	doc, report, err := c.Convey(t.Context(), path, RolePrimary)
 	if err != nil {
 		t.Fatalf("Convey: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestConveyPDFSendsBytesNatively(t *testing.T) {
 	body := "%PDF-1.7\nnot a real pdf but bytes all the same\n"
 	path := writeFile(t, "rfp.pdf", body)
 
-	doc, report, err := c.Convey(path, RolePrimary)
+	doc, report, err := c.Convey(t.Context(), path, RolePrimary)
 	if err != nil {
 		t.Fatalf("Convey: %v", err)
 	}
@@ -82,7 +82,7 @@ func TestConveyRejectsOversizedPDFNamingLimitAndValue(t *testing.T) {
 	c.Limits = Limits{MaxPDFBytes: 16}
 	path := writeFile(t, "big.pdf", strings.Repeat("x", 64))
 
-	_, _, err := c.Convey(path, RolePrimary)
+	_, _, err := c.Convey(t.Context(), path, RolePrimary)
 	if err == nil {
 		t.Fatal("expected an oversized PDF to be rejected")
 	}
@@ -103,7 +103,7 @@ func TestConveyRejectsTooManyPagesWhenKnown(t *testing.T) {
 	c.Limits = Limits{MaxPDFPages: 1}
 	path := writeFile(t, "unknown.pdf", "%PDF-1.7\n")
 
-	if _, _, err := c.Convey(path, RolePrimary); err != nil {
+	if _, _, err := c.Convey(t.Context(), path, RolePrimary); err != nil {
 		t.Fatalf("an unmeasurable page count must not fail the conveyance: %v", err)
 	}
 }
@@ -114,7 +114,7 @@ func TestConveyAllRejectsWhenTheSetExceedsTheTotal(t *testing.T) {
 	primary := writeFile(t, "a.pdf", strings.Repeat("x", 30))
 	extra := writeFile(t, "b.pdf", strings.Repeat("y", 30))
 
-	_, err := c.ConveyAll(primary, []string{extra})
+	_, err := c.ConveyAll(t.Context(), primary, []string{extra})
 	if err == nil {
 		t.Fatal("expected the set to be rejected for exceeding the total limit")
 	}
@@ -130,7 +130,7 @@ func TestConveyAllFailsRatherThanDroppingAContextDocument(t *testing.T) {
 	c := NewConverter("")
 	primary := writeFile(t, "primary.csv", complianceCSV)
 
-	_, err := c.ConveyAll(primary, []string{filepath.Join(t.TempDir(), "absent.pdf")})
+	_, err := c.ConveyAll(t.Context(), primary, []string{filepath.Join(t.TempDir(), "absent.pdf")})
 	if err == nil {
 		t.Fatal("expected a missing context document to fail the conveyance")
 	}
@@ -144,7 +144,7 @@ func TestConveyAllOrdersPrimaryFirstAndLabelsRoles(t *testing.T) {
 	primary := writeFile(t, "primary.csv", complianceCSV)
 	extra := writeFile(t, "extra.csv", complianceCSV)
 
-	conv, err := c.ConveyAll(primary, []string{extra})
+	conv, err := c.ConveyAll(t.Context(), primary, []string{extra})
 	if err != nil {
 		t.Fatalf("ConveyAll: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestConveyRejectsUnsupportedFormat(t *testing.T) {
 	c := NewConverter("")
 	path := writeFile(t, "notes.rtf", "whatever")
 
-	_, _, err := c.Convey(path, RolePrimary)
+	_, _, err := c.Convey(t.Context(), path, RolePrimary)
 	if err == nil {
 		t.Fatal("expected an unsupported format to be rejected")
 	}
@@ -181,7 +181,7 @@ func TestConveyXLSXWithoutTikaExplainsTheMissingService(t *testing.T) {
 	c := NewConverter("")
 	path := writeFile(t, "matrix.xlsx", "not really a workbook")
 
-	_, _, err := c.Convey(path, RolePrimary)
+	_, _, err := c.Convey(t.Context(), path, RolePrimary)
 	if err == nil {
 		t.Fatal("expected a spreadsheet to need Tika")
 	}
