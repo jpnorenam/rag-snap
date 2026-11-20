@@ -172,8 +172,8 @@ do_sysctl() {
 	chmod 0644 "$SYSCTL_FILE.tmp"
 	mv -f "$SYSCTL_FILE.tmp" "$SYSCTL_FILE"
 	sysctl -p "$SYSCTL_FILE" >/dev/null || fail "sysctl -p $SYSCTL_FILE failed"
-	[ "$(sysctl -n vm.max_map_count)" = 262144 ] && [ "$(sysctl -n vm.swappiness)" = 0 ] &&
-		[ "$(sysctl -n net.ipv4.tcp_retries2)" = 5 ] || fail "sysctl values did not take effect"
+	[[ $(sysctl -n vm.max_map_count) == 262144 && $(sysctl -n vm.swappiness) == 0 &&
+		$(sysctl -n net.ipv4.tcp_retries2) == 5 ]] || fail "sysctl values did not take effect"
 }
 
 do_snap() {
