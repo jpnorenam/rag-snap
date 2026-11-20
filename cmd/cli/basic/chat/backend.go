@@ -27,7 +27,7 @@ const (
 )
 
 // ResolveAPI validates a chat.api value, mapping unset/empty to APIOpenAI. An
-// unrecognised value is an error rather than a silent fallback: a wrong protocol
+// unrecognized value is an error rather than a silent fallback: a wrong protocol
 // would only surface later as an opaque 404 from the inference server.
 func ResolveAPI(value string) (string, error) {
 	switch v := strings.TrimSpace(value); v {
@@ -85,7 +85,7 @@ type Request struct {
 	Model    string
 	System   string
 	Messages []Message
-	// Temperature is honoured by the OpenAI backend. The Anthropic backend never
+	// Temperature is honored by the OpenAI backend. The Anthropic backend never
 	// sends sampling parameters (current Claude models reject them) and drops it.
 	Temperature *float64
 	Purpose     Purpose

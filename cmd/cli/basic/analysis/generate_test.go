@@ -178,7 +178,7 @@ func TestExtractionInstructionsCoverEveryDemandColumn(t *testing.T) {
 
 func TestExtractionNeverSplitsByAnswerFieldOrInventsRangedIDs(t *testing.T) {
 	// The live MASCOM regression: with the every-column rule alone, a high-effort
-	// extraction emitted one question per answer field (compliance, product, licence,
+	// extraction emitted one question per answer field (compliance, product, license,
 	// cross-reference, comment) and gave individual ids to numbers inside ranged rows.
 	for _, want := range []string{"ANSWER FIELDS ARE NOT QUESTIONS", "RANGED ROWS KEEP THEIR RANGE", `"FR_11-15-a"`} {
 		if !strings.Contains(questionsInstruction, want) {
@@ -582,7 +582,7 @@ func TestGeneratedManifestRoundTripsThroughTheRunsOwnValidation(t *testing.T) {
 }
 
 func TestValidateManifestCatchesALostNoContextRule(t *testing.T) {
-	// A defence-in-depth assertion: if assembly ever stopped appending the rules, this
+	// A defense-in-depth assertion: if assembly ever stopped appending the rules, this
 	// is what catches it rather than a bad manifest reaching a bid.
 	m := &chat.BatchManifest{
 		Version:   "1.0",

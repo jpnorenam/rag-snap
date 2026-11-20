@@ -43,7 +43,7 @@ type batchDomainJSON struct {
 }
 
 // batchManifestBody re-shapes a loaded manifest into the daemon's JSON request
-// body. Every manifest field the run honours has to be carried here, or the
+// body. Every manifest field the run honors has to be carried here, or the
 // daemon-backed path silently runs a different manifest than the direct path.
 func batchManifestBody(manifest *chat.BatchManifest, temperature float64, noJudge bool) batchManifestJSON {
 	questions := make([]batchQuestionJSON, len(manifest.Questions))

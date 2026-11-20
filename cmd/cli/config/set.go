@@ -17,6 +17,8 @@ type setCommand struct {
 	packageConfig bool
 }
 
+// SetCommand returns the "set" command, which sets a configuration value in the
+// user layer, or in the package layer with --package.
 func SetCommand(ctx *common.Context) *cobra.Command {
 	var cmd setCommand
 	cmd.Context = ctx

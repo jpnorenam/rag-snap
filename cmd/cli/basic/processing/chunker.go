@@ -5,6 +5,7 @@ import (
 	"time"
 )
 
+// Default chunk size and overlap, used when an ingest does not set its own.
 const (
 	DefaultChunkSize    = 1024
 	DefaultChunkOverlap = 200

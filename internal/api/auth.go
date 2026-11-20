@@ -20,7 +20,7 @@ type transportKind int
 
 const (
 	// transportUnix is the unix-socket transport (SO_PEERCRED). It is the zero
-	// value so an unmarked connection (e.g. an older test dialling directly)
+	// value so an unmarked connection (e.g. an older test dialing directly)
 	// defaults to the historical peercred path.
 	transportUnix transportKind = iota
 	// transportLoopback is the loopback TCP transport (bearer-token auth).
@@ -38,7 +38,7 @@ const uiTokenCookie = "rag_ui_token"
 
 // transportFromRequest returns the transport the request's connection arrived
 // on. An unmarked connection defaults to transportUnix, preserving the original
-// single-listener behaviour and keeping the existing peercred tests valid.
+// single-listener behavior and keeping the existing peercred tests valid.
 func transportFromRequest(r *http.Request) transportKind {
 	if t, ok := r.Context().Value(transportContextKey{}).(transportKind); ok {
 		return t
@@ -151,7 +151,7 @@ func (s *Server) authenticate(r *http.Request) authResult {
 	cred, ok := credFromRequest(r)
 	if !ok {
 		// No peer credentials available. This only happens off the unix
-		// socket (e.g. tests dialling a loopback). Treat as untrusted.
+		// socket (e.g. tests dialing a loopback). Treat as untrusted.
 		return authResult{reason: "peer credentials unavailable"}
 	}
 	if cred.err != nil {

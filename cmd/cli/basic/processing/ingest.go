@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -34,7 +35,7 @@ type IngestResult struct {
 // Ingest extracts content from a file and splits it into chunks ready for
 // indexing. Markdown and plain-text files are read directly; everything else
 // goes through Tika.
-func Ingest(tikaURL, filePath, sourceID string) (*IngestResult, error) {
+func Ingest(ctx context.Context, tikaURL, filePath, sourceID string) (*IngestResult, error) {
 	// 1. Compute file checksum and size
 	checksum, fileSize, err := checksumAndSize(filePath)
 	if err != nil {
@@ -51,7 +52,7 @@ func Ingest(tikaURL, filePath, sourceID string) (*IngestResult, error) {
 	}
 
 	// 2-3. Extract content as Markdown
-	content, err := extractMarkdown(tika, filePath)
+	content, err := extractMarkdown(ctx, tika, filePath)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +64,7 @@ func Ingest(tikaURL, filePath, sourceID string) (*IngestResult, error) {
 
 	// 4. Extract metadata (non-fatal on error)
 	var tikaMeta *TikaMetadata
-	tikaMeta, _ = tika.ExtractMetadata(filePath)
+	tikaMeta, _ = tika.ExtractMetadata(ctx, filePath)
 
 	// 5. Chunk the Markdown content (structure-aware)
 	stopProgress := common.StartProgressSpinner("Chunking content")
@@ -89,7 +90,7 @@ func Ingest(tikaURL, filePath, sourceID string) (*IngestResult, error) {
 // plain-text files are read as-is so their line structure survives (see
 // textSourceExtensions); other formats are extracted by Tika and converted
 // from its XHTML.
-func extractMarkdown(tika *TikaClient, filePath string) (string, error) {
+func extractMarkdown(ctx context.Context, tika *TikaClient, filePath string) (string, error) {
 	if content, ok, err := readTextSource(filePath); err != nil {
 		return "", err
 	} else if ok {
@@ -97,7 +98,7 @@ func extractMarkdown(tika *TikaClient, filePath string) (string, error) {
 	}
 
 	stopProgress := common.StartProgressSpinner("Extracting content")
-	rawHTML, err := tika.ExtractHTML(filePath)
+	rawHTML, err := tika.ExtractHTML(ctx, filePath)
 	stopProgress()
 	if err != nil {
 		return "", fmt.Errorf("content extraction failed: %w", err)
@@ -119,7 +120,7 @@ func extractMarkdown(tika *TikaClient, filePath string) (string, error) {
 }
 
 // checksumAndSize computes the SHA-256 hex digest and file size.
-func checksumAndSize(filePath string) (string, int64, error) {
+func checksumAndSize(filePath string) (checksum string, size int64, err error) {
 	f, err := os.Open(filePath)
 	if err != nil {
 		return "", 0, err

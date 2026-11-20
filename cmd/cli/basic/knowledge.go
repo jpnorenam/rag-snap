@@ -21,7 +21,7 @@ type knowledgeCommand struct {
 }
 
 func (cmd *knowledgeCommand) opensearchURL() (string, error) {
-	apiUrls, err := serverApiUrls(cmd.Context)
+	apiUrls, err := serverAPIURLs(cmd.Context)
 	if err != nil {
 		return "", fmt.Errorf("getting server API URLs: %w", err)
 	}
@@ -47,6 +47,8 @@ func (cmd *knowledgeCommand) opensearchClient() (*knowledge.OpenSearchClient, er
 	return knowledge.NewClient(url)
 }
 
+// KnowledgeCommand builds the `knowledge` (alias `k`) command group for
+// managing knowledge bases.
 func KnowledgeCommand(ctx *common.Context) *cobra.Command {
 	var cmd knowledgeCommand
 	cmd.Context = ctx
@@ -405,7 +407,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 				if len(args) != 0 {
 					return fmt.Errorf("positional arguments are not allowed with --batch")
 				}
-				apiUrls, err := serverApiUrls(cmd.Context)
+				apiUrls, err := serverAPIURLs(cmd.Context)
 				if err != nil {
 					return fmt.Errorf("getting server API URLs: %w", err)
 				}
@@ -464,9 +466,9 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 			var metadataPath string // stored in SourceMetadata.FilePath
 			var webMeta *processing.WebMetadata
 			if urlFlag != "" {
-				crawled, wm, cleanup, err := processing.CrawlURL(urlFlag)
+				crawled, wm, cleanup, err := processing.CrawlURL(context.Background(), urlFlag)
 				if err != nil {
-					return fmt.Errorf("Crawling URL: %w", err)
+					return fmt.Errorf("crawling URL: %w", err)
 				}
 				defer cleanup()
 				filePath = crawled
@@ -479,7 +481,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 
 			indexName := knowledge.FullIndexName(knowledgeBaseName)
 
-			apiUrls, err := serverApiUrls(cmd.Context)
+			apiUrls, err := serverAPIURLs(cmd.Context)
 			if err != nil {
 				return fmt.Errorf("getting server API URLs: %w", err)
 			}
@@ -488,7 +490,7 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 			if formatFlag == "rfp" {
 				result, err = processing.IngestRFP(filePath, sourceID)
 			} else {
-				result, err = processing.Ingest(apiUrls[tika], filePath, sourceID)
+				result, err = processing.Ingest(context.Background(), apiUrls[tika], filePath, sourceID)
 			}
 			if err != nil {
 				return fmt.Errorf("ingesting document: %w", err)
@@ -959,7 +961,6 @@ func (cmd *knowledgeCommand) listIndexes(ctx context.Context, client *knowledge.
 
 	fmt.Printf("%-30s %-10s %-10s %-12s %-10s\n", "KNOWLEDGE BASE", "HEALTH", "STATUS", "DOCS", "SIZE")
 	for _, idx := range indexes {
-
 		knowledgeBaseName, _ := knowledge.KnowledgeBaseNameFromIndex(idx.Name)
 		fmt.Printf("%-30s %-10s %-10s %-12s %-10s\n",
 			knowledgeBaseName, idx.Health, idx.Status, idx.DocsCount, idx.StoreSize)
@@ -1098,9 +1099,9 @@ func (cmd *knowledgeCommand) importCommand() *cobra.Command {
 				return err
 			}
 
-			accessToken, err := knowledge.LoadOrAuthenticateDrive(ctx, cmd.Context.Config)
+			accessToken, err := knowledge.LoadOrAuthenticateDrive(ctx, cmd.Config)
 			if err != nil {
-				return fmt.Errorf("Drive authentication: %w", err)
+				return fmt.Errorf("drive authentication: %w", err)
 			}
 
 			var archives []knowledge.DriveArchive

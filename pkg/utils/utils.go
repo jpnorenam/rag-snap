@@ -14,27 +14,27 @@ import (
 
 // FmtPretty converts any interface to JSON with indentation, for use in logging where better readability is required. Errors are ignored.
 func FmtPretty(v interface{}) string {
-	jsonData, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		// Ignore error
-	}
+	jsonData, _ := json.MarshalIndent(v, "", "  ")
 	return string(jsonData)
 }
 
 // FmtBytes converts bytes to a printable string with unit
 func FmtBytes(bytes uint64) string {
-	if bytes > 1024*1024*1024*1024 {
+	switch {
+	case bytes > 1024*1024*1024*1024:
 		return fmt.Sprintf("%.1fTiB", float64(bytes)/1024/1024/1024/1024)
-	} else if bytes > 1024*1024*1024 {
+	case bytes > 1024*1024*1024:
 		return fmt.Sprintf("%.1fGiB", float64(bytes)/1024/1024/1024)
-	} else if bytes > 1024*1024 {
+	case bytes > 1024*1024:
 		return fmt.Sprintf("%.1fMiB", float64(bytes)/1024/1024)
-	} else if bytes > 1024 {
+	case bytes > 1024:
 		return fmt.Sprintf("%.1fKiB", float64(bytes)/1024)
 	}
 	return fmt.Sprintf("%d", bytes)
 }
 
+// StringToBytes parses a size such as "512", "64M", or "2G" (binary units)
+// into a number of bytes.
 func StringToBytes(sizeString string) (uint64, error) {
 	var sizeBytes uint64
 	var scaling uint64 = 1
@@ -52,7 +52,7 @@ func StringToBytes(sizeString string) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
-	sizeBytes = sizeBytes * scaling
+	sizeBytes *= scaling
 
 	return sizeBytes, nil
 }
@@ -86,6 +86,7 @@ func IsPrimitive(p interface{}) bool {
 	}
 }
 
+// SubDirectories returns the names of the directories directly inside dirPath.
 func SubDirectories(dirPath string) ([]string, error) {
 	entries, err := os.ReadDir(dirPath)
 	if err != nil {
@@ -101,13 +102,12 @@ func SubDirectories(dirPath string) ([]string, error) {
 	return directories, nil
 }
 
+// IsRootUser reports whether the process runs with an effective user ID of root.
 func IsRootUser() bool {
-	if os.Geteuid() == 0 {
-		return true
-	}
-	return false
+	return os.Geteuid() == 0
 }
 
+// IsTerminalOutput reports whether standard output is a terminal.
 func IsTerminalOutput() bool {
 	return term.IsTerminal(int(os.Stdout.Fd()))
 }

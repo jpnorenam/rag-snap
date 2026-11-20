@@ -46,7 +46,7 @@ type SheetTable struct {
 
 // DetectFormat returns the document format ("csv", "xlsx", "pdf", "docx", or "unknown")
 // based on file extension. contentType (from Tika /meta) is used as fallback when
-// the extension is not recognised.
+// the extension is not recognized.
 func DetectFormat(filePath, contentType string) string {
 	switch strings.ToLower(filepath.Ext(filePath)) {
 	case ".csv":
@@ -264,36 +264,40 @@ func XLSXSheetNames(path string) ([]string, error) {
 	defer r.Close()
 
 	for _, f := range r.File {
-		if f.Name != "xl/workbook.xml" {
-			continue
+		if f.Name == "xl/workbook.xml" {
+			return readSheetNames(f)
 		}
-		rc, err := f.Open()
-		if err != nil {
-			return nil, fmt.Errorf("opening workbook.xml: %w", err)
-		}
-		defer rc.Close()
+	}
+	return nil, fmt.Errorf("xl/workbook.xml not found in xlsx")
+}
 
-		// Use token-based parsing so namespace handling is irrelevant.
-		var names []string
-		dec := xml.NewDecoder(rc)
-		for {
-			tok, err := dec.Token()
-			if err != nil {
-				break
-			}
-			se, ok := tok.(xml.StartElement)
-			if ok && se.Name.Local == "sheet" {
-				for _, attr := range se.Attr {
-					if attr.Name.Local == "name" {
-						names = append(names, attr.Value)
-						break
-					}
+// readSheetNames returns the sheet names declared in an xlsx workbook.xml.
+func readSheetNames(f *zip.File) ([]string, error) {
+	rc, err := f.Open()
+	if err != nil {
+		return nil, fmt.Errorf("opening workbook.xml: %w", err)
+	}
+	defer rc.Close()
+
+	// Use token-based parsing so namespace handling is irrelevant.
+	var names []string
+	dec := xml.NewDecoder(rc)
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		se, ok := tok.(xml.StartElement)
+		if ok && se.Name.Local == "sheet" {
+			for _, attr := range se.Attr {
+				if attr.Name.Local == "name" {
+					names = append(names, attr.Value)
+					break
 				}
 			}
 		}
-		return names, nil
 	}
-	return nil, fmt.Errorf("xl/workbook.xml not found in xlsx")
+	return names, nil
 }
 
 // ExtractFromTable reads the specified column (0-indexed) from a parsed table.
@@ -452,7 +456,7 @@ func extractByPatterns(text string) []Question {
 			cur.WriteString(strings.TrimSpace(m[2]))
 			// Use numeric prefixes (e.g. "3.4.1", "2)") as the question ID;
 			// bullets and Q-prefix items keep sequential auto-numbering.
-			if len(prefix) > 0 && prefix[0] >= '0' && prefix[0] <= '9' {
+			if prefix != "" && prefix[0] >= '0' && prefix[0] <= '9' {
 				currentID = strings.TrimRight(prefix, ".)")
 			}
 		} else if cur.Len() > 0 {

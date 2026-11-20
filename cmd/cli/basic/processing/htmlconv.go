@@ -205,7 +205,7 @@ func renderList(buf *strings.Builder, listNode *html.Node, ordered bool) {
 			text := strings.TrimSpace(nodeText(c))
 			text = strings.ReplaceAll(text, "\n", " ")
 			if ordered {
-				buf.WriteString(fmt.Sprintf("%d. %s\n", idx, text))
+				fmt.Fprintf(buf, "%d. %s\n", idx, text)
 				idx++
 			} else {
 				buf.WriteString("- " + text + "\n")

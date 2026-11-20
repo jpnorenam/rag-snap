@@ -31,7 +31,7 @@ func rfpPrintRefineSummary(origLen int, results []chat.RefinedQuestion) {
 // improvement, shows a summary, and asks the user to accept or reject.
 // On any error it prints a warning and returns the original questions unchanged.
 func rfpMaybeRefineQuestions(ctx *common.Context, questions []rfp.Question) []rfp.Question {
-	apiUrls, err := serverApiUrls(ctx)
+	apiUrls, err := serverAPIURLs(ctx)
 	if err != nil {
 		fmt.Printf("LLM not configured — skipping question refinement (%v).\n", err)
 		return questions

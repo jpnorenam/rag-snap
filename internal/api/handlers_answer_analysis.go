@@ -25,7 +25,7 @@ import (
 // A client asks this so it can present the path as unavailable rather than offering it
 // and failing at submit time. The reason is returned alongside so the UI can say what
 // the operator must fix.
-func (s *Server) analysisAvailable() (bool, string) {
+func (s *Server) analysisAvailable() (available bool, reason string) {
 	settings, err := analysis.LoadSettings(s.ctx.Config)
 	if err != nil {
 		return false, err.Error()
@@ -39,7 +39,7 @@ func (s *Server) analysisAvailable() (bool, string) {
 // judgeAvailable reports whether the daemon can judge batch answers, and why not when
 // it cannot. A judge turned off by configuration is unavailable with no reason worth
 // showing: that is a choice, not something to fix.
-func (s *Server) judgeAvailable() (bool, string) {
+func (s *Server) judgeAvailable() (available bool, reason string) {
 	settings, err := analysis.LoadJudgeSettings(s.ctx.Config)
 	if err == nil {
 		err = analysis.ValidateJudge(settings)
@@ -56,7 +56,7 @@ func (s *Server) judgeAvailable() (bool, string) {
 // batchJudge builds the judge for one batch run. It returns a nil judge with the
 // reason when judging is wanted but cannot run, and nil with no reason when it is
 // turned off.
-func (s *Server) batchJudge() (*chat.BatchJudge, string) {
+func (s *Server) batchJudge() (judge *chat.BatchJudge, reason string) {
 	judge, _, err := analysis.NewBatchJudge(s.ctx.Config, s.ctx.Verbose)
 	switch {
 	case err == nil:
@@ -189,13 +189,13 @@ func (s *Server) handleAnswerAnalyze(w http.ResponseWriter, r *http.Request) {
 	tikaURL := s.clients.tikaURL()
 
 	op, err := s.ops.runTask(
-		fmt.Sprintf("Analysing %q", name),
+		fmt.Sprintf("Analyzing %q", name),
 		nil, true,
 		func(ctx context.Context, op *Operation) error {
 			defer cleanupAll()
 
 			converter := analysis.NewConverter(tikaURL)
-			conveyance, err := converter.ConveyAllWith(primary, contextPaths, scope)
+			conveyance, err := converter.ConveyAllWith(ctx, primary, contextPaths, scope)
 			if err != nil {
 				return err
 			}
@@ -296,7 +296,7 @@ func (s *Server) handleAnswerAnalyzeSheets(w http.ResponseWriter, r *http.Reques
 	}
 	defer cleanup()
 
-	sheets, format, err := analysis.NewConverter(s.clients.tikaURL()).Inventory(path)
+	sheets, format, err := analysis.NewConverter(s.clients.tikaURL()).Inventory(r.Context(), path)
 	if err != nil {
 		// The document's own faults are a 400; anything else, such as the tika service
 		// being unavailable, is the server's.
@@ -608,13 +608,13 @@ func stageUpload(r *http.Request, field string) (path string, cleanup func(), na
 //
 // Conveyance reads from a path, and an upload arriving over the API was never on disk,
 // so it is staged here and removed when the operation finishes.
-func stageUploadHeader(header *multipart.FileHeader) (string, func(), error) {
+func stageUploadHeader(header *multipart.FileHeader) (stagedPath string, cleanup func(), err error) {
 	format := rfp.DetectFormat(header.Filename, header.Header.Get("Content-Type"))
 	if format == "unknown" {
 		return "", nil, fmt.Errorf("unsupported file type %q — analysis reads PDF, XLSX, CSV, DOCX", header.Filename)
 	}
 	// Everything downstream detects the format from the staged path alone, so a file
-	// recognised only by its Content-Type is staged under that format's extension.
+	// recognized only by its Content-Type is staged under that format's extension.
 	ext := filepath.Ext(header.Filename)
 	if rfp.DetectFormat(header.Filename, "") == "unknown" {
 		ext = "." + format

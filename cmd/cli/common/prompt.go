@@ -16,11 +16,12 @@ func ConfirmationPrompt(prompt string) bool {
 		input, _ := reader.ReadString('\n')
 		input = strings.ToLower(strings.TrimSpace(input))
 
-		if input == "y" || input == "yes" {
+		switch input {
+		case "y", "yes":
 			return true
-		} else if input == "n" || input == "no" {
+		case "n", "no":
 			return false
-		} else {
+		default:
 			fmt.Println(`Invalid input. Please enter "y" or "n".`)
 		}
 	}

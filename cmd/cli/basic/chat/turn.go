@@ -30,7 +30,7 @@ type StreamFunc func(kind TokenKind, content string) error
 // conversation is the running state of one multi-turn chat: the resolved model,
 // the system prompt (kept apart from the turns, since the two wire protocols
 // place it differently), the user/assistant history, and the sampling
-// temperature the OpenAI backend honours.
+// temperature the OpenAI backend honors.
 type conversation struct {
 	model       string
 	system      string
@@ -64,7 +64,7 @@ func (c *conversation) record(prompt, reply string) {
 }
 
 // temperatureNotice returns the verbose-mode notice for a temperature the
-// selected backend will not send, or "" when it is honoured.
+// selected backend will not send, or "" when it is honored.
 func temperatureNotice(api string, temperature float64) string {
 	if resolved, _ := ResolveAPI(api); resolved != APIAnthropic {
 		return ""
@@ -227,14 +227,13 @@ func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc)
 	hasKapa := ls.session.KapaClient != nil && len(ls.session.ActiveKapaGroups) > 0
 	hasContext := hasRAG || hasKapa
 
-	lexicalQuery := text
 	ragContext := ""
 	if hasContext {
 		// Retrieval problems (a failed kapa.ai request) reach the client as a
 		// warning frame on this turn's stream instead of staying in the logs.
 		ls.session.Warn = func(msg string) { _ = emit(TokenWarning, msg) }
 		defer func() { ls.session.Warn = nil }()
-		lexicalQuery = rewriteSearchQuery(ls.backend, ls.conv.model, ls.conv.history, text, ls.verbose)
+		lexicalQuery := rewriteSearchQuery(ls.backend, ls.conv.model, ls.conv.history, text, ls.verbose)
 		ragContext, _ = retrieveContext(ls.session, text, lexicalQuery, ls.verbose)
 	}
 

@@ -2,6 +2,7 @@ package snap_store
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"strings"
 )
 
+// ComponentSizes returns the download size in bytes of each component of the
+// running snap, keyed by component name, as reported by the snap store.
 func ComponentSizes() (map[string]int64, error) {
 	components, err := componentsOfCurrentSnap()
 	if err != nil {
@@ -49,7 +52,7 @@ func componentsOfCurrentSnap() ([]snapResources, error) {
 		return nil, fmt.Errorf("error getting snap info: %v", err)
 	}
 
-	components, err := snapComponents(info.SnapId, int(snapRevision), os.Getenv("SNAP_ARCH"))
+	components, err := snapComponents(info.SnapID, int(snapRevision), os.Getenv("SNAP_ARCH"))
 	if err != nil {
 		return nil, fmt.Errorf("error getting components: %v", err)
 	}
@@ -62,7 +65,7 @@ func componentsOfCurrentSnap() ([]snapResources, error) {
 func snapInfo(snapName string) (*snapInfoResponse, error) {
 	url := "https://api.snapcraft.io/v2/snaps/info/" + snapName
 
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("error creating new http request: %v", err)
 	}
@@ -90,12 +93,12 @@ func snapInfo(snapName string) (*snapInfoResponse, error) {
 	return &info, nil
 }
 
-func snapComponents(snapId string, revision int, snapArch string) ([]snapResources, error) {
+func snapComponents(snapID string, revision int, snapArch string) ([]snapResources, error) {
 	/*
 		From sniffing the traffic between snapd and the snap store, we see the refresh endpoint is used to look up
 		available components for the respective snap, their revisions, their sizes, and their download URLs.
 	*/
-	refreshResponse, err := snapRefresh(snapId, revision, snapArch)
+	refreshResponse, err := snapRefresh(snapID, revision, snapArch)
 	if err != nil {
 		return nil, fmt.Errorf("error fetching refresh data from store: %v", err)
 	}
@@ -105,43 +108,43 @@ func snapComponents(snapId string, revision int, snapArch string) ([]snapResourc
 	}
 
 	for _, result := range refreshResponse.Results {
-		if result.SnapId == snapId {
+		if result.SnapID == snapID {
 			return result.Snap.Resources, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no refresh results found for snap id %s", snapId)
+	return nil, fmt.Errorf("no refresh results found for snap id %s", snapID)
 }
 
 // snapRefresh makes a call to the store to fetch refresh information
 // Docs: https://api.snapcraft.io/docs/refresh.html
-func snapRefresh(snapId string, revision int, snapArch string) (*snapRefreshResponse, error) {
+func snapRefresh(snapID string, revision int, snapArch string) (*snapRefreshResponse, error) {
 	request := snapRefreshRequest{
 		Context: []snapRefreshContext{
 			{
-				SnapId:          snapId,
-				InstanceKey:     snapId,
+				SnapID:          snapID,
+				InstanceKey:     snapID,
 				Revision:        revision,
 				TrackingChannel: "",
 			}},
 		Actions: []snapRefreshActions{
 			{
 				Action:      "refresh",
-				InstanceKey: snapId,
-				SnapId:      snapId,
+				InstanceKey: snapID,
+				SnapID:      snapID,
 				Revision:    revision,
 			},
 		},
 		Fields: []string{"resources"},
 	}
-	requestJson, err := json.Marshal(request)
+	requestJSON, err := json.Marshal(request)
 	if err != nil {
-		return nil, fmt.Errorf("error marshalling request to json: %v", err)
+		return nil, fmt.Errorf("error marshaling request to json: %v", err)
 	}
 
 	url := "https://api.snapcraft.io/v2/snaps/refresh"
 
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(requestJson))
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, url, bytes.NewBuffer(requestJSON))
 	if err != nil {
 		return nil, fmt.Errorf("error creating new http request: %v", err)
 	}

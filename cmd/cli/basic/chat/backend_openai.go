@@ -69,7 +69,7 @@ func (b *openAIBackend) Complete(ctx context.Context, r Request) (string, error)
 	return resp.Choices[0].Message.Content, nil
 }
 
-// Stream forwards each delta through emit, labelled think vs answer based on
+// Stream forwards each delta through emit, labeled think vs answer based on
 // <think> blocks, and returns the accumulated content (think spans included, as
 // before: the store and the rewrite formatter strip them).
 func (b *openAIBackend) Stream(ctx context.Context, r Request, emit StreamFunc) (string, error) {

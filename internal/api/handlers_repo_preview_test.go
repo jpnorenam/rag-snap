@@ -35,7 +35,7 @@ func stubGitea(t *testing.T, treePaths []string, truncated bool) *httptest.Serve
 
 // postPreview posts a repo-preview request and returns the status code and
 // response body.
-func postPreview(t *testing.T, client *http.Client, body map[string]any) (int, []byte) {
+func postPreview(t *testing.T, client *http.Client, body map[string]any) (status int, respBody []byte) {
 	t.Helper()
 	buf, _ := json.Marshal(body)
 	resp, err := client.Post("http://unix/1.0/knowledge/repo-preview", "application/json", bytes.NewReader(buf))

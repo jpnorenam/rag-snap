@@ -14,6 +14,7 @@ type getCommand struct {
 	*common.Context
 }
 
+// GetCommand returns the "get" command, which prints one or all configuration values.
 func GetCommand(ctx *common.Context) *cobra.Command {
 	var cmd getCommand
 	cmd.Context = ctx
@@ -34,9 +35,8 @@ func GetCommand(ctx *common.Context) *cobra.Command {
 func (cmd *getCommand) run(_ *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return cmd.getValues()
-	} else {
-		return cmd.getValue(args[0])
 	}
+	return cmd.getValue(args[0])
 }
 
 func (cmd *getCommand) getValue(key string) error {

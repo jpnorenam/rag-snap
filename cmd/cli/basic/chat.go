@@ -15,6 +15,7 @@ type chatCommand struct {
 	prompt      string
 }
 
+// ChatCommand builds the interactive `chat` command.
 func ChatCommand(ctx *common.Context) *cobra.Command {
 	var cmd chatCommand
 	cmd.Context = ctx
@@ -57,7 +58,7 @@ func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
 		return fmt.Errorf("--prompt selects a stored prompt variant, which requires the ragd daemon; start it and retry")
 	}
 
-	apiUrls, err := serverApiUrls(cmd.Context)
+	apiUrls, err := serverAPIURLs(cmd.Context)
 	if err != nil {
 		return fmt.Errorf("error getting server api urls: %w", err)
 	}

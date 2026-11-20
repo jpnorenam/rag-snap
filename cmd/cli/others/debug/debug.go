@@ -5,6 +5,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// DebugCommand returns the hidden "debug" command group for developer tools.
 func DebugCommand(ctx *common.Context) *cobra.Command {
 	debugCmd := &cobra.Command{
 		Use:    "debug",

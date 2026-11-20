@@ -370,7 +370,7 @@ const digestTextLimit = 300
 // The text is the point. Given ids alone, the strategy call routed by the document's
 // own clause numbering and attached a context to the wrong question when the extraction
 // pass had numbered clauses differently (MeitY's T4-iii). Grouped by source, so the
-// section structure a domains list is organised around stays visible.
+// section structure a domains list is organized around stays visible.
 func questionIDDigest(questions []chat.BatchQuestion) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "The %d questions the extraction pass produced. Your domains patterns must match these ids, and each context must concern the questions its pattern matches:\n\n", len(questions))

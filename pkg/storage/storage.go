@@ -2,6 +2,7 @@ package storage
 
 import "fmt"
 
+// ErrorNotFound is returned when a requested configuration key is not set.
 var ErrorNotFound = fmt.Errorf("not found")
 
 type storage interface {

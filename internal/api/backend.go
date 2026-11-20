@@ -14,7 +14,7 @@ import (
 // the API listener can start immediately; handlers consult Ready before using a
 // backend and return a "backend unavailable" error when it is not yet up.
 //
-// Phase 1 (skeleton) only establishes reachability by TCP-dialling each
+// Phase 1 (skeleton) only establishes reachability by TCP-dialing each
 // configured host:port. The typed clients (OpenSearchClient, the openai client,
 // the Tika client) are constructed by the feature handlers added in later phases.
 type backendState struct {
@@ -50,7 +50,7 @@ func (b *backendState) snapshot() map[string]bool {
 	return out
 }
 
-// poll runs a readiness loop until ctx is cancelled, dialling each backend's
+// poll runs a readiness loop until ctx is cancelled, dialing each backend's
 // host:port and recording reachability. It never blocks the listener.
 func (b *backendState) poll(ctx context.Context, interval time.Duration) {
 	check := func() {

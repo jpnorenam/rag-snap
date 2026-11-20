@@ -167,7 +167,7 @@ func testConveyance(t *testing.T) *Conveyance {
 	t.Helper()
 	c := NewConverter("")
 	path := writeFile(t, "matrix.csv", complianceCSV)
-	conv, err := c.ConveyAll(path, nil)
+	conv, err := c.ConveyAll(t.Context(), path, nil)
 	if err != nil {
 		t.Fatalf("ConveyAll: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestSchemasArriveVerbatim(t *testing.T) {
 }
 
 func TestAmbientEnvironmentCannotRedirectOrReauthenticate(t *testing.T) {
-	// Each of these is honoured by the SDK when the client leaves the matching field
+	// Each of these is honored by the SDK when the client leaves the matching field
 	// unset. Pinned explicitly, none of them may move confidential RFP content to
 	// another host, another Google backend, or another credential.
 	fs := newFakeServer(t, fakeCompletion{content: okTriage})
@@ -579,7 +579,7 @@ func TestPDFIsSentInlineAsADocumentPart(t *testing.T) {
 	c := testClient(t, fs)
 
 	const pdf = "%PDF-1.7\nbody\n"
-	conv, err := NewConverter("").ConveyAll(writeFile(t, "rfp.pdf", pdf), nil)
+	conv, err := NewConverter("").ConveyAll(t.Context(), writeFile(t, "rfp.pdf", pdf), nil)
 	if err != nil {
 		t.Fatalf("ConveyAll: %v", err)
 	}

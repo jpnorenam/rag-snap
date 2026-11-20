@@ -165,7 +165,7 @@ func (c *Client) TriageWith(ctx context.Context, conv *Conveyance, cat *Catalogu
 	}
 
 	// Validated locally rather than trusted to the schema, because structured output
-	// is honoured per model. An estimate of zero is the one field whose absence would
+	// is honored per model. An estimate of zero is the one field whose absence would
 	// silently disable the later shortfall check, so it is treated as missing.
 	var missing []string
 	if t.EstimatedQuestions <= 0 {

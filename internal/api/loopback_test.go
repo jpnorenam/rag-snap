@@ -73,7 +73,7 @@ func testBackends() map[string]string {
 // mutator (to set a header or cookie) and returns the response.
 func getLoopback(t *testing.T, base string, mutate func(*http.Request)) *http.Response {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, base+"/1.0", nil)
+	req, err := http.NewRequest(http.MethodGet, base+"/1.0", http.NoBody)
 	if err != nil {
 		t.Fatalf("building request: %v", err)
 	}

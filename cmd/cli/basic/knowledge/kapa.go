@@ -16,6 +16,8 @@ import (
 	"github.com/jpnorenam/rag-snap/pkg/storage"
 )
 
+// Config keys for the kapa.ai integration, and the pseudo-index name its hits
+// carry so they can be told apart from local OpenSearch hits.
 const (
 	ConfKapaProjectID = "kapa.project.id"
 	ConfKapaEnabled   = "kapa.enabled"
@@ -107,6 +109,7 @@ type KapaClient struct {
 	httpClient *http.Client
 }
 
+// NewKapaClient returns a client for the given kapa.ai project and API key.
 func NewKapaClient(projectID, apiKey string) *KapaClient {
 	return NewKapaClientAt(kapaBaseURL, projectID, apiKey)
 }
@@ -162,7 +165,7 @@ type kapaProject struct {
 // can tell which project the CLI is pointed at.
 func (c *KapaClient) ProjectName(ctx context.Context) (string, error) {
 	url := fmt.Sprintf("%s/org/v1/projects/%s/", c.baseURL, c.projectID)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, http.NoBody)
 	if err != nil {
 		return "", fmt.Errorf("kapa: creating project request: %w", err)
 	}
@@ -198,7 +201,7 @@ func (c *KapaClient) ListSourceGroups(ctx context.Context) ([]SourceGroup, error
 	var groups []SourceGroup
 
 	for nextURL != "" {
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, nil)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, nextURL, http.NoBody)
 		if err != nil {
 			return nil, fmt.Errorf("kapa: creating sources request: %w", err)
 		}
@@ -231,7 +234,7 @@ func (c *KapaClient) ListSourceGroups(ctx context.Context) ([]SourceGroup, error
 				}
 				if _, ok := seen[g.ID]; !ok {
 					seen[g.ID] = struct{}{}
-					groups = append(groups, SourceGroup{ID: g.ID, Name: g.Name})
+					groups = append(groups, SourceGroup{ID: g.ID, Name: g.Name}) //nolint:staticcheck // S1016: keep SourceGroup decoupled from the decoding struct's fields
 				}
 			}
 		}

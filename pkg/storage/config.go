@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+// Config is the layered configuration store: package defaults overridden by
+// user values (see ConfigType).
 type Config interface {
 	Set(key, value string, confType ConfigType) error
 	SetDocument(key string, value any, confType ConfigType) error
@@ -19,6 +21,7 @@ type config struct {
 	storage storage
 }
 
+// NewConfig returns the configuration store, backed by snapctl.
 func NewConfig() Config {
 	return &config{
 		storage: NewSnapctlStorage(), // hardcoded since that's the only supported backend
@@ -165,8 +168,7 @@ func (c *config) flattenMap(input map[string]any) map[string]any {
 // nestKeys creates a dot-separated key with the expected prefix
 func (c *config) nestKeys(confType ConfigType, key string) string {
 	if key == "." { // special case, referencing the parent
-		return strings.Join([]string{configKeyPrefix, string(confType)}, ".")
-	} else {
-		return strings.Join([]string{configKeyPrefix, string(confType), key}, ".")
+		return configKeyPrefix + "." + string(confType)
 	}
+	return strings.Join([]string{configKeyPrefix, string(confType), key}, ".")
 }

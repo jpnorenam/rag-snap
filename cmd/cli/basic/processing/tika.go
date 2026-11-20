@@ -1,6 +1,7 @@
 package processing
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,14 +45,14 @@ func NewTikaClient(tikaURL string) (*TikaClient, error) {
 }
 
 // Extract sends a file to the Tika server and returns the extracted plain text.
-func (t *TikaClient) Extract(filePath string) (string, error) {
+func (t *TikaClient) Extract(ctx context.Context, filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("opening file: %w", err)
 	}
 	defer file.Close()
 
-	req, err := http.NewRequest(http.MethodPut, t.baseURL+"/tika", file)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, t.baseURL+"/tika", file)
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)
 	}
@@ -78,14 +79,14 @@ func (t *TikaClient) Extract(filePath string) (string, error) {
 
 // ExtractHTML sends a file to the Tika server and returns the extracted content as HTML.
 // Tika returns XHTML with <table>, <h1>–<h6>, <p> tags that preserve document structure.
-func (t *TikaClient) ExtractHTML(filePath string) (string, error) {
+func (t *TikaClient) ExtractHTML(ctx context.Context, filePath string) (string, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return "", fmt.Errorf("opening file: %w", err)
 	}
 	defer file.Close()
 
-	req, err := http.NewRequest(http.MethodPut, t.baseURL+"/tika", file)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, t.baseURL+"/tika", file)
 	if err != nil {
 		return "", fmt.Errorf("creating request: %w", err)
 	}
@@ -111,14 +112,14 @@ func (t *TikaClient) ExtractHTML(filePath string) (string, error) {
 }
 
 // ExtractMetadata sends a file to the Tika /meta endpoint and returns parsed metadata.
-func (t *TikaClient) ExtractMetadata(filePath string) (*TikaMetadata, error) {
+func (t *TikaClient) ExtractMetadata(ctx context.Context, filePath string) (*TikaMetadata, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening file: %w", err)
 	}
 	defer file.Close()
 
-	req, err := http.NewRequest(http.MethodPut, t.baseURL+"/meta", file)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, t.baseURL+"/meta", file)
 	if err != nil {
 		return nil, fmt.Errorf("creating request: %w", err)
 	}

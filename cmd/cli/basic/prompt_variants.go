@@ -512,7 +512,7 @@ func restoreVariantInteractive(ctx context.Context, dc *apiclient.Client, slot, 
 }
 
 // confirmActivate asks whether to activate a freshly created variant.
-func confirmActivate(name string) (activate bool, ok bool, err error) {
+func confirmActivate(name string) (activate, ok bool, err error) {
 	form := huh.NewForm(huh.NewGroup(
 		huh.NewConfirm().
 			Title(fmt.Sprintf("Activate %q now?", name)).

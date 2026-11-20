@@ -24,7 +24,7 @@ func sampleManifest() *chat.BatchManifest {
 	}
 }
 
-func writeAndRead(t *testing.T, m *chat.BatchManifest, p Provenance) (string, string) {
+func writeAndRead(t *testing.T, m *chat.BatchManifest, p Provenance) (outPath, content string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "generated.yaml")
 	if err := WriteManifest(path, m, p); err != nil {

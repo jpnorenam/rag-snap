@@ -14,32 +14,32 @@ import (
 )
 
 // rfpTikaURL returns the Tika server URL by reading only the tika.http.* config keys.
-// Unlike serverApiUrls it does not require chat or opensearch config to be present.
+// Unlike serverAPIURLs it does not require chat or opensearch config to be present.
 func rfpTikaURL(ctx *common.Context) (string, error) {
-	host, err := getConfigString(ctx, confTikaHttpHost)
+	host, err := getConfigString(ctx, confTikaHTTPHost)
 	if err != nil {
-		return "", fmt.Errorf("Tika host not configured — run: rag set tika.http.host <host>")
+		return "", fmt.Errorf("tika host not configured — run: rag set tika.http.host <host>")
 	}
-	port, err := getConfigString(ctx, confTikaHttpPort)
+	port, err := getConfigString(ctx, confTikaHTTPPort)
 	if err != nil {
-		return "", fmt.Errorf("Tika port not configured — run: rag set tika.http.port <port>")
+		return "", fmt.Errorf("tika port not configured — run: rag set tika.http.port <port>")
 	}
-	tikaPath, _ := getConfigString(ctx, confTikaHttpPath) // optional
-	tikaTLS := getConfigBool(ctx, confTikaHttpTLS, false)
+	tikaPath, _ := getConfigString(ctx, confTikaHTTPPath) // optional
+	tikaTLS := getConfigBool(ctx, confTikaHTTPTLS, false)
 	return buildServiceURL(host, port, tikaPath, tikaTLS), nil
 }
 
 // rfpOpenSearchURL returns the OpenSearch URL by reading only the knowledge.http.* config keys.
 func rfpOpenSearchURL(ctx *common.Context) (string, error) {
-	host, err := getConfigString(ctx, confOpenSearchHttpHost)
+	host, err := getConfigString(ctx, confOpenSearchHTTPHost)
 	if err != nil {
 		return "", fmt.Errorf("OpenSearch host not configured")
 	}
-	port, err := getConfigString(ctx, confOpenSearchHttpPort)
+	port, err := getConfigString(ctx, confOpenSearchHTTPPort)
 	if err != nil {
 		return "", fmt.Errorf("OpenSearch port not configured")
 	}
-	osTLS := getConfigBool(ctx, confOpenSearchHttpTLS, true)
+	osTLS := getConfigBool(ctx, confOpenSearchHTTPTLS, true)
 	return buildServiceURL(host, port, "", osTLS), nil
 }
 
@@ -215,17 +215,17 @@ func rfpExtractCSV(filePath string) ([]rfp.Question, error) {
 // rfpExtractXLSX guides the user through sheet and column selection, supporting
 // multiple sheets and multiple tables per sheet. Each question is tagged with
 // the sheet name as its source.
-func rfpExtractXLSX(filePath, tikaURL string) ([]rfp.Question, error) {
+func rfpExtractXLSX(ctx context.Context, filePath, tikaURL string) ([]rfp.Question, error) {
 	stop := common.StartProgressSpinner("Parsing XLSX via Tika")
 	tikaClient, err := processing.NewTikaClient(tikaURL)
 	if err != nil {
 		stop()
 		return nil, fmt.Errorf("creating Tika client: %w", err)
 	}
-	htmlContent, err := tikaClient.ExtractHTML(filePath)
+	htmlContent, err := tikaClient.ExtractHTML(ctx, filePath)
 	stop()
 	if err != nil {
-		return nil, fmt.Errorf("Tika HTML extraction failed: %w\n"+
+		return nil, fmt.Errorf("tika HTML extraction failed: %w\n"+
 			"Ensure the Tika service is running ('rag status')", err)
 	}
 
@@ -413,7 +413,7 @@ func rfpExtractFromTables(sheets []rfp.SheetTable) ([]rfp.Question, error) {
 // questions from a PDF or DOCX file via Tika. Supports list/paragraph mode
 // (plain-text extraction with optional TOC filter) and table mode (HTML extraction
 // with column picker, reusing the XLSX table flow).
-func rfpExtractText(filePath, tikaURL string) ([]rfp.Question, error) {
+func rfpExtractText(ctx context.Context, filePath, tikaURL string) ([]rfp.Question, error) {
 	tikaClient, err := processing.NewTikaClient(tikaURL)
 	if err != nil {
 		return nil, fmt.Errorf("creating Tika client: %w", err)
@@ -434,7 +434,7 @@ func rfpExtractText(filePath, tikaURL string) ([]rfp.Question, error) {
 	}
 
 	if structureMode == "table" {
-		return rfpExtractTextTable(filePath, tikaClient)
+		return rfpExtractTextTable(ctx, filePath, tikaClient)
 	}
 
 	// ── List / paragraph mode ─────────────────────────────────────────────────
@@ -442,10 +442,10 @@ func rfpExtractText(filePath, tikaURL string) ([]rfp.Question, error) {
 	// which Tika emits reliably even for PDFs that produce no \f separators in
 	// plain-text mode.
 	stop := common.StartProgressSpinner("Extracting text via Tika")
-	htmlRaw, err := tikaClient.ExtractHTML(filePath)
+	htmlRaw, err := tikaClient.ExtractHTML(ctx, filePath)
 	stop()
 	if err != nil {
-		return nil, fmt.Errorf("Tika extraction failed: %w\n"+
+		return nil, fmt.Errorf("tika extraction failed: %w\n"+
 			"Ensure the Tika service is running ('rag status')", err)
 	}
 
@@ -488,20 +488,18 @@ func rfpExtractText(filePath, tikaURL string) ([]rfp.Question, error) {
 
 // rfpExtractTextTable handles PDF/DOCX table mode: Tika HTML extraction followed
 // by the same table+column selection UI used for XLSX files.
-func rfpExtractTextTable(filePath string, tikaClient *processing.TikaClient) ([]rfp.Question, error) {
+func rfpExtractTextTable(ctx context.Context, filePath string, tikaClient *processing.TikaClient) ([]rfp.Question, error) {
 	stop := common.StartProgressSpinner("Extracting HTML via Tika")
-	htmlContent, err := tikaClient.ExtractHTML(filePath)
+	htmlContent, err := tikaClient.ExtractHTML(ctx, filePath)
 	stop()
 	if err != nil {
-		return nil, fmt.Errorf("Tika HTML extraction failed: %w\n"+
+		return nil, fmt.Errorf("tika HTML extraction failed: %w\n"+
 			"Ensure the Tika service is running ('rag status')", err)
 	}
 
 	sheets := rfp.ParseTikaHTMLSheets(htmlContent)
 	if len(sheets) == 0 {
-		return nil, fmt.Errorf("no HTML tables found in document\n" +
-			"Tip: Tika may not recognise PDF tables as HTML <table> elements.\n" +
-			"Re-run and choose 'Numbered / bulleted list or question marks' instead.")
+		return nil, fmt.Errorf("no HTML tables found in document\n%s", common.SuggestListQuestionFormat())
 	}
 
 	maxPage := sheets[len(sheets)-1].PageIndex + 1

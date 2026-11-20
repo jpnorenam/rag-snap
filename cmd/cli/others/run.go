@@ -1,6 +1,7 @@
 package others
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +17,8 @@ type runCommand struct {
 	waitForComponentsFlag bool
 }
 
+// RunCommand returns the hidden "run" command, which runs the executable at
+// the given path with the CLI's stdout and stderr (used by snap apps).
 func RunCommand(ctx *common.Context) *cobra.Command {
 	var cmd runCommand
 	cmd.Context = ctx
@@ -42,7 +45,7 @@ func (cmd *runCommand) run(_ *cobra.Command, args []string) error {
 
 	path := args[0]
 
-	execCmd := exec.Command(path)
+	execCmd := exec.CommandContext(context.Background(), path)
 	execCmd.Stdout = os.Stdout
 	execCmd.Stderr = os.Stderr
 	return execCmd.Run()

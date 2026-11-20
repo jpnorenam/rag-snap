@@ -191,7 +191,7 @@ func gapJudgment() Judgment {
 const declinedComment = "The answering model found nothing in the retrieved context to answer this, so it needs a human answer."
 
 // applyGapRule makes a refusal red whatever the judge thought of it. A refusal can
-// be the right behaviour and still leave the reviewer with an empty cell, and red
+// be the right behavior and still leave the reviewer with an empty cell, and red
 // is what tells them to fill it. The judge's own finding is kept when it has one:
 // missed_context says the answer was there after all, which is worth more than
 // "gap".
@@ -350,7 +350,7 @@ func (p *judgePool) wait() map[int]Judgment {
 // prompt bans is recorded as a rule violation and caps the score at 4, because a
 // spreadsheet cell shows it as literal asterisks however good the content is.
 //
-// A refusal is recognised either by the fixed no-context sentence or by the judge
+// A refusal is recognized either by the fixed no-context sentence or by the judge
 // calling it a gap, which covers custom prompts that word their refusals their own way.
 func applyLocalChecks(j Judgment, answer string) Judgment {
 	if isGapAnswer(answer) || slices.Contains(j.Issues, IssueGap) {
@@ -378,7 +378,7 @@ func applyLocalChecks(j Judgment, answer string) Judgment {
 // touches no row. Every other finding adds to each row it names a note naming the
 // other rows, and caps that row at 3 so a contradiction is never left green, recording
 // the confidence the cap replaced.
-func applyConsistency(results []BatchResult, findings []ConsistencyFinding) ([]ConsistencyFinding, int) {
+func applyConsistency(results []BatchResult, findings []ConsistencyFinding) (keptFindings []ConsistencyFinding, droppedCount int) {
 	var kept []ConsistencyFinding
 	dropped := 0
 	for _, f := range findings {
@@ -427,8 +427,8 @@ func applyConsistency(results []BatchResult, findings []ConsistencyFinding) ([]C
 	return kept, dropped
 }
 
-// summarise counts verdicts per rating.
-func summarise(model string, results []BatchResult) *JudgeSummary {
+// summarize counts verdicts per rating.
+func summarize(model string, results []BatchResult) *JudgeSummary {
 	s := &JudgeSummary{Model: model}
 	for _, r := range results {
 		switch {

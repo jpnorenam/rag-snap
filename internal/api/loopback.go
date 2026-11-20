@@ -33,7 +33,7 @@ func (l loopbackListener) Accept() (net.Conn, error) {
 // listenLoopback validates the configured host and binds a TCP listener on it,
 // refusing any non-loopback bind. It performs the check twice: once on the
 // configured host before listening, and once on the resolved *net.TCPAddr after
-// binding (defence in depth against a hostname that resolves to a mix of
+// binding (defense in depth against a hostname that resolves to a mix of
 // addresses). Every accepted connection is wrapped as a loopbackConn.
 func listenLoopback(cfg LoopbackConfig) (net.Listener, error) {
 	host, _, err := net.SplitHostPort(cfg.Address)
@@ -50,7 +50,7 @@ func listenLoopback(cfg LoopbackConfig) (net.Listener, error) {
 		return nil, fmt.Errorf("listening on %s: %w", cfg.Address, err)
 	}
 
-	// Post-bind defence in depth: refuse to serve if the OS bound us to a
+	// Post-bind defense in depth: refuse to serve if the OS bound us to a
 	// non-loopback address after all (e.g. a host that resolved unexpectedly).
 	if tcpAddr, ok := ln.Addr().(*net.TCPAddr); ok {
 		if !tcpAddr.IP.IsLoopback() {

@@ -1,0 +1,68 @@
+name: CI
+
+# Quality gate for the Go code: lint, vet, tests, module tidiness and the REST spec.
+#
+# Triggers:
+#   - pull request        → runs as the PR check (make it a required check in the
+#                           branch protection rule for main)
+#   - workflow_call       → snap-publish.yml calls this before building, so nothing
+#                           reaches the Snap Store unless it passes
+#   - manual dispatch     → run on any branch
+#
+# A push to main is not listed here: snap-publish.yml runs this workflow for it.
+on:
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Only superseded PR runs are cancelled; a main/release run always finishes.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      # Pinned: a newer golangci-lint can fail unchanged code with new checks.
+      # Bump it deliberately, together with any fixes it asks for.
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.15.0
+
+  test:
+    name: Vet and test
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Check go.mod/go.sum are tidy
+        run: go mod tidy -diff
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Check REST spec is in sync with the handlers
+        run: make spec-check

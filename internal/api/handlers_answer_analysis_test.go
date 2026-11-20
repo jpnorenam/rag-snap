@@ -246,7 +246,7 @@ func TestGeneratedManifestShapeIsAcceptedByTheBatchEndpoint(t *testing.T) {
 	shaped := manifestToJSON(generated)
 	raw, err := json.Marshal(shaped)
 	if err != nil {
-		t.Fatalf("marshalling: %v", err)
+		t.Fatalf("marshaling: %v", err)
 	}
 
 	// Round-trip it back through the batch endpoint's own request type, which is what
@@ -396,7 +396,7 @@ func stageForTest(t *testing.T, srv *Server) string {
 	return token
 }
 
-func postGenerate(t *testing.T, client *http.Client, body string) (int, string) {
+func postGenerate(t *testing.T, client *http.Client, body string) (status int, respBody string) {
 	t.Helper()
 	resp, err := client.Post("http://unix/1.0/answer/analyze/generate", "application/json", strings.NewReader(body))
 	if err != nil {

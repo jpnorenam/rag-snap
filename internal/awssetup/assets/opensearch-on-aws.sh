@@ -492,7 +492,7 @@ bootstrap() {
 write_credentials() {
 	local dir=${CFG[RAG_SNAP_USER_COMMON]} f mode tmp existing key
 	f=$dir/credentials.json
-	[ -d "$dir" ] && [ -O "$dir" ] || die "$dir must exist and be owned by $(id -un); run any rag-cli.rag command once and rerun"
+	[[ -d $dir && -O $dir ]] || die "$dir must exist and be owned by $(id -un); run any rag-cli.rag command once and rerun"
 	mode=$(stat -c %a "$dir")
 	((8#$mode & 8#022)) && die "$dir is writable by group or others; fix its permissions and rerun"
 	if [ -f "$f" ]; then
@@ -557,7 +557,7 @@ init_models() {
 	local emb rer
 	emb=$(model_id Embedding "$PHASE_LOG")
 	rer=$(model_id Rerank "$PHASE_LOG")
-	[ -n "$emb" ] && [ -n "$rer" ] || die "knowledge init did not report both model IDs"
+	[[ -n $emb && -n $rer ]] || die "knowledge init did not report both model IDs"
 	rag_set knowledge.model.embedding "$emb"
 	rag_set knowledge.model.rerank "$rer"
 }

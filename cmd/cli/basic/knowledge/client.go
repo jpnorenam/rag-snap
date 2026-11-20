@@ -4,13 +4,10 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
-	"syscall"
 	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
@@ -23,10 +20,14 @@ const (
 	envOpenSearchUsername = "OPENSEARCH_USERNAME"
 	envOpenSearchPassword = "OPENSEARCH_PASSWORD"
 
+	// ConfEmbeddingModelID is the config key holding the deployed embedding model's ID.
 	ConfEmbeddingModelID = "knowledge.model.embedding"
-	ConfRerankModelID    = "knowledge.model.rerank"
+	// ConfRerankModelID is the config key holding the deployed rerank model's ID.
+	ConfRerankModelID = "knowledge.model.rerank"
 )
 
+// OpenSearchClient talks to the OpenSearch knowledge store: indexes, ingest and
+// search pipelines, ML models, and source metadata.
 type OpenSearchClient struct {
 	client           *opensearchapi.Client
 	url              string
@@ -88,12 +89,12 @@ func (c *OpenSearchClient) CreateIndex(ctx context.Context, indexName string) er
 // NewClient creates and validates an OpenSearch client connection. It waits for the
 // server to become ready (see checkServer), so it suits callers that can afford to
 // block while a starting OpenSearch comes up — ingest, search, init.
-func NewClient(baseUrl string) (*OpenSearchClient, error) {
-	if err := handshake(baseUrl); err != nil {
+func NewClient(baseURL string) (*OpenSearchClient, error) {
+	if err := common.Handshake(context.Background(), baseURL, "Connecting to OpenSearch", "9200"); err != nil {
 		return nil, err
 	}
 
-	client, err := newClient(baseUrl)
+	client, err := newClient(baseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -259,10 +260,10 @@ func lookupCredential(name string) (string, error) {
 	return v, nil
 }
 
-func newOpenSearchClient(baseUrl, username, password string) (*opensearchapi.Client, error) {
+func newOpenSearchClient(baseURL, username, password string) (*opensearchapi.Client, error) {
 	client, err := opensearchapi.NewClient(opensearchapi.Config{
 		Client: opensearch.Config{
-			Addresses: []string{baseUrl},
+			Addresses: []string{baseURL},
 			Username:  username,
 			Password:  password,
 			Transport: &headerTransport{
@@ -278,36 +279,6 @@ func newOpenSearchClient(baseUrl, username, password string) (*opensearchapi.Cli
 		return nil, err
 	}
 	return client, nil
-}
-
-func handshake(baseURL string) error {
-	stopProgress := common.StartProgressSpinner("Connecting to OpenSearch")
-	defer stopProgress()
-
-	parsedURL, err := url.Parse(baseURL)
-	if err != nil {
-		return fmt.Errorf("invalid base URL: %w", err)
-	}
-	host := parsedURL.Hostname()
-	port := parsedURL.Port()
-	if port == "" {
-		if parsedURL.Scheme == "https" {
-			port = "443"
-		} else {
-			port = "9200"
-		}
-	}
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 5*time.Second)
-	if errors.Is(err, syscall.ECONNREFUSED) {
-		return fmt.Errorf("connection refused\n\n%s\n%s",
-			common.SuggestServerStartup(),
-			common.SuggestServerLogs())
-	} else if err != nil {
-		return err
-	}
-	conn.Close()
-
-	return nil
 }
 
 func checkServer(client *opensearchapi.Client) error {
@@ -383,12 +354,7 @@ func (c *OpenSearchClient) IndexExists(ctx context.Context, indexName string) (b
 // Returns 0 and no error if the index does not yet exist.
 func (c *OpenSearchClient) CountDocuments(ctx context.Context, indexName string) (int, error) {
 	path := fmt.Sprintf("/%s/_count", indexName)
-	req, err := c.newAuthenticatedRequest(http.MethodGet, path, nil)
-	if err != nil {
-		return 0, fmt.Errorf("creating count request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.perform(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return 0, fmt.Errorf("counting documents: %w", err)
 	}
@@ -416,12 +382,7 @@ func (c *OpenSearchClient) CountDocuments(ctx context.Context, indexName string)
 // and the credentials are accepted, which is what a status view needs to claim the
 // knowledge store is usable.
 func (c *OpenSearchClient) Ping(ctx context.Context) error {
-	req, err := c.newAuthenticatedRequest(http.MethodGet, "/", nil)
-	if err != nil {
-		return fmt.Errorf("creating ping request: %w", err)
-	}
-
-	resp, err := c.client.Client.Perform(req.WithContext(ctx))
+	resp, err := c.perform(ctx, http.MethodGet, "/", nil)
 	if err != nil {
 		return fmt.Errorf("pinging OpenSearch: %w", err)
 	}
@@ -434,12 +395,22 @@ func (c *OpenSearchClient) Ping(ctx context.Context) error {
 	return nil
 }
 
-// newAuthenticatedRequest creates an HTTP request with basic authentication.
-func (c *OpenSearchClient) newAuthenticatedRequest(method, path string, body io.Reader) (*http.Request, error) {
-	req, err := http.NewRequest(method, c.url+path, body)
+// perform builds a basic-authenticated request for path on the OpenSearch base URL and
+// sends it. Use it for every raw REST call so none can drop ctx or the credentials.
+func (c *OpenSearchClient) perform(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	return c.performAs(ctx, method, path, "", body)
+}
+
+// performAs is perform with an explicit Content-Type; "" keeps the JSON default
+// that headerTransport applies.
+func (c *OpenSearchClient) performAs(ctx context.Context, method, path, contentType string, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, c.url+path, body)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.SetBasicAuth(c.username, c.password)
-	return req, nil
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	return c.client.Client.Perform(req)
 }

@@ -12,11 +12,13 @@ type chatCommand struct {
 	*common.Context
 
 	// flags
-	baseUrl   string
+	baseURL   string
 	api       string
 	modelName string
 }
 
+// ChatCommand returns the hidden debug command that chats with an inference server
+// directly, bypassing knowledge retrieval.
 func ChatCommand(ctx *common.Context) *cobra.Command {
 	var cmd chatCommand
 	cmd.Context = ctx
@@ -31,7 +33,7 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 	}
 
 	// flags
-	cobraCmd.Flags().StringVar(&cmd.baseUrl, "base-url", "", "Base URL of the inference server")
+	cobraCmd.Flags().StringVar(&cmd.baseURL, "base-url", "", "Base URL of the inference server")
 	cobraCmd.Flags().StringVar(&cmd.modelName, "model", "", "Name of the model to use")
 	cobraCmd.Flags().StringVar(&cmd.api, "api", chat.APIOpenAI, "Wire protocol of the server: openai or anthropic")
 
@@ -39,9 +41,9 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 }
 
 func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
-	if cmd.baseUrl == "" {
+	if cmd.baseURL == "" {
 		return fmt.Errorf("the --base-url parameter is required")
 	}
 
-	return chat.Client(chat.BackendConfig{API: cmd.api, BaseURL: cmd.baseUrl}, nil, nil, "", cmd.modelName, chat.DefaultPrompts(), 0.3, cmd.Verbose)
+	return chat.Client(chat.BackendConfig{API: cmd.api, BaseURL: cmd.baseURL}, nil, nil, "", cmd.modelName, chat.DefaultPrompts(), 0.3, cmd.Verbose)
 }

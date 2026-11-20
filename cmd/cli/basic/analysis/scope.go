@@ -21,7 +21,7 @@ const (
 )
 
 // SheetScope is an operator's requested scope, keyed by sheet name or 1-based position.
-// Empty means no scope: every sheet is answered, which is the behaviour without one.
+// Empty means no scope: every sheet is answered, which is the behavior without one.
 type SheetScope map[string]SheetScopeValue
 
 // SheetInfo is one sheet of a spreadsheet as the operator sees it: its position in
@@ -174,7 +174,7 @@ func Scoped(sheets []SheetInfo) bool {
 const maxSheetPosition = 1000
 
 // ParseSheetList parses a CLI sheet list: comma-separated names, positions and
-// position ranges such as "2-7". A range is recognised only when both ends are
+// position ranges such as "2-7". A range is recognized only when both ends are
 // numbers, so a sheet named "HW-SW" stays a name.
 func ParseSheetList(s string) ([]string, error) {
 	var out []string
@@ -200,7 +200,7 @@ func ParseSheetList(s string) ([]string, error) {
 	return out, nil
 }
 
-func parseRange(item string) (int, int, bool) {
+func parseRange(item string) (first, last int, ok bool) {
 	a, b, found := strings.Cut(item, "-")
 	if !found {
 		return 0, 0, false
