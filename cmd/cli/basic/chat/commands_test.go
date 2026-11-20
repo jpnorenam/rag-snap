@@ -9,9 +9,9 @@ func TestSyntaxHint(t *testing.T) {
 		wantHint string
 		wantOK   bool
 	}{
-		{"completed command", "/search", "[-k N] <query>", true},
-		{"trailing space", "/search ", "[-k N] <query>", true},
-		{"multiple trailing spaces", "/search   ", "[-k N] <query>", true},
+		{"completed command", "/search", "[-k N] [--show-similar] <query>", true},
+		{"trailing space", "/search ", "[-k N] [--show-similar] <query>", true},
+		{"multiple trailing spaces", "/search   ", "[-k N] [--show-similar] <query>", true},
 		{"query started", "/search ceph", "", false},
 		{"partial name", "/sea", "", false},
 		{"command without args", "/use-knowledge", "", false},

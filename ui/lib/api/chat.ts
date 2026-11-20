@@ -11,6 +11,10 @@ export interface RestoredChat {
   turns: ChatTurn[];
   bases?: string[] | null;
   dropped_bases?: string[] | null;
+  // The restored kapa.ai selection, and whether a saved one could not be
+  // applied because kapa.ai is not configured on the daemon.
+  kapa_groups?: string[] | null;
+  kapa_unavailable?: boolean;
 }
 
 // chatStartMetadata is the operation's own metadata: the resolved model, the
@@ -22,6 +26,8 @@ interface ChatStartMetadata {
     secret: string;
   };
   chat?: RestoredChat;
+  kapa_groups?: string[] | null;
+  kapa_unavailable?: boolean;
 }
 
 // chatStartOperation is the operation view carried in the async envelope's
@@ -37,6 +43,10 @@ export interface ChatSession {
   model: string;
   websocketUrl: string;
   restored?: RestoredChat;
+  // The effective kapa.ai selection, and whether a requested one could not be
+  // applied because kapa.ai is not configured on the daemon.
+  kapaGroups: string[];
+  kapaUnavailable: boolean;
 }
 
 // ChatStartOptions mirror the optional POST /1.0/chat request body. resume seeds
@@ -49,6 +59,8 @@ export interface ChatStartOptions {
   temperature?: number;
   resume?: string;
   prompt?: string;
+  // kapa_source_groups is the initial kapa.ai selection (group ids).
+  kapa_source_groups?: string[];
 }
 
 // startChat issues POST /1.0/chat and resolves the websocket URL (with the
@@ -64,6 +76,8 @@ export async function startChat(opts: ChatStartOptions = {}): Promise<ChatSessio
     model: meta?.model ?? opts.model ?? "",
     websocketUrl: buildWsUrl(ws.url, ws.secret),
     restored: meta?.chat,
+    kapaGroups: meta?.kapa_groups ?? [],
+    kapaUnavailable: meta?.kapa_unavailable ?? false,
   };
 }
 
@@ -82,13 +96,25 @@ function buildWsUrl(opPath: string, secret: string): string {
 }
 
 // Server→client frame types on the chat websocket. A "saved" frame acknowledges
-// a save control message, carrying the saved chat's id and title.
-export type ChatFrameType = "token" | "think" | "done" | "active-kbs" | "saved" | "error";
+// a save control message, carrying the saved chat's id and title. An
+// "active-kapa-groups" frame acknowledges a kapa.ai selection (with an error
+// when kapa.ai is not configured); a "warning" is a non-fatal notice about the
+// current turn, such as a failed kapa.ai request — the turn still completes.
+export type ChatFrameType =
+  | "token"
+  | "think"
+  | "done"
+  | "active-kbs"
+  | "active-kapa-groups"
+  | "warning"
+  | "saved"
+  | "error";
 
 export interface ChatFrame {
   type: ChatFrameType;
   content?: string;
   bases?: string[];
+  kapa_groups?: string[];
   error?: string;
   id?: string;
   title?: string;
@@ -134,6 +160,12 @@ export class ChatConnection {
   // setActiveBases changes the active knowledge bases mid-session.
   setActiveBases(bases: string[]): void {
     this.ws.send(JSON.stringify({ type: "set-active-kbs", bases }));
+  }
+
+  // setActiveKapaGroups changes the kapa.ai source-group selection (ids)
+  // mid-session, independently of the knowledge bases.
+  setActiveKapaGroups(ids: string[]): void {
+    this.ws.send(JSON.stringify({ type: "set-active-kapa-groups", kapa_groups: ids }));
   }
 
   // save persists the running conversation; the daemon replies with a "saved" or

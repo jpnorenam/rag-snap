@@ -57,3 +57,58 @@ test("an unanswered question still shows its domain", () => {
   assert.match(html, /No answer was generated for this question\./);
   assert.match(html, /Domain <code>GIS\*<\/code>/);
 });
+test("a verdict renders its rating in words, its score, row and comment", () => {
+  const html = renderToStaticMarkup(
+    <QACard
+      item={{
+        ...older,
+        judgment: { confidence: 2, rating: "red", issues: ["other_customer"], comment: 'Remove "the Customer A RFI".' },
+      }}
+      index={2}
+    />
+  );
+  assert.match(html, /qa-verdict--fix/);
+  assert.match(html, /Red · fix or answer/);
+  assert.match(html, /Confidence 2\/5/);
+  // index 2 is the third result: spreadsheet row 4.
+  assert.match(html, /Spreadsheet row 4/);
+  assert.match(html, /Remove &quot;the Customer A RFI&quot;\./);
+  assert.match(html, /other customer/);
+  // The verdict sits before the answer, not folded into it.
+  assert.ok(html.indexOf("qa-verdict") < html.indexOf("qa-card__answer"));
+});
+
+test("a green verdict shows no comment", () => {
+  const html = renderToStaticMarkup(
+    <QACard item={{ ...older, judgment: { confidence: 5, rating: "green" } }} index={0} />
+  );
+  assert.match(html, /Green · paste as is/);
+  assert.ok(!html.includes("qa-verdict__comment"));
+});
+
+test("a row the judge could not assess shows Not judged with its reason and no score", () => {
+  const html = renderToStaticMarkup(
+    <QACard item={{ ...older, judgment: { error: "judge call failed: quota" } }} index={0} />
+  );
+  assert.match(html, /qa-verdict--unjudged/);
+  assert.match(html, /Not judged/);
+  assert.match(html, /judge call failed: quota/);
+  assert.ok(!/Confidence/.test(html));
+});
+
+test("an item with no verdict renders no verdict", () => {
+  const html = renderToStaticMarkup(<QACard item={older} index={0} />);
+  assert.ok(!html.includes("qa-verdict"));
+});
+
+test("a confidence the consistency check lowered says so", () => {
+  const html = renderToStaticMarkup(
+    <QACard
+      item={{ ...older, judgment: { confidence: 3, rating: "yellow", comment: "Consistency: conflicts with row 263 — x", pre_consistency_confidence: 5 } }}
+      index={45}
+    />
+  );
+  assert.match(html, /Confidence 3\/5 \(lowered from 5 by the consistency check\)/);
+  const plain = renderToStaticMarkup(<QACard item={{ ...older, judgment: { confidence: 3, rating: "yellow", comment: "x" } }} index={0} />);
+  assert.ok(!plain.includes("lowered from"));
+});

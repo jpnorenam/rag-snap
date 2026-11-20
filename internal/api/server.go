@@ -13,6 +13,7 @@ import (
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/cmd/cli/common"
 	"github.com/jpnorenam/rag-snap/cmd/cli/config"
+	"github.com/jpnorenam/rag-snap/internal/buildinfo"
 	"github.com/jpnorenam/rag-snap/internal/chatstore"
 	"github.com/jpnorenam/rag-snap/internal/webui"
 )
@@ -44,6 +45,7 @@ var apiExtensions = []string{
 	"prompt_variants",
 	"status",
 	"config",
+	"kapa_source_groups",
 }
 
 // Server is the ragd HTTP API server. It owns the configuration snapshot, the
@@ -55,8 +57,11 @@ type Server struct {
 	loopback LoopbackConfig
 	backends *backendState
 	clients  *clientCache
-	events   *eventsHub
-	ops      *operations
+	// kapa is the kapa.ai client resolved at startup, or nil when kapa.ai is
+	// disabled or not configured.
+	kapa   *knowledge.KapaClient
+	events *eventsHub
+	ops    *operations
 	// prompts is the daemon-owned store of prompt-template overrides. Chat
 	// sessions and batch operations are seeded from it at start, so a
 	// customization applies to work started after it was saved.
@@ -86,6 +91,8 @@ type Server struct {
 	// gdriveMu. See handlers_gdrive.go.
 	gdriveMu sync.Mutex
 	gdrive   gdriveFlowState
+	// kapaGroups caches the kapa.ai source-group listing. See handlers_kapa.go.
+	kapaGroups kapaGroupsCache
 }
 
 // Options configure a Server.
@@ -98,6 +105,9 @@ type Options struct {
 	Loopback LoopbackConfig
 	// BackendURLs maps service name ("opensearch"/"openai"/"tika") to base URL.
 	BackendURLs map[string]string
+	// Kapa is the kapa.ai client resolved by ResolveKapaClient, or nil when
+	// kapa.ai is disabled or not configured.
+	Kapa *knowledge.KapaClient
 }
 
 // New constructs a Server from already-resolved options. It does not bind the
@@ -109,6 +119,7 @@ func New(opts Options) *Server {
 		loopback: opts.Loopback,
 		backends: newBackendState(opts.BackendURLs),
 		clients:  newClientCache(opts.Context, opts.BackendURLs),
+		kapa:     opts.Kapa,
 		events:   newEventsHub(),
 		prompts:  newPromptStore(),
 		chats:    newChatStore(),
@@ -334,6 +345,11 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	mux.HandleFunc("GET /1.0/knowledge-engine/models", s.requireAuth(s.handleEngineModelsList))
 	mux.HandleFunc("DELETE /1.0/knowledge-engine/models/{id}", s.requireAuth(s.handleEngineModelDelete))
 
+	// kapa.ai (a peer retrieval source, not a local knowledge base, so it is not
+	// nested under /1.0/knowledge/{name} where a literal segment would shadow a
+	// knowledge base of that name).
+	mux.HandleFunc("GET /1.0/kapa/source-groups", s.requireAuth(s.handleKapaSourceGroups))
+
 	// Chat (interactive websocket session).
 	mux.HandleFunc("POST /1.0/chat", s.requireAuth(s.handleChatStart))
 
@@ -356,6 +372,7 @@ func (s *Server) registerAPI(mux *http.ServeMux) {
 	// path has two — the interview between them is conditioned on what triage found.
 	mux.HandleFunc("POST /1.0/answer/analyze", s.requireAuth(s.handleAnswerAnalyze))
 	mux.HandleFunc("POST /1.0/answer/analyze/generate", s.requireAuth(s.handleAnswerAnalyzeGenerate))
+	mux.HandleFunc("POST /1.0/answer/analyze/sheets", s.requireAuth(s.handleAnswerAnalyzeSheets))
 
 	// Check a manifest without running it. Synchronous: no model call, no run.
 	mux.HandleFunc("POST /1.0/answer/check", s.requireAuth(s.handleAnswerCheck))
@@ -409,19 +426,26 @@ func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
 // Return server information.
 //
 // Server metadata plus a read-only, secret-free summary of effective config and
-// backend readiness for diagnostics.
+// backend readiness for diagnostics. "version" is the installed snap version
+// ("dev" outside a snap) and "commit" the source commit the daemon was built
+// from (a "-dirty" suffix marks uncommitted changes; omitted when unknown).
 //
 //	Responses:
 //	  200: syncResponse
 //	  403: errorResponse
 func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
-	respondSync(w, map[string]any{
+	info := map[string]any{
+		"version":        buildinfo.Version(),
 		"api_version":    apiVersion,
 		"api_extensions": s.extensions(),
 		"auth":           s.authState(r),
 		"backends":       s.backends.snapshot(),
 		"config":         s.configSummary(),
-	})
+	}
+	if c := buildinfo.Commit(); c != "" {
+		info["commit"] = c
+	}
+	respondSync(w, info)
 }
 
 // extensions returns the advertised feature list for this daemon.
@@ -432,10 +456,14 @@ func (s *Server) handleServerInfo(w http.ResponseWriter, r *http.Request) {
 // unavailable rather than offering it and failing at submit time, so advertising it
 // unconditionally would defeat the point of advertising it at all.
 func (s *Server) extensions() []string {
-	out := make([]string, len(apiExtensions), len(apiExtensions)+1)
+	out := make([]string, len(apiExtensions), len(apiExtensions)+2)
 	copy(out, apiExtensions)
 	if ok, _ := s.analysisAvailable(); ok {
 		out = append(out, "answer_analyze")
+	}
+	// Advertised on the same terms: only when batch runs will actually be judged.
+	if ok, _ := s.judgeAvailable(); ok {
+		out = append(out, "answer_judge")
 	}
 	return out
 }

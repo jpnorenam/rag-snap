@@ -13,7 +13,6 @@ import (
 	"github.com/fatih/color"
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/internal/chatstore"
-	"github.com/openai/openai-go/v3"
 )
 
 // localChatStore returns the daemonless CLI's client-local saved-chat store under
@@ -79,7 +78,7 @@ func pickSavedChat(summaries []chatstore.Summary) (chatstore.Summary, bool) {
 // store, creating or (when chatID is set) updating the record. It returns the
 // stored id to pin so a later save updates the same record; ok is false when
 // nothing was saved.
-func saveDirectChat(store *chatstore.Store, chatID, title, model string, session *Session, messages []openai.ChatCompletionMessageParamUnion) (string, bool) {
+func saveDirectChat(store *chatstore.Store, chatID, title, model string, session *Session, messages []Message) (string, bool) {
 	if store == nil {
 		fmt.Println("Saved chats are unavailable: could not resolve the config directory.")
 		return "", false
@@ -104,10 +103,10 @@ func saveDirectChat(store *chatstore.Store, chatID, title, model string, session
 }
 
 // resumeDirectChat lists the client-local store, lets the user pick a chat, and
-// returns the rebuilt message history and the resumed id to pin. It restores the
+// returns the rebuilt turn history and the resumed id to pin. It restores the
 // saved active bases (dropping any that no longer exist) into session and prints
 // the transcript. ok is false when the user cancelled or nothing could be opened.
-func resumeDirectChat(store *chatstore.Store, systemPrompt string, session *Session) ([]openai.ChatCompletionMessageParamUnion, string, bool) {
+func resumeDirectChat(store *chatstore.Store, session *Session) ([]Message, string, bool) {
 	if store == nil {
 		fmt.Println("Saved chats are unavailable: could not resolve the config directory.")
 		return nil, "", false
@@ -135,7 +134,7 @@ func resumeDirectChat(store *chatstore.Store, systemPrompt string, session *Sess
 
 	renderTranscript(saved.Turns)
 	fmt.Printf("Resumed %q. Continue the conversation below.\n", saved.Title)
-	return turnsToHistory(systemPrompt, saved.Turns), saved.ID, true
+	return turnsToHistory(saved.Turns), saved.ID, true
 }
 
 // activeBaseNames returns the session's active knowledge bases as base names.
@@ -203,36 +202,31 @@ func relativeTime(t time.Time) string {
 	}
 }
 
-// historyToTurns projects an in-memory conversation to neutral store turns,
-// dropping the leading system prompt (and any other non user/assistant role):
-// the system prompt is freshly resolved on resume, so a customization applies to
-// resumed sessions the same way it applies to new ones. Assistant <think> spans
-// are stripped by the store on save, so callers need not pre-clean here.
-func historyToTurns(messages []openai.ChatCompletionMessageParamUnion) []chatstore.Turn {
+// historyToTurns projects an in-memory conversation to neutral store turns.
+// The system prompt is not part of the history: it is freshly resolved on
+// resume, so a customization applies to resumed sessions the same way it
+// applies to new ones. Assistant <think> spans are stripped by the store on
+// save, so callers need not pre-clean here.
+func historyToTurns(messages []Message) []chatstore.Turn {
 	turns := make([]chatstore.Turn, 0, len(messages))
 	for _, m := range messages {
-		switch {
-		case m.OfUser != nil:
-			turns = append(turns, chatstore.Turn{Role: "user", Content: m.OfUser.Content.OfString.Or("")})
-		case m.OfAssistant != nil:
-			turns = append(turns, chatstore.Turn{Role: "assistant", Content: m.OfAssistant.Content.OfString.Or("")})
+		switch m.Role {
+		case RoleUser, RoleAssistant:
+			turns = append(turns, chatstore.Turn{Role: string(m.Role), Content: m.Content})
 		}
 	}
 	return turns
 }
 
-// turnsToHistory rebuilds a message list from a system prompt and saved turns,
-// so a resumed session continues from where it left off. The system prompt is
-// always the freshly resolved one, never a stored copy.
-func turnsToHistory(systemPrompt string, turns []chatstore.Turn) []openai.ChatCompletionMessageParamUnion {
-	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(turns)+1)
-	messages = append(messages, openai.SystemMessage(systemPrompt))
+// turnsToHistory rebuilds a conversation from saved turns, so a resumed session
+// continues from where it left off. Saved turns are backend-neutral, so a chat
+// saved under one chat.api resumes under the other.
+func turnsToHistory(turns []chatstore.Turn) []Message {
+	messages := make([]Message, 0, len(turns))
 	for _, t := range turns {
-		switch t.Role {
-		case "user":
-			messages = append(messages, openai.UserMessage(t.Content))
-		case "assistant":
-			messages = append(messages, openai.AssistantMessage(t.Content))
+		switch Role(t.Role) {
+		case RoleUser, RoleAssistant:
+			messages = append(messages, Message{Role: Role(t.Role), Content: t.Content})
 		}
 	}
 	return messages

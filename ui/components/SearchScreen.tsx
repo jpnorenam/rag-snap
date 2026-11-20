@@ -3,22 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import EmptyState from "@/components/common/EmptyState";
+import KapaSourcePicker from "@/components/common/KapaSourcePicker";
 import Spinner from "@/components/common/Spinner";
 import { errorMessage } from "@/lib/api/envelope";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
 import { search, type SearchResult } from "@/lib/api/search";
-
-// TOP_K_OPTIONS are the selectable result budgets. 10 matches `k search --top`;
-// 15 (the chat REPL's retrieval default) stays available as an option.
-const TOP_K_OPTIONS = [5, 10, 15, 25];
-const DEFAULT_K = 10;
-
-// parseK resolves a `k` URL param to a sanctioned option, falling back to the
-// default on anything unknown or invalid.
-function parseK(raw: string | null): number {
-  const k = Number(raw);
-  return TOP_K_OPTIONS.includes(k) ? k : DEFAULT_K;
-}
+import { DEFAULT_K, parseSearchQuery, searchQuery, TOP_K_OPTIONS } from "@/lib/searchUrl";
+import { noMatchesMessage, resultCount, similarNotice, splitResults } from "@/lib/searchSplit";
 
 // defaultSelection picks the initial base scope (design Decision 3): exactly
 // one base → it; a base named `default` exists → only it (mirrors
@@ -30,6 +21,47 @@ function defaultSelection(bases: KnowledgeBase[]): string[] {
   return bases.map((b) => b.name);
 }
 
+interface ResultCardProps {
+  result: SearchResult;
+  rank: number;
+  similar?: boolean;
+}
+
+// ResultCard renders one hit. Similar results (hits that don't match the query)
+// say so in words, not only through their muted styling.
+function ResultCard({ result: r, rank, similar = false }: ResultCardProps) {
+  const className = ["search-result", similar && "search-result--similar"]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <li className={className}>
+      <div className="search-result__header">
+        <span className="search-result__rank u-text--muted">{rank}</span>
+        <strong className="search-result__source">{r.source_id}</strong>
+        <span className="p-chip u-no-margin--bottom">
+          <span className="p-chip__value">{r.base}</span>
+        </span>
+        {similar && (
+          <span className="p-chip u-no-margin--bottom">
+            <span className="p-chip__value">Not matching</span>
+          </span>
+        )}
+        <span className="search-result__score p-text--small u-text--muted">
+          {r.score.toFixed(3)}
+        </span>
+      </div>
+      <p className="search-result__body">{r.content}</p>
+      {/* Source ID stays plain text until the knowledge-detail route
+          lands (Change 2 flips it to a link). A kapa.ai hit's source is a
+          kapa.ai URL and never links to a local knowledge base; its chip
+          above reads "kapa.ai" (the daemon's base for it). */}
+      <p className="search-result__footer p-text--small u-text--muted" title={r.created_at}>
+        Source: {r.source_id} · {r.label}
+      </p>
+    </li>
+  );
+}
+
 export default function SearchScreen() {
   const router = useRouter();
   const params = useSearchParams();
@@ -38,6 +70,11 @@ export default function SearchScreen() {
   const [bases, setBases] = useState<KnowledgeBase[] | null>(null);
   const [basesError, setBasesError] = useState<string | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
+  // kapaGroups is the kapa.ai source-group selection (ids); none means kapa.ai
+  // is not searched.
+  const [kapaGroups, setKapaGroups] = useState<string[]>([]);
+  // Problems the last search reported without failing, e.g. kapa.ai unavailable.
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [topK, setTopK] = useState(DEFAULT_K);
   const [searching, setSearching] = useState(false);
   // null = no search has completed (initial); [] = a search returned no hits.
@@ -46,6 +83,10 @@ export default function SearchScreen() {
   // The scope a completed search actually ran against, for the no-hits copy —
   // the live chip selection may have changed since.
   const [searchedBases, setSearchedBases] = useState<string[]>([]);
+  // The query a completed search ran, for the no-matches copy.
+  const [searchedQuery, setSearchedQuery] = useState("");
+  // Similar results (hits that don't match the query) start hidden on every search.
+  const [showSimilar, setShowSimilar] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
   // Guards the URL restore so strict-mode's double mount (and later param
@@ -54,15 +95,20 @@ export default function SearchScreen() {
   // Guards against double-submit while a request is in flight.
   const inFlight = useRef(false);
 
-  const runSearch = useCallback(async (q: string, scope: string[], k: number) => {
+  const runSearch = useCallback(async (q: string, scope: string[], k: number, groups: string[]) => {
     if (inFlight.current) return;
     inFlight.current = true;
     setSearching(true);
     setSearchError(null);
+    setWarnings([]);
     setResults(null);
-    setSearchedBases(scope);
+    setShowSimilar(false);
+    setSearchedBases(groups.length > 0 ? [...scope, "kapa.ai"] : scope);
+    setSearchedQuery(q);
     try {
-      setResults(await search(q, scope, k));
+      const res = await search(q, scope, k, groups);
+      setResults(res.results);
+      setWarnings(res.warnings);
     } catch (e) {
       setSearchError(errorMessage(e));
     } finally {
@@ -75,7 +121,7 @@ export default function SearchScreen() {
   // restoring from a URL, bases that no longer exist are dropped; if none
   // survive, the default scope applies instead.
   const loadBases = useCallback(
-    async (restore?: { q: string; b: string[]; k: number }) => {
+    async (restore?: { q: string; b: string[]; k: number; g: string[] }) => {
       setBasesError(null);
       try {
         const list = await listKnowledge();
@@ -85,8 +131,8 @@ export default function SearchScreen() {
           : [];
         const scope = fromUrl.length > 0 ? fromUrl : defaultSelection(list);
         setSelected(scope);
-        if (restore && restore.q && scope.length > 0) {
-          void runSearch(restore.q, scope, restore.k);
+        if (restore && restore.q && (scope.length > 0 || restore.g.length > 0)) {
+          void runSearch(restore.q, scope, restore.k, restore.g);
         }
       } catch (e) {
         setBases(null);
@@ -101,11 +147,11 @@ export default function SearchScreen() {
   useEffect(() => {
     if (restored.current) return;
     restored.current = true;
-    const q = params.get("q")?.trim() ?? "";
-    const k = parseK(params.get("k"));
-    setQuery(q);
-    setTopK(k);
-    void loadBases({ q, b: params.getAll("b"), k });
+    const fromUrl = parseSearchQuery(params);
+    setQuery(fromUrl.q);
+    setTopK(fromUrl.k);
+    setKapaGroups(fromUrl.kapaGroups);
+    void loadBases({ q: fromUrl.q, b: fromUrl.bases, k: fromUrl.k, g: fromUrl.kapaGroups });
   }, [params, loadBases]);
 
   const toggleBase = useCallback((name: string) => {
@@ -114,26 +160,26 @@ export default function SearchScreen() {
     );
   }, []);
 
+  // A search needs a query and at least one source: a knowledge base or a
+  // kapa.ai source group.
+  const hasSource = selected.length > 0 || kapaGroups.length > 0;
   const canSubmit =
-    query.trim() !== "" && selected.length > 0 && !searching && (bases?.length ?? 0) > 0;
+    query.trim() !== "" && hasSource && !searching && ((bases?.length ?? 0) > 0 || kapaGroups.length > 0);
 
   function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!canSubmit) return;
     const q = query.trim();
-    const url = new URLSearchParams();
-    url.set("q", q);
-    for (const b of selected) url.append("b", b);
-    url.set("k", String(topK));
     // One history entry per executed search: the URL is the shareable record.
-    router.push(`/search/?${url.toString()}`);
+    router.push(`/search/?${searchQuery({ q, bases: selected, k: topK, kapaGroups })}`);
     // Focus stays in the query input after submit (foundation/AT contract),
     // including when the submit button was clicked.
     inputRef.current?.focus();
-    void runSearch(q, selected, topK);
+    void runSearch(q, selected, topK, kapaGroups);
   }
 
   const noBases = bases !== null && bases.length === 0;
+  const split = results !== null ? splitResults(results) : null;
   const showInitial =
     !searching && !searchError && results === null && !basesError && !noBases;
 
@@ -174,7 +220,7 @@ export default function SearchScreen() {
         <button
           type="submit"
           className="p-search-box__button"
-          disabled={searching || !query.trim() || selected.length === 0}
+          disabled={searching || !query.trim() || !hasSource}
         >
           {searching ? (
             <i className="p-icon--spinner u-animation--spin">Searching</i>
@@ -210,9 +256,9 @@ export default function SearchScreen() {
             <span className="p-chip__value">{b.name}</span>
           </button>
         ))}
-        {bases !== null && bases.length > 0 && selected.length === 0 && (
+        {bases !== null && bases.length > 0 && !hasSource && (
           <span className="p-text--small search__scope-hint">
-            Select at least one knowledge base to search.
+            Select at least one knowledge base or kapa.ai source group to search.
           </span>
         )}
         <label className="search__topk" htmlFor="search-topk">
@@ -229,6 +275,12 @@ export default function SearchScreen() {
             ))}
           </select>
         </label>
+      </div>
+
+      {/* kapa.ai sits in its own row with its own label, so a chip is never
+          ambiguous about which retrieval source it scopes. */}
+      <div className="search__kapa">
+        <KapaSourcePicker selected={kapaGroups} onChange={setKapaGroups} disabled={searching} />
       </div>
 
       {basesError && (
@@ -265,12 +317,22 @@ export default function SearchScreen() {
         </div>
       )}
 
+      {warnings.length > 0 && (
+        <div className="p-notification--caution">
+          <div className="p-notification__content">
+            {warnings.map((w) => (
+              <p key={w} className="p-notification__message">
+                {w}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
       <section className="search__results">
         <h2 className="u-off-screen">Results</h2>
         <p className="p-text--small u-text--muted search__count" aria-live="polite">
-          {results !== null
-            ? `${results.length} result${results.length === 1 ? "" : "s"}`
-            : ""}
+          {split !== null ? resultCount(split.matched.length, split.similar.length, showSimilar) : ""}
         </p>
 
         {searching && <Spinner label="Searching…" />}
@@ -283,43 +345,56 @@ export default function SearchScreen() {
           />
         )}
 
-        {results !== null && results.length === 0 && (
+        {split !== null && split.matched.length === 0 && (
           <div className="search__no-hits">
-            <p className="u-no-margin--bottom">
-              No matching chunks in <strong>{searchedBases.join(", ")}</strong>.
-            </p>
+            <p className="u-no-margin--bottom">{noMatchesMessage(searchedQuery)}</p>
             <p className="p-text--small u-text--muted">
-              Try widening the base selection or raising the Results count.
+              Searched <strong>{searchedBases.join(", ")}</strong>. Try widening the base
+              selection.
             </p>
           </div>
         )}
 
-        {results !== null && results.length > 0 && (
+        {split !== null && split.matched.length > 0 && (
           <ol className="search__list">
-            {results.map((r, i) => (
-              <li key={`${r.base}-${r.source_id}-${i}`} className="search-result">
-                <div className="search-result__header">
-                  <span className="search-result__rank u-text--muted">{i + 1}</span>
-                  <strong className="search-result__source">{r.source_id}</strong>
-                  <span className="p-chip u-no-margin--bottom">
-                    <span className="p-chip__value">{r.base}</span>
-                  </span>
-                  <span className="search-result__score p-text--small u-text--muted">
-                    {r.score.toFixed(3)}
-                  </span>
-                </div>
-                <p className="search-result__body">{r.content}</p>
-                {/* Source ID stays plain text until the knowledge-detail route
-                    lands (Change 2 flips it to a link). */}
-                <p
-                  className="search-result__footer p-text--small u-text--muted"
-                  title={r.created_at}
-                >
-                  Source: {r.source_id} · {r.label}
-                </p>
-              </li>
+            {split.matched.map((r, i) => (
+              <ResultCard key={`${r.base}-${r.source_id}-${i}`} result={r} rank={i + 1} />
             ))}
           </ol>
+        )}
+
+        {split !== null && split.similar.length > 0 && (
+          <>
+            <div className="search__similar">
+              <p className="p-text--small u-text--muted u-no-margin--bottom">
+                {similarNotice(split.similar.length)}
+              </p>
+              <button
+                type="button"
+                className="p-button--base u-no-margin--bottom"
+                aria-expanded={showSimilar}
+                aria-controls="search-similar"
+                onClick={() => setShowSimilar((v) => !v)}
+              >
+                {showSimilar ? "Hide similar results" : "Show similar results"}
+              </button>
+            </div>
+            <ol
+              id="search-similar"
+              className="search__list"
+              aria-label="Similar results that don't match the query"
+              hidden={!showSimilar}
+            >
+              {split.similar.map((r, i) => (
+                <ResultCard
+                  key={`${r.base}-${r.source_id}-${i}`}
+                  result={r}
+                  rank={split.matched.length + i + 1}
+                  similar
+                />
+              ))}
+            </ol>
+          </>
         )}
       </section>
     </main>

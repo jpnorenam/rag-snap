@@ -40,6 +40,8 @@ test-rfp/
 !ui/package.json
 !ui/package-lock.json
 !ui/tsconfig.json
+# Shared test fixtures read by both the Go and the UI tests.
+!testdata/*.json
 # Build artifacts and deps are not tracked (the UI build regenerates them).
 ui/node_modules/
 ui/.next/

@@ -79,6 +79,8 @@ export default function ServiceCard({ name, title, role, hint, status }: Props) 
 
       {name === "ragd" && (
         <>
+          {status.version && <DetailLine label="Version" value={status.version} />}
+          {status.commit && <DetailLine label="Commit" value={status.commit} />}
           {status.api_version && <DetailLine label="API version" value={status.api_version} />}
           {status.listeners?.socket && <DetailLine label="Socket" value={status.listeners.socket} />}
           {status.listeners?.loopback && (

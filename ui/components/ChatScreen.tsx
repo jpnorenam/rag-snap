@@ -7,6 +7,7 @@ import Markdown from "@/components/common/Markdown";
 import { ApiError, errorMessage } from "@/lib/api/envelope";
 import { startChat, ChatConnection, type ChatFrame, type ChatStartOptions } from "@/lib/api/chat";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
+import KapaSourcePicker from "@/components/common/KapaSourcePicker";
 import { listPrompts } from "@/lib/api/prompts";
 
 // DEFAULT_PROMPT is the dropdown value that forces the built-in chat_system_prompt
@@ -23,9 +24,11 @@ const SLASH_COMMANDS: { name: string; syntax: string }[] = [
 ];
 
 // A transient banner shown for save results and command feedback (distinct from
-// the fatal `error` connection banner).
+// the fatal `error` connection banner). Several can be shown at once, so one
+// never hides another (a resumed chat can report both a dropped kapa.ai
+// selection and skipped knowledge bases).
 interface Notice {
-  type: "positive" | "information";
+  type: "positive" | "information" | "caution";
   message: string;
 }
 
@@ -43,7 +46,7 @@ export default function ChatScreen() {
   const [input, setInput] = useState("");
   const [connState, setConnState] = useState<ConnState>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<Notice | null>(null);
+  const [notices, setNotices] = useState<Notice[]>([]);
   const [bases, setBases] = useState<KnowledgeBase[]>([]);
   const [kbState, setKbState] = useState<"loading" | "connected" | "unavailable">("loading");
   const [activeBases, setActiveBases] = useState<string[]>([]);
@@ -59,10 +62,30 @@ export default function ChatScreen() {
   // Highlighted index in the composer's slash-command hint list (-1 = none).
   const [hintIndex, setHintIndex] = useState(-1);
 
+  // kapaGroups is the session's kapa.ai source-group selection (ids). It is
+  // independent of the knowledge bases; a new session starts with none.
+  const [kapaGroups, setKapaGroups] = useState<string[]>([]);
+
   const connRef = useRef<ChatConnection | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   // Whether the current assistant turn is still streaming (awaiting `done`).
   const awaitingDone = useRef(false);
+  // The latest chip selections, read when a connection finishes opening: a
+  // change made while connecting is not sent over the socket (there is none
+  // yet), so it is applied once the session is up.
+  const activeBasesRef = useRef<string[]>([]);
+  const kapaGroupsRef = useRef<string[]>([]);
+  activeBasesRef.current = activeBases;
+  kapaGroupsRef.current = kapaGroups;
+
+  // addNotice shows a notice alongside any already shown, unless the same
+  // message is already up.
+  const addNotice = useCallback((n: Notice) => {
+    setNotices((prev) => (prev.some((p) => p.message === n.message) ? prev : [...prev, n]));
+  }, []);
+  const dismissNotice = useCallback((message: string) => {
+    setNotices((prev) => prev.filter((p) => p.message !== message));
+  }, []);
 
   // Matching slash commands while the user is still typing the command (before a
   // space starts the arguments), for the composer hint list.
@@ -138,8 +161,19 @@ export default function ChatScreen() {
         case "active-kbs":
           setActiveBases(frame.bases ?? []);
           break;
+        case "active-kapa-groups":
+          // The daemon's effective selection; an error means kapa.ai is not
+          // configured there, so nothing was applied.
+          setKapaGroups(frame.kapa_groups ?? []);
+          if (frame.error) addNotice({ type: "caution", message: frame.error });
+          break;
+        case "warning":
+          // Non-fatal: the turn keeps streaming (e.g. kapa.ai failed and the
+          // answer uses local knowledge only).
+          addNotice({ type: "caution", message: frame.content ?? "warning" });
+          break;
         case "saved":
-          setNotice({ type: "positive", message: `Saved chat as “${frame.title ?? "Untitled chat"}”.` });
+          addNotice({ type: "positive", message: `Saved chat as “${frame.title ?? "Untitled chat"}”.` });
           break;
         case "error":
           setError(frame.error ?? "chat error");
@@ -154,7 +188,7 @@ export default function ChatScreen() {
           break;
       }
     },
-    [appendToAssistant]
+    [appendToAssistant, addNotice]
   );
 
   // openConnection starts a session (fresh or resumed) and opens its websocket,
@@ -187,17 +221,37 @@ export default function ChatScreen() {
 
     setConnState("connecting");
     setError(null);
+    const startBases = activeBases;
+    const startKapaGroups = kapaGroups;
     // promptChoice is a start-time control: the daemon snapshots the prompt when
     // the session begins, so an empty choice defers to the slot's active prompt.
     const { conn, session } = await openConnection({
-      bases: activeBases,
+      bases: startBases,
       ...(promptChoice ? { prompt: promptChoice } : {}),
+      ...(startKapaGroups.length > 0 ? { kapa_source_groups: startKapaGroups } : {}),
     });
     connRef.current = conn;
     setModel(session.model);
+    // Chips toggled while connecting were not sent; send them now, before the
+    // first prompt, so that prompt already uses them. The daemon's
+    // acknowledgement then sets the effective selection.
+    if (!sameSelection(activeBasesRef.current, startBases)) {
+      conn.setActiveBases(activeBasesRef.current);
+    }
+    if (!session.kapaUnavailable && !sameSelection(kapaGroupsRef.current, startKapaGroups)) {
+      conn.setActiveKapaGroups(kapaGroupsRef.current);
+    } else {
+      setKapaGroups(session.kapaGroups);
+    }
+    if (session.kapaUnavailable) {
+      addNotice({
+        type: "caution",
+        message: "kapa.ai is not configured on the daemon, so the selected source groups were not applied.",
+      });
+    }
     setConnState("connected");
     return conn;
-  }, [activeBases, connState, openConnection, promptChoice]);
+  }, [activeBases, connState, kapaGroups, openConnection, promptChoice, addNotice]);
 
   // resumeChat starts a new session seeded from a saved chat, replacing the
   // transcript and active-base selection with the restored state.
@@ -209,6 +263,7 @@ export default function ChatScreen() {
       awaitingDone.current = false;
       setConnState("connecting");
       setError(null);
+      setNotices([]);
       try {
         const { conn, session } = await openConnection({ resume: id });
         connRef.current = conn;
@@ -218,9 +273,17 @@ export default function ChatScreen() {
             session.restored.turns.map((t) => ({ role: t.role, content: t.content, think: "" }))
           );
           setActiveBases(session.restored.bases ?? []);
+          setKapaGroups(session.restored.kapa_groups ?? []);
+          if (session.restored.kapa_unavailable) {
+            addNotice({
+              type: "caution",
+              message:
+                "This chat used kapa.ai source groups, but kapa.ai is not configured on the daemon, so answers use local knowledge only.",
+            });
+          }
           const dropped = session.restored.dropped_bases ?? [];
           if (dropped.length > 0) {
-            setNotice({
+            addNotice({
               type: "information",
               message: `Some saved knowledge bases no longer exist and were skipped: ${dropped.join(", ")}.`,
             });
@@ -232,7 +295,7 @@ export default function ChatScreen() {
         setConnState("error");
       }
     },
-    [openConnection]
+    [openConnection, addNotice]
   );
 
   // handleSlashInput routes a slash command entered in the composer. `/save`
@@ -246,7 +309,7 @@ export default function ChatScreen() {
           if (connRef.current && connState === "connected") {
             connRef.current.save(rest.join(" "));
           } else {
-            setNotice({
+            addNotice({
               type: "information",
               message: "There's nothing to save yet — ask a question first.",
             });
@@ -256,13 +319,13 @@ export default function ChatScreen() {
           setHistoryOpen(true);
           break;
         default:
-          setNotice({
+          addNotice({
             type: "information",
             message: `Unknown command ${verb}. Available: ${SLASH_COMMANDS.map((c) => c.name).join(", ")}.`,
           });
       }
     },
-    [connState]
+    [connState, addNotice]
   );
 
   const send = useCallback(async () => {
@@ -314,6 +377,17 @@ export default function ChatScreen() {
         if (connRef.current && connState === "connected") connRef.current.setActiveBases(next);
         return next;
       });
+    },
+    [connState]
+  );
+
+  // changeKapaGroups updates the kapa.ai selection; on a live session it is sent
+  // over the socket (the acknowledgement then carries the effective selection),
+  // otherwise it applies when the next session starts.
+  const changeKapaGroups = useCallback(
+    (ids: string[]) => {
+      setKapaGroups(ids);
+      if (connRef.current && connState === "connected") connRef.current.setActiveKapaGroups(ids);
     },
     [connState]
   );
@@ -423,6 +497,10 @@ export default function ChatScreen() {
           ))}
         </div>
 
+        {/* kapa.ai gets its own row and label, so a chip is never ambiguous
+            about which retrieval source it scopes. */}
+        <KapaSourcePicker selected={kapaGroups} onChange={changeKapaGroups} label="Kapa.ai sources:" />
+
         {/* System-prompt selector. Only shown when the slot has stored variants
             to choose between. The prompt is fixed for the whole session (the
             daemon snapshots it at start), so the control is locked once a session
@@ -456,16 +534,20 @@ export default function ChatScreen() {
           </div>
         )}
 
-        {notice && (
-          <div className={`p-notification--${notice.type}`} role="status">
+        {notices.map((notice) => (
+          <div key={notice.message} className={`p-notification--${notice.type}`} role="status">
             <div className="p-notification__content">
               <p className="p-notification__message">{notice.message}</p>
-              <button type="button" className="p-button u-no-margin--bottom" onClick={() => setNotice(null)}>
+              <button
+                type="button"
+                className="p-button u-no-margin--bottom"
+                onClick={() => dismissNotice(notice.message)}
+              >
                 Dismiss
               </button>
             </div>
           </div>
-        )}
+        ))}
 
         {error && (
           <div className="p-notification--negative" role="alert">
@@ -548,4 +630,12 @@ export default function ChatScreen() {
       )}
     </>
   );
+}
+
+// sameSelection reports whether two chip selections hold the same ids,
+// ignoring order.
+function sameSelection(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  const set = new Set(a);
+  return b.every((id) => set.has(id));
 }

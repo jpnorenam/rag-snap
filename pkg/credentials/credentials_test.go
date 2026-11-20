@@ -130,3 +130,14 @@ func TestWrongOwnerRejected(t *testing.T) {
 		t.Fatalf("want owner error, got %v", err)
 	}
 }
+
+func TestKapaAPIKeyFromFile(t *testing.T) {
+	setup(t, `{"KAPA_API_KEY":"from-file"}`, 0o600)
+	if v, ok, err := Lookup("KAPA_API_KEY"); err != nil || !ok || v != "from-file" {
+		t.Fatalf("got %q %v %v", v, ok, err)
+	}
+	t.Setenv("KAPA_API_KEY", "from-env")
+	if v, _, _ := Lookup("KAPA_API_KEY"); v != "from-env" {
+		t.Fatalf("env should win, got %q", v)
+	}
+}

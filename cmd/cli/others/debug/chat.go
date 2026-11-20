@@ -12,12 +12,11 @@ type chatCommand struct {
 	*common.Context
 
 	// flags
-	baseURL   string
+	baseUrl   string
+	api       string
 	modelName string
 }
 
-// ChatCommand returns the hidden "debug chat" command, which opens a chat
-// session against an explicitly given OpenAI-compatible server and model.
 func ChatCommand(ctx *common.Context) *cobra.Command {
 	var cmd chatCommand
 	cmd.Context = ctx
@@ -25,23 +24,24 @@ func ChatCommand(ctx *common.Context) *cobra.Command {
 	cobraCmd := &cobra.Command{
 		Use:               "chat",
 		Short:             "Start the chat CLI providing connection parameters",
-		Long:              "Open a text-only chat session to the OpenAI-compatible server at the provided URL, requesting the model as specified.",
+		Long:              "Open a text-only chat session to the inference server at the provided URL (OpenAI-compatible, or Anthropic Messages with --api anthropic), requesting the model as specified.",
 		Args:              cobra.NoArgs,
 		ValidArgsFunction: cobra.NoFileCompletions,
 		RunE:              cmd.run,
 	}
 
 	// flags
-	cobraCmd.Flags().StringVar(&cmd.baseURL, "base-url", "", "Base URL of the OpenAI-compatible server")
+	cobraCmd.Flags().StringVar(&cmd.baseUrl, "base-url", "", "Base URL of the inference server")
 	cobraCmd.Flags().StringVar(&cmd.modelName, "model", "", "Name of the model to use")
+	cobraCmd.Flags().StringVar(&cmd.api, "api", chat.APIOpenAI, "Wire protocol of the server: openai or anthropic")
 
 	return cobraCmd
 }
 
 func (cmd *chatCommand) run(_ *cobra.Command, args []string) error {
-	if cmd.baseURL == "" {
+	if cmd.baseUrl == "" {
 		return fmt.Errorf("the --base-url parameter is required")
 	}
 
-	return chat.Client(cmd.baseURL, nil, nil, "", cmd.modelName, chat.DefaultPrompts(), 0.3, cmd.Verbose)
+	return chat.Client(chat.BackendConfig{API: cmd.api, BaseURL: cmd.baseUrl}, nil, nil, "", cmd.modelName, chat.DefaultPrompts(), 0.3, cmd.Verbose)
 }

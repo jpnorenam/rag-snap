@@ -2,6 +2,7 @@ package basic
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -101,6 +102,9 @@ type Status struct {
 	Models    map[string]string `json:"models" yaml:"models"`
 	Services  map[string]string `json:"services" yaml:"services"`
 	Endpoints map[string]string `json:"endpoints" yaml:"endpoints"`
+	// Kapa is the kapa.ai integration as this CLI sees it. The ragd daemon
+	// reads KAPA_API_KEY from its own environment, which may differ.
+	Kapa knowledge.KapaStatus `json:"kapa" yaml:"kapa"`
 }
 
 func (cmd *statusCommand) statusStruct() (*Status, error) {
@@ -131,9 +135,20 @@ func (cmd *statusCommand) statusStruct() (*Status, error) {
 	// Populate model information
 	statusStr.Models = make(map[string]string)
 
-	// LLM model name from the inference server (best-effort)
-	if llmName, err := chat.FindModelName(endpoints[openAi]); err == nil {
-		statusStr.Models["llm"] = llmName
+	// LLM model name (best-effort): listed by the inference server, or the
+	// configured chat.model when the backend cannot list models (Bedrock's
+	// OpenAI-compatible route, or chat.api=anthropic, which never lists).
+	if backend, err := chatBackend(cmd.Context, endpoints); err == nil {
+		configured, _ := getConfigString(cmd.Context, confChatModel)
+		if backend.API == chat.APIAnthropic {
+			if configured != "" {
+				statusStr.Models["llm"] = configured
+			}
+		} else if llmName, err := chat.FindModelName(backend); err == nil {
+			statusStr.Models["llm"] = llmName
+		} else if errors.Is(err, chat.ErrModelListingUnsupported) && configured != "" {
+			statusStr.Models["llm"] = configured
+		}
 	}
 
 	// Embedding model name and OpenSearch model ID
@@ -147,6 +162,8 @@ func (cmd *statusCommand) statusStruct() (*Status, error) {
 	if rerankModelID != "" {
 		statusStr.Models["reranker"] = fmt.Sprintf("%s (%s)", knowledge.DefaultCrossEncoderName, rerankModelID)
 	}
+
+	statusStr.Kapa = kapaStatus(cmd.Context)
 
 	return &statusStr, nil
 }
