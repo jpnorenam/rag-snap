@@ -15,6 +15,11 @@ permissions:
   contents: read
 
 jobs:
+  # Lint, vet and test first: a commit that fails them is never built or published.
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
   # Build and publish run in the same job so the publish steps can reuse
   # steps.build.outputs.snap directly. A prior split-job version downloaded
   # the artifact into a fresh job and passed action-publish a "*.snap" glob;
@@ -27,6 +32,7 @@ jobs:
   # then add the file contents as a repository secret named SNAP_STORE_CREDENTIALS.
   build-and-publish:
     name: Build and publish
+    needs: ci
     runs-on: ubuntu-24.04
 
     steps:

@@ -59,6 +59,6 @@ Entry point `cmd/cli/main.go` builds a Cobra command tree. A single `common.Cont
 
 ## Conventions
 
-- CI (`.github/workflows/snap-publish.yml`): push to `main` publishes the snap to the `edge` channel; a published GitHub release publishes to `stable`. There is no test/lint gate in CI — run `make all` locally before pushing.
+- CI (`.github/workflows/ci.yml`) runs on every pull request: `golangci-lint` (pinned to v2.15.0), `go mod tidy -diff`, `go vet`, `go test` and `make spec-check`. `snap-publish.yml` calls the same workflow first, so a push to `main` (→ `edge`) or a published release (→ `stable`) is only built and published when it passes. Run `make all` locally before pushing to catch failures early; keep the linter version in `ci.yml` in step with the one you run locally.
 - Commands are added to the root in a fixed order with `cobra.EnableCommandSorting = false`; preserve grouping/order when adding commands.
 - `CLAUDE.md` and `.claude/` (skills, commands) are tracked and shared across the team; `PLAN.md` and `*.snap` build artifacts are gitignored and stay local-only.
