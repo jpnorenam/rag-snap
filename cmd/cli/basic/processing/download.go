@@ -96,7 +96,7 @@ func CrawlURL(url string) (filePath string, meta *WebMetadata, cleanup func(), e
 		return "", nil, nil, fmt.Errorf("no readable content found at %s", url)
 	}
 
-	tmpFile, tmpErr := os.CreateTemp("", "rag-crawl-*.html")
+	tmpFile, tmpErr := os.CreateTemp("", TempPrefixCrawl+"*.html")
 	if tmpErr != nil {
 		return "", nil, nil, fmt.Errorf("creating temp file: %w", tmpErr)
 	}

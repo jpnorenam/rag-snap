@@ -19,7 +19,7 @@ func stubInference(t *testing.T) string {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","created":0,"model":"stub-model",
-			"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"grounded answer"}}]}`))
+			"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"grounded answer [1]"}}]}`))
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
@@ -85,6 +85,9 @@ func TestRunBatchReportsKapaFailureAndContinues(t *testing.T) {
 		default:
 			if r.Answer != "grounded answer" {
 				t.Errorf("%s answer = %q, want the kapa.ai-grounded answer", r.ID, r.Answer)
+			}
+			if len(r.Sources) != 1 || r.Sources[0].Href != "https://docs.example/page" {
+				t.Errorf("%s sources = %+v, want the cited kapa.ai page", r.ID, r.Sources)
 			}
 		}
 		if r.Retrieved == nil || r.Retrieved.Kapa != wantKapa || r.Retrieved.Local != 0 {

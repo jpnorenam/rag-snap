@@ -108,11 +108,11 @@ func judgedBatchCtx(ctx context.Context, t *testing.T, ids []string, judge *Batc
 	})
 	orig := batchRetrieve
 	t.Cleanup(func() { batchRetrieve = orig })
-	batchRetrieve = func(_ *Session, query, _ string, _ bool) (string, *RetrievalCounts) {
+	batchRetrieve = func(_ *Session, query, _ string, _ bool) (string, []CitedSource, *RetrievalCounts) {
 		if strings.Contains(query, "NO-CONTEXT") {
-			return "", nil
+			return "", nil, nil
 		}
-		return "[CANONICAL]\nchunk for " + query, nil
+		return "[CANONICAL]\nchunk for " + query, nil, nil
 	}
 
 	manifest := &BatchManifest{Model: "anthropic.claude-sonnet-5-5"}
@@ -558,8 +558,8 @@ func TestRunBatchMakesModelWrittenGapsRed(t *testing.T) {
 	})
 	orig := batchRetrieve
 	t.Cleanup(func() { batchRetrieve = orig })
-	batchRetrieve = func(*Session, string, string, bool) (string, *RetrievalCounts) {
-		return "[CANONICAL]\nunrelated chunk", nil
+	batchRetrieve = func(*Session, string, string, bool) (string, []CitedSource, *RetrievalCounts) {
+		return "[CANONICAL]\nunrelated chunk", nil, nil
 	}
 
 	judge := &fakeJudge{} // rates everything 5

@@ -88,6 +88,9 @@ type searchHit struct {
 	SourceID  string
 	CreatedAt string
 	Content   string
+	// CiteLabel and CiteHref are the hit's resolved document citation.
+	CiteLabel string
+	CiteHref  string
 	Matched   bool
 }
 
@@ -104,7 +107,8 @@ func directSearchHits(hits []knowledge.SearchHit) []searchHit {
 			name = h.Index
 		}
 		out[i] = searchHit{Score: h.Score, Base: name, Label: h.Label, SourceID: h.SourceID,
-			CreatedAt: h.CreatedAt, Content: h.Content, Matched: h.Matched}
+			CreatedAt: h.CreatedAt, Content: h.Content,
+			CiteLabel: h.Citation.Label, CiteHref: h.Citation.Href, Matched: h.Matched}
 	}
 	return out
 }
@@ -180,7 +184,7 @@ func formatSearchResults(hits []searchHit, start int) string {
 
 		header := fmt.Sprintf("[%d] score %.4f  ·  %s  %s", start+i+1, hit.Score, hit.Base, knowledge.LabelTag(hit.Label))
 		fmt.Fprintln(&b, color.New(color.Bold).Sprint(header))
-		fmt.Fprintf(&b, "    source: %s   created: %s\n", hit.SourceID, hit.CreatedAt)
+		fmt.Fprintf(&b, "    source: %s   created: %s\n", knowledge.SourceLine(hit.CiteLabel, hit.CiteHref, hit.SourceID), hit.CreatedAt)
 		fmt.Fprintln(&b, color.HiBlackString("    "+strings.Repeat("─", 56)))
 		b.WriteString(hit.Content)
 		b.WriteString("\n")

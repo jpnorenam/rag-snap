@@ -152,6 +152,12 @@ type BatchResult struct {
 	// pattern. Empty when the question resolved to no domain. It is the routing
 	// audit trail: which rule produced this answer.
 	Domain string `json:"domain,omitempty"`
+	// Sources lists the documents the answer cited, in first-cited order. The
+	// answer text itself carries no citation markers. Empty for a no-answer.
+	Sources []CitedSource `json:"sources"`
+	// Unsourced flags an answer that cites none of the documents retrieved for
+	// it. The answer is kept as generated, for review to confirm or fix.
+	Unsourced bool `json:"unsourced,omitempty"`
 	// Retrieved records how many local and kapa.ai hits grounded the answer, so a
 	// run can show kapa.ai took part without verbose logs. Nil when no retrieval
 	// was attempted.
@@ -288,6 +294,30 @@ func (h BatchHooks) result(i, total int, r BatchResult) {
 func (h BatchHooks) failure(i, total int, q BatchQuestion, err error) {
 	if h.OnError != nil {
 		h.OnError(i, total, q, err)
+	}
+}
+
+// batchResultFor validates a generated answer's citations against the
+// documents retrieved for the question, then moves them out of the prose: the
+// answer is stored marker-free and the cited documents go in Sources. An
+// answer citing nothing it was given is kept and flagged Unsourced: a reviewer
+// can add a missing citation, but cannot recover a discarded answer.
+func batchResultFor(q BatchQuestion, domainMatch, answer string, retrieved []CitedSource, counts *RetrievalCounts, verbose bool) BatchResult {
+	cited, sources, uncited := citeAnswer(answer, retrieved)
+	if uncited && verbose {
+		fmt.Printf("unsourced answer to %q: no valid citations\n", q.Question)
+	}
+	if sources == nil {
+		sources = []CitedSource{}
+	}
+	return BatchResult{
+		ID:        q.ID,
+		Question:  q.Question,
+		Answer:    stripMarkers(cited, sources),
+		Domain:    domainMatch,
+		Sources:   sources,
+		Unsourced: uncited,
+		Retrieved: counts,
 	}
 }
 
@@ -475,13 +505,13 @@ func RunBatch(
 		if lexicalQuery != q.Question {
 			semanticQuery = q.Question + " " + lexicalQuery
 		}
-		ragContext, retrieved := batchRetrieve(session, semanticQuery, lexicalQuery, verbose)
+		ragContext, retrieved, counts := batchRetrieve(session, semanticQuery, lexicalQuery, verbose)
 
 		// When no context was retrieved there is nothing to ground the answer on.
 		// Skip the LLM call entirely and emit the fixed no-answer string to avoid
 		// the model hallucinating from parametric knowledge.
 		if ragContext == "" {
-			result := BatchResult{ID: q.ID, Question: q.Question, Answer: noContextAnswer, Domain: domainMatch, Retrieved: retrieved}
+			result := BatchResult{ID: q.ID, Question: q.Question, Answer: noContextAnswer, Domain: domainMatch, Sources: []CitedSource{}, Retrieved: counts}
 			results = append(results, result)
 			hooks.result(i, total, result)
 			if pool != nil {
@@ -493,7 +523,7 @@ func RunBatch(
 		content, err := client.Complete(ctx, Request{
 			Model:       modelName,
 			System:      defaultSystemPrompt,
-			Messages:    []Message{{Role: RoleUser, Content: buildRAGPrompt(ragContext, domainContext, q.ID, q.Question)}},
+			Messages:    []Message{{Role: RoleUser, Content: buildRAGPrompt(ragContext, domainContext, q.ID, q.Question, true)}},
 			Temperature: &temperature,
 			Purpose:     PurposeAnswer,
 		})
@@ -526,20 +556,23 @@ func RunBatch(
 			continue
 		}
 
-		result := BatchResult{ID: q.ID, Question: q.Question, Answer: answer, Domain: domainMatch, Retrieved: retrieved}
+		// The judge scores the answer as stored: marker-free, or the no-answer
+		// response when it was withheld for citing nothing.
+		result := batchResultFor(q, domainMatch, answer, retrieved, counts, verbose)
 		results = append(results, result)
 		hooks.result(i, total, result)
 		if pool != nil {
-			opener, body := splitOpener(answer)
+			stored := result.Answer
+			opener, body := splitOpener(stored)
 			pool.submit(len(results)-1, JudgeInput{
 				Row:           SpreadsheetRow(len(results) - 1),
 				ID:            q.ID,
 				Question:      q.Question,
-				Answer:        answer,
+				Answer:        stored,
 				DomainContext: domainContext,
 				SystemPrompt:  defaultSystemPrompt,
 				Evidence:      ragContext,
-				Words:         countWords(answer),
+				Words:         countWords(stored),
 				Sentences:     countSentences(body),
 				Opener:        opener,
 			})

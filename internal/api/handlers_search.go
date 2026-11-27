@@ -40,6 +40,8 @@ type searchResult struct {
 	Label     string  `json:"label"`
 	Content   string  `json:"content"`
 	Matched   bool    `json:"matched"`
+	// Citation is the hit's resolved document citation (label, link).
+	Citation knowledge.Citation `json:"citation"`
 }
 
 // swagger:route POST /1.0/search search search
@@ -152,6 +154,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 			Label:     h.Label,
 			Content:   h.Content,
 			Matched:   h.Matched,
+			Citation:  h.Citation,
 		})
 	}
 	respondSyncWarnings(w, results, warnings)

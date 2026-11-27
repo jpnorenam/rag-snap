@@ -17,6 +17,9 @@ import (
 // Label is always resolved (stored chunk label, or the legacy index-name
 // inference for unlabeled chunks) — consumers use it directly and never
 // re-derive provenance.
+//
+// Citation is resolved before Search returns (see citation.go), so every
+// consumer — chat, batch, search surfaces, API — shares one provenance.
 type SearchHit struct {
 	Index     string  `json:"index"`
 	Score     float64 `json:"score"`
@@ -24,6 +27,8 @@ type SearchHit struct {
 	SourceID  string  `json:"source_id"`
 	Label     string  `json:"label"`
 	CreatedAt string  `json:"created_at"`
+	// Citation is the hit's resolved document citation.
+	Citation Citation `json:"citation"`
 	// Matched reports whether the hit clears MatchScoreThreshold. Search
 	// surfaces show matched hits and hide the rest as similar results; the chat
 	// RAG loop ignores it.
@@ -120,7 +125,12 @@ func (c *OpenSearchClient) Search(ctx context.Context, indexes []string, query, 
 	stopProgress := common.StartProgressSpinner("Searching knowledge base")
 	defer stopProgress()
 
-	return c.search(ctx, indexes, query, lexicalQuery, embeddingModelID, k)
+	hits, err := c.search(ctx, indexes, query, lexicalQuery, embeddingModelID, k)
+	if err != nil {
+		return nil, err
+	}
+	ResolveCitations(ctx, DefaultCitationChain(c), hits)
+	return hits, nil
 }
 
 // SearchTop is Search for the search surfaces (k search, /search, the REST

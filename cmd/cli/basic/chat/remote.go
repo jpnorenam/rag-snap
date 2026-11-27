@@ -38,6 +38,10 @@ func RemoteClient(dc *apiclient.Client, llmModelName string, bases []string, tem
 	if session.Model != "" {
 		fmt.Printf("Using model %v (via ragd)\n", session.Model)
 	}
+	if len(bases) > 0 {
+		fmt.Printf("Active knowledge bases: %s\n", strings.Join(bases, ", "))
+		fmt.Printf("  > Use `%s` to change them\n", cmdUseKnowledge)
+	}
 	fmt.Println("Type your prompt, then ENTER to submit. CTRL-C to quit.")
 
 	// Track the active bases locally so the /use-knowledge menu can pre-select
@@ -407,14 +411,15 @@ func remoteSearch(ctx context.Context, dc *apiclient.Client, args string, active
 	fmt.Print(formatSearchOutput(parsed.terms, remoteSearchHits(hits), parsed.showSimilar))
 }
 
-// remoteSearchHits converts daemon hits, which carry the base name resolved
-// server-side and the daemon's match flag (missing on an older daemon, counted
-// as matching).
+// remoteSearchHits converts daemon hits, which carry the base name and the
+// document citation resolved server-side and the daemon's match flag (missing
+// on an older daemon, counted as matching).
 func remoteSearchHits(hits []apiclient.SearchHit) []searchHit {
 	out := make([]searchHit, len(hits))
 	for i, h := range hits {
 		out[i] = searchHit{Score: h.Score, Base: h.Base, Label: h.Label, SourceID: h.SourceID,
-			CreatedAt: h.CreatedAt, Content: h.Content, Matched: h.IsMatched()}
+			CreatedAt: h.CreatedAt, Content: h.Content,
+			CiteLabel: h.Citation.Label, CiteHref: h.Citation.Href, Matched: h.IsMatched()}
 	}
 	return out
 }
@@ -455,9 +460,17 @@ func remotePromptTurn(ctx context.Context, session *apiclient.ChatSession, promp
 			// Non-fatal (for example kapa.ai failed): report it, keep the turn going.
 			haltSpinner()
 			fmt.Fprintf(os.Stderr, "Warning: %s\n", msg.Content)
+		case "sources":
+			// The retrieved set arrives before the tokens; the cited subset
+			// arrives on "done", which is what the Sources block shows.
 		case "done":
 			haltSpinner()
 			fmt.Println()
+			if msg.Unsourced {
+				fmt.Println(color.YellowString(noSourcesNotice))
+			} else {
+				fmt.Print(formatSourcesBlock(msg.Sources))
+			}
 			return nil
 		case "error":
 			haltSpinner()

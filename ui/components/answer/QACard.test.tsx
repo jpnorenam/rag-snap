@@ -57,6 +57,31 @@ test("an unanswered question still shows its domain", () => {
   assert.match(html, /No answer was generated for this question\./);
   assert.match(html, /Domain <code>GIS\*<\/code>/);
 });
+
+test("an answer's cited sources are listed by label, linked when they have a link", () => {
+  const html = renderToStaticMarkup(
+    <QACard
+      item={{
+        ...older,
+        sources: [
+          { marker: 1, key: "dc-design", label: "Datacentre design", href: "https://example.com/dc.pdf", base: "infra", tag: "canonical" },
+          { marker: 2, key: "power.md", label: "power.md", base: "infra", tag: "canonical" },
+        ],
+      }}
+      index={0}
+    />
+  );
+  assert.match(html, /Sources \(2\)/);
+  assert.match(html, /<a href="https:\/\/example\.com\/dc\.pdf"[^>]*>Datacentre design<\/a>/);
+  assert.match(html, /<span>power\.md<\/span>/);
+  assert.ok(!/\[1\]/.test(html), "batch answers list labels without markers");
+});
+
+test("a results item from before citations renders without a sources list", () => {
+  const html = renderToStaticMarkup(<QACard item={older} index={0} />);
+  assert.ok(!html.includes("Sources"));
+});
+
 test("a verdict renders its rating in words, its score, row and comment", () => {
   const html = renderToStaticMarkup(
     <QACard
@@ -111,4 +136,13 @@ test("a confidence the consistency check lowered says so", () => {
   assert.match(html, /Confidence 3\/5 \(lowered from 5 by the consistency check\)/);
   const plain = renderToStaticMarkup(<QACard item={{ ...older, judgment: { confidence: 3, rating: "yellow", comment: "x" } }} index={0} />);
   assert.ok(!plain.includes("lowered from"));
+});
+
+test("an unsourced answer is kept and flagged in words", () => {
+  const html = renderToStaticMarkup(<QACard item={{ ...older, unsourced: true }} index={0} />);
+  assert.match(html, /Dual power feeds per rack\./);
+  assert.match(html, /qa-card__unsourced/);
+  assert.match(html, /No sources/);
+  const plain = renderToStaticMarkup(<QACard item={older} index={0} />);
+  assert.ok(!plain.includes("qa-card__unsourced"));
 });

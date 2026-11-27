@@ -2,6 +2,7 @@ import { postAsync } from "./envelope";
 import { ROOT_PATH } from "./rootPath";
 import { getToken } from "./token";
 import type { ChatTurn } from "./chats";
+import type { CitedSource } from "@/lib/types";
 
 // RestoredChat is the transcript and knowledge-base context recovered when a
 // session is started by resuming a saved chat (POST /1.0/chat with `resume`).
@@ -100,9 +101,15 @@ function buildWsUrl(opPath: string, secret: string): string {
 // "active-kapa-groups" frame acknowledges a kapa.ai selection (with an error
 // when kapa.ai is not configured); a "warning" is a non-fatal notice about the
 // current turn, such as a failed kapa.ai request — the turn still completes.
+// Markers are numbered per answer in first-cited order, and the streamed tokens
+// already carry the final numbers. Each time the answer cites a new document, a
+// "sources" frame listing the documents cited so far precedes the token with the
+// new marker; the "done" frame carries the final cited sources, or is flagged
+// `unsourced` when it cited none (the streamed answer stands).
 export type ChatFrameType =
   | "token"
   | "think"
+  | "sources"
   | "done"
   | "active-kbs"
   | "active-kapa-groups"
@@ -118,6 +125,8 @@ export interface ChatFrame {
   error?: string;
   id?: string;
   title?: string;
+  sources?: CitedSource[];
+  unsourced?: boolean;
 }
 
 // ChatConnection wraps the websocket with typed send helpers for the control

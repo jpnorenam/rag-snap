@@ -27,6 +27,21 @@ const (
 // non-nil error aborts streaming (e.g. the client disconnected).
 type StreamFunc func(kind TokenKind, content string) error
 
+// SourcesFunc receives the documents retrieved for a turn, before the first
+// token is streamed, so a client can resolve citation markers as they arrive.
+// Returning a non-nil error aborts the turn.
+type SourcesFunc func(sources []CitedSource) error
+
+// TurnResult is the outcome of one answered prompt once its citations have
+// been validated.
+type TurnResult struct {
+	// Sources are the documents the answer cited, in first-cited order.
+	Sources []CitedSource
+	// Unsourced reports that retrieval supplied context but the answer cited
+	// none of it. The answer is kept; clients flag it as having no sources.
+	Unsourced bool
+}
+
 // conversation is the running state of one multi-turn chat: the resolved model,
 // the system prompt (kept apart from the turns, since the two wire protocols
 // place it differently), the user/assistant history, and the sampling
@@ -149,13 +164,14 @@ func (ls *LiveSession) Model() string { return ls.conv.model }
 // record. It is called before the session's websocket is driven.
 func (ls *LiveSession) Restore(turns []chatstore.Turn, chatID string) {
 	ls.conv.history = turnsToHistory(turns)
+	restoreCitations(ls.session, turns)
 	ls.chatID = chatID
 }
 
 // Turns returns the conversation so far as store turns (system prompt excluded),
 // ready to persist.
 func (ls *LiveSession) Turns() []chatstore.Turn {
-	return historyToTurns(ls.conv.history)
+	return historyToTurns(ls.conv.history, ls.session.AnswerSources)
 }
 
 // SetPromptRef records the provenance reference of the session's resolved system
@@ -219,8 +235,11 @@ func (ls *LiveSession) ActiveKapaGroups() []string {
 // REPL's handlePrompt: the same rewrite → retrieve → augment → stream pipeline.
 // Retrieval augmentation is applied only when a knowledge client and at least
 // one active base are present; with no active bases the prompt is answered
-// without retrieval.
-func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc) error {
+// without retrieval. Markers are renumbered per answer in first-cited order as
+// the answer streams (see citationStream): emitSources receives the sources
+// cited so far whenever the answer cites a new document, and the returned
+// TurnResult carries the final citations (see citeAnswer).
+func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc, emitSources SourcesFunc) (TurnResult, error) {
 	// Retrieval runs when local bases or kapa.ai source groups are active,
 	// matching the REPL's handlePrompt.
 	hasRAG := ls.session.KnowledgeClient != nil && len(ls.session.ActiveIndexes) > 0
@@ -229,31 +248,55 @@ func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc)
 
 	lexicalQuery := text
 	ragContext := ""
+	var retrieved []CitedSource
 	if hasContext {
 		// Retrieval problems (a failed kapa.ai request) reach the client as a
 		// warning frame on this turn's stream instead of staying in the logs.
 		ls.session.Warn = func(msg string) { _ = emit(TokenWarning, msg) }
 		defer func() { ls.session.Warn = nil }()
 		lexicalQuery = rewriteSearchQuery(ls.backend, ls.conv.model, ls.conv.history, text, ls.verbose)
-		ragContext, _ = retrieveContext(ls.session, text, lexicalQuery, ls.verbose)
+		ragContext, retrieved, _ = retrieveContext(ls.session, text, lexicalQuery, ls.verbose)
 	}
 
 	llmPrompt := text
 	if ragContext != "" {
-		llmPrompt = buildRAGPrompt(ragContext, "", "", text)
+		llmPrompt = buildRAGPrompt(ragContext, "", "", text, true)
 	} else if hasContext {
 		// A base is active but retrieval returned nothing: inject an explicit
 		// empty-context note so the grounding rules apply and the model does
 		// not answer from parametric knowledge (matching the REPL).
-		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", "", "", text)
+		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", "", "", text, false)
 	}
 
 	// Send the augmented prompt to the API but keep only the original prompt in
 	// history, mirroring the REPL's handlePrompt.
-	reply, err := ls.backend.Stream(ctx, ls.conv.turnRequest(llmPrompt), emit)
-	if err != nil {
-		return err
+	// Markers are renumbered for the reader as the answer streams; each time
+	// the answer cites a new document, emitSources receives the sources cited
+	// so far, ahead of the text carrying the new marker.
+	cites := newCitationStream(retrieved, emit, emitSources)
+	reply, err := ls.backend.Stream(ctx, ls.conv.turnRequest(llmPrompt), cites.Emit)
+	if err == nil {
+		err = cites.Flush()
 	}
+	if err != nil {
+		return TurnResult{}, err
+	}
+
+	// Validate the streamed answer's citations: history keeps the normalized
+	// answer, which is flagged unsourced when it cited nothing it was given.
+	var result TurnResult
+	if reply != "" {
+		content, cited, uncited := citeAnswer(reply, retrieved)
+		result = TurnResult{Sources: cited, Unsourced: uncited}
+		if uncited && ls.verbose {
+			fmt.Println("unsourced: no valid citations")
+		}
+		reply = content
+	}
+
 	ls.conv.record(text, reply)
-	return nil
+	if reply != "" {
+		ls.session.AnswerSources = append(ls.session.AnswerSources, result.Sources)
+	}
+	return result, nil
 }

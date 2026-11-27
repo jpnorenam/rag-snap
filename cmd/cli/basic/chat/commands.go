@@ -131,6 +131,10 @@ type Session struct {
 	// without --verbose, such as a failed kapa.ai request. Nil keeps the
 	// verbose-only printing.
 	Warn func(msg string)
+	// AnswerSources holds the cited sources of each assistant message in the
+	// conversation history, in order (nil for an uncited answer), so a save can
+	// persist them alongside the transcript.
+	AnswerSources [][]CitedSource
 }
 
 // handleSlashCommand processes slash commands entered in the chat REPL.

@@ -348,6 +348,36 @@ concatenation is the manifest's prompt.
 - **WHEN** a generation operation completes
 - **THEN** its metadata carries the model-written prompt and the appended rules as separate fields whose concatenation is the manifest's prompt
 
+### Requirement: Batch results carry per-answer sources
+Each batch result SHALL carry a `sources` list of the documents its answer cited, each with its
+citation key, label, link, locator, knowledge base, and label tag, in first-cited order. The same
+field SHALL appear in the CLI's JSON results file and in the API's results. A no-answer result SHALL
+carry an empty `sources` list.
+
+#### Scenario: Answer citing two documents
+- **WHEN** a question's answer cites two retrieved documents
+- **THEN** its result's `sources` lists both documents with their labels and links
+
+#### Scenario: No context retrieved
+- **WHEN** retrieval returns nothing for a question
+- **THEN** its result's answer is the no-answer response and its `sources` list is empty
+
+### Requirement: Batch answers are free of citation markers
+A batch result's `answer` SHALL NOT contain citation markers: markers SHALL be removed from the
+answer text, with surrounding whitespace and punctuation normalized, once the answer's sources are
+recorded. Only markers that cite a retrieved document SHALL be removed; other bracketed numbers are
+prose and SHALL stay. A batch answer for which context was retrieved but which cites no retrieved
+document SHALL be kept as generated, with empty sources, and flagged `"unsourced": true` so review can
+confirm it or add a source.
+
+#### Scenario: Markers stripped from prose
+- **WHEN** the model answers `The solution provides FIPS 140-3 certified modules. [1][2]`
+- **THEN** the result's `answer` is `The solution provides FIPS 140-3 certified modules.` and its `sources` lists the `[1]` and `[2]` documents
+
+#### Scenario: Uncited batch answer
+- **WHEN** context was retrieved for a question and the model's answer cites no retrieved document
+- **THEN** the result's `answer` is the model's answer, its `sources` list is empty, and it is flagged `unsourced`
+
 ### Requirement: Batch operations are judged when judging is enabled
 
 `POST /1.0/answer/batch` SHALL accept an optional boolean `judge`. When it is absent or true and the daemon can judge, the operation SHALL judge its answers as defined by `answer-judge`. When it is false, the operation SHALL NOT judge.

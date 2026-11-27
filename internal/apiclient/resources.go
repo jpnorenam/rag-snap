@@ -9,6 +9,8 @@ import (
 	"mime/multipart"
 	"os"
 	"path/filepath"
+
+	"github.com/jpnorenam/rag-snap/internal/citation"
 )
 
 // KnowledgeBase is the client view of a knowledge base summary from
@@ -83,7 +85,8 @@ type SearchHit struct {
 	Content   string  `json:"content"`
 	// Matched is the daemon's verdict on whether the hit matches the query. It
 	// is nil when the daemon predates the field.
-	Matched *bool `json:"matched"`
+	Matched  *bool    `json:"matched"`
+	Citation Citation `json:"citation"`
 }
 
 // IsMatched reports whether the hit matches the query. A hit from a daemon
@@ -92,6 +95,10 @@ type SearchHit struct {
 func (h SearchHit) IsMatched() bool {
 	return h.Matched == nil || *h.Matched
 }
+
+// Citation is a search hit's resolved document citation: a human-readable
+// label and, when one was recorded at ingest, a link.
+type Citation = citation.Citation
 
 // ListKnowledge returns all knowledge bases.
 func (c *Client) ListKnowledge(ctx context.Context) ([]KnowledgeBase, error) {
@@ -224,9 +231,10 @@ func (c *Client) IngestURL(ctx context.Context, name, sourceID, url, label strin
 }
 
 // IngestFile uploads a local file to a knowledge base as a multipart ingest
-// operation and returns the operation URL. label optionally overrides the
-// base's default knowledge label.
-func (c *Client) IngestFile(ctx context.Context, name, sourceID, path, label string) (string, error) {
+// operation and returns the operation URL. sourceURI optionally records the
+// file's web link for citations; label optionally overrides the base's default
+// knowledge label.
+func (c *Client) IngestFile(ctx context.Context, name, sourceID, path, sourceURI, label string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("opening file: %w", err)
@@ -242,6 +250,11 @@ func (c *Client) IngestFile(ctx context.Context, name, sourceID, path, label str
 	}
 	if label != "" {
 		if err := mw.WriteField("label", label); err != nil {
+			return "", err
+		}
+	}
+	if sourceURI != "" {
+		if err := mw.WriteField("source_uri", sourceURI); err != nil {
 			return "", err
 		}
 	}

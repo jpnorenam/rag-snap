@@ -309,10 +309,11 @@ func handlePrompt(backend Backend, conv *conversation, prompt string, session *S
 	// On the first turn (no history) this returns the original prompt.
 	lexicalQuery := prompt
 	ragContext := ""
+	var retrieved []CitedSource
 	if hasContext {
 		lexicalQuery = rewriteSearchQuery(backend, conv.model, conv.history, prompt, verbose)
 		// Retrieve RAG context from knowledge base (no-op when unavailable).
-		ragContext, _ = retrieveContext(session, prompt, lexicalQuery, verbose)
+		ragContext, retrieved, _ = retrieveContext(session, prompt, lexicalQuery, verbose)
 	}
 
 	// Build the message sent to the LLM: augmented when context is found.
@@ -321,9 +322,9 @@ func handlePrompt(backend Backend, conv *conversation, prompt string, session *S
 	// the model does not answer from parametric knowledge.
 	llmPrompt := prompt
 	if ragContext != "" {
-		llmPrompt = buildRAGPrompt(ragContext, "", "", prompt)
+		llmPrompt = buildRAGPrompt(ragContext, "", "", prompt, true)
 	} else if hasContext {
-		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", "", "", prompt)
+		llmPrompt = buildRAGPrompt("No relevant context was retrieved for this query.", "", "", prompt, false)
 	}
 
 	// The augmented prompt is sent to the API, but only the original prompt is
@@ -336,7 +337,13 @@ func handlePrompt(backend Backend, conv *conversation, prompt string, session *S
 	}
 
 	stopProgress := sync.OnceFunc(common.StartProgressSpinner("Generating an answer"))
-	reply, err := backend.Stream(context.Background(), req, printToken(stopProgress))
+	// Markers are renumbered for the reader as the answer streams, so the
+	// terminal shows the numbers the Sources block and the saved chat carry.
+	cites := newCitationStream(retrieved, printToken(stopProgress), nil)
+	reply, err := backend.Stream(context.Background(), req, cites.Emit)
+	if err == nil {
+		err = cites.Flush()
+	}
 	stopProgress()
 	if err != nil {
 		// A refusal or an exhausted output budget fails this turn only: report
@@ -349,9 +356,29 @@ func handlePrompt(backend Backend, conv *conversation, prompt string, session *S
 		}
 		return streamError(err)
 	}
-
-	conv.record(prompt, reply)
 	fmt.Println()
+
+	// Validate the streamed answer's citations against what was retrieved: the
+	// history keeps the normalized answer and the session records its sources.
+	// An answer citing nothing it was given is kept, flagged as unsourced.
+	var sources []CitedSource
+	if reply != "" {
+		content, cited, uncited := citeAnswer(reply, retrieved)
+		if uncited {
+			fmt.Println(color.YellowString(noSourcesNotice))
+		} else {
+			fmt.Print(formatSourcesBlock(cited))
+		}
+		sources = cited
+		reply = content
+	}
+
+	// Store the original prompt (not the augmented one) plus the normalized
+	// assistant response in the conversation history.
+	conv.record(prompt, reply)
+	if reply != "" {
+		session.AnswerSources = append(session.AnswerSources, sources)
+	}
 
 	return nil
 }

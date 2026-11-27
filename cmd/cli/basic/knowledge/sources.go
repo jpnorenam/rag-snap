@@ -26,9 +26,12 @@ const (
 
 // SourceMetadata tracks a single ingested source document.
 type SourceMetadata struct {
-	SourceID      string `json:"source_id"`
-	FileName      string `json:"file_name"`
-	FilePath      string `json:"file_path"`
+	SourceID string `json:"source_id"`
+	FileName string `json:"file_name"`
+	FilePath string `json:"file_path"`
+	// SourceURI is the canonical link a citation points at ("what we cite"),
+	// as opposed to FilePath ("what we read"). Empty when no URL is known.
+	SourceURI     string `json:"source_uri,omitempty"`
 	ContentType   string `json:"content_type,omitempty"`
 	Checksum      string `json:"checksum"`
 	IndexName     string `json:"index_name"`
@@ -45,9 +48,35 @@ type SourceMetadata struct {
 	Language      string `json:"language,omitempty"`
 }
 
-// CreateSourcesIndex creates the sources metadata index if it does not exist.
+// CreateSourcesIndex creates the sources metadata index if it does not exist,
+// and ensures fields added after the index was first created are mapped. It
+// does the work once per client: later calls, such as one per file of a repo
+// ingest, return immediately.
 func (c *OpenSearchClient) CreateSourcesIndex(ctx context.Context) error {
-	return c.getOrCreateSourcesIndex(ctx)
+	if c.sourcesIndexReady.Load() {
+		return nil
+	}
+	if err := c.getOrCreateSourcesIndex(ctx); err != nil {
+		return err
+	}
+	if err := c.EnsureSourceURIMapping(ctx); err != nil {
+		return err
+	}
+	c.sourcesIndexReady.Store(true)
+	return nil
+}
+
+// EnsureSourceURIMapping adds the source_uri keyword field to an existing
+// sources metadata index. Indexes created before citations existed lack it;
+// without it, dynamic mapping would type the field as text on first write.
+// The mapping update is idempotent.
+func (c *OpenSearchClient) EnsureSourceURIMapping(ctx context.Context) error {
+	body := map[string]any{
+		"properties": map[string]any{
+			"source_uri": map[string]any{"type": "keyword"},
+		},
+	}
+	return c.putMapping(ctx, sourcesIndexName, body)
 }
 
 // getOrCreateSourcesIndex checks if the sources metadata index exists and creates it if not.
@@ -108,6 +137,7 @@ func buildSourcesIndexBody() map[string]any {
 				"source_id":      map[string]any{"type": "keyword"},
 				"file_name":      map[string]any{"type": "keyword"},
 				"file_path":      map[string]any{"type": "keyword"},
+				"source_uri":     map[string]any{"type": "keyword"},
 				"content_type":   map[string]any{"type": "keyword"},
 				"checksum":       map[string]any{"type": "keyword"},
 				"index_name":     map[string]any{"type": "keyword"},

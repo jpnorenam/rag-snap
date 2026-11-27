@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -36,6 +37,10 @@ type OpenSearchClient struct {
 	ingestPipeline   string
 	rerankModelID    string
 	searchPipeline   string
+	// sourcesIndexReady records that CreateSourcesIndex has succeeded on this
+	// client, so per-source ingest does not repeat the exists check and the
+	// mapping update for every file of a large repo.
+	sourcesIndexReady atomic.Bool
 }
 
 // URL returns the OpenSearch server URL.
@@ -235,7 +240,7 @@ func (c *OpenSearchClient) Init(ctx context.Context, hooks InitHooks) error {
 
 	// Ensure the sources metadata index exists
 	if err := withProgress("Setting up sources metadata index", func() error {
-		return c.getOrCreateSourcesIndex(ctx)
+		return c.CreateSourcesIndex(ctx)
 	}); err != nil {
 		return fmt.Errorf("error setting up sources metadata index: %w", err)
 	}

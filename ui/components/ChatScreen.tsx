@@ -4,6 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Header from "@/components/Header";
 import ChatHistoryPanel from "@/components/ChatHistoryPanel";
 import Markdown from "@/components/common/Markdown";
+import SourcesList, { citationMap } from "@/components/common/SourcesList";
+import { applyAnswerFrame, NO_SOURCES_NOTICE, type Message } from "@/components/chatMessages";
 import { ApiError, errorMessage } from "@/lib/api/envelope";
 import { startChat, ChatConnection, type ChatFrame, type ChatStartOptions } from "@/lib/api/chat";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
@@ -14,6 +16,10 @@ import { listPrompts } from "@/lib/api/prompts";
 // for the session, regardless of which variant is active on the slot. It matches
 // the daemon's reserved variant name.
 const DEFAULT_PROMPT = "default";
+
+// DEFAULT_BASE is the knowledge base the CLI chat starts with; the chat screen
+// preselects it too when it exists.
+const DEFAULT_BASE = "default";
 
 type ConnState = "idle" | "connecting" | "connected" | "closed" | "error";
 
@@ -32,14 +38,7 @@ interface Notice {
   message: string;
 }
 
-// A turn in the transcript. Assistant turns accumulate streamed token/think
-// content incrementally as frames arrive.
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  think: string;
-  streaming?: boolean;
-}
+
 
 export default function ChatScreen() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -103,6 +102,11 @@ export default function ChatScreen() {
       .then((b) => {
         setBases(b);
         setKbState("connected");
+        // Start with the default base active, matching the CLI, unless a
+        // selection (e.g. a resumed chat's) is already in place.
+        if (b.some((kb) => kb.name === DEFAULT_BASE)) {
+          setActiveBases((prev) => (prev.length === 0 ? [DEFAULT_BASE] : prev));
+        }
       })
       .catch((e) => {
         // An unreachable daemon is fatal, so it gets the standard connection
@@ -149,14 +153,12 @@ export default function ChatScreen() {
         case "think":
           appendToAssistant("think", frame.content ?? "");
           break;
+        case "sources":
+          setMessages((prev) => applyAnswerFrame(prev, frame));
+          break;
         case "done":
           awaitingDone.current = false;
-          setMessages((prev) => {
-            const next = [...prev];
-            const last = next[next.length - 1];
-            if (last && last.role === "assistant") next[next.length - 1] = { ...last, streaming: false };
-            return next;
-          });
+          setMessages((prev) => applyAnswerFrame(prev, frame));
           break;
         case "active-kbs":
           setActiveBases(frame.bases ?? []);
@@ -270,7 +272,12 @@ export default function ChatScreen() {
         setModel(session.model);
         if (session.restored) {
           setMessages(
-            session.restored.turns.map((t) => ({ role: t.role, content: t.content, think: "" }))
+            session.restored.turns.map((t) => ({
+              role: t.role,
+              content: t.content,
+              think: "",
+              sources: t.sources ?? [],
+            }))
           );
           setActiveBases(session.restored.bases ?? []);
           setKapaGroups(session.restored.kapa_groups ?? []);
@@ -571,7 +578,24 @@ export default function ChatScreen() {
                 // Assistant answers are Markdown; render them formatted. User
                 // turns are plain text and stay in the pre-wrap bubble.
                 <div className="chat-message__bubble chat-message__bubble--md">
-                  {m.content ? <Markdown content={m.content} /> : m.streaming ? "…" : ""}
+                  {m.content ? (
+                    <Markdown
+                      content={m.content}
+                      citations={citationMap(m.streaming ? m.citedSoFar : m.sources)}
+                    />
+                  ) : m.streaming ? (
+                    "…"
+                  ) : (
+                    ""
+                  )}
+                  {!m.streaming && m.sources && m.sources.length > 0 && (
+                    <SourcesList sources={m.sources} className="chat-message__sources" />
+                  )}
+                  {!m.streaming && m.unsourced && (
+                    <p className="chat-message__sources chat-message__unsourced p-text--small" role="status">
+                      {NO_SOURCES_NOTICE}
+                    </p>
+                  )}
                 </div>
               ) : (
                 <div className="chat-message__bubble">{m.content}</div>

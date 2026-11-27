@@ -24,6 +24,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jpnorenam/rag-snap/internal/citation"
 )
 
 // Errors distinguishing the not-found and empty-transcript cases so callers can
@@ -48,11 +50,17 @@ var idPattern = regexp.MustCompile(`^[a-f0-9]{8,}$`)
 
 // Turn is one exchange in a saved conversation: a user prompt or an assistant
 // reply, as plain text. Reasoning/<think> spans are stripped from assistant
-// content before it reaches the store.
+// content before it reaches the store. An assistant turn carries the sources its
+// answer cited; chats saved before sources were recorded have none.
 type Turn struct {
-	Role    string `json:"role"` // "user" or "assistant"
-	Content string `json:"content"`
+	Role    string   `json:"role"` // "user" or "assistant"
+	Content string   `json:"content"`
+	Sources []Source `json:"sources,omitempty"`
 }
+
+// Source is a document an assistant turn cited: the "[n]" marker number it
+// carries in the turn's content and its citation.
+type Source = citation.Source
 
 // Chat is a saved conversation with everything needed to resume it.
 type Chat struct {

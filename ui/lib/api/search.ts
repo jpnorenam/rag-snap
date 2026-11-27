@@ -1,4 +1,5 @@
 import { postSyncWithWarnings } from "./envelope";
+import type { Citation } from "@/lib/types";
 
 // SearchResult is the API view of a single retrieval hit from
 // POST /1.0/search, matching the daemon's searchResult.
@@ -9,6 +10,8 @@ export interface SearchResult {
   created_at: string;
   label: string;
   content: string;
+  /** The hit's resolved document citation (absent from older daemons). */
+  citation?: Citation;
   // matched is the daemon's verdict on whether the hit matches the query
   // (relevance score above its threshold). Absent from daemons that predate
   // it; splitResults treats a missing flag as matching.

@@ -33,7 +33,9 @@ func renderTranscript(turns []chatstore.Turn) {
 		if t.Role == "assistant" {
 			label = "Assistant"
 		}
-		fmt.Printf("%s\n%s\n\n", color.HiBlackString("— %s —", label), t.Content)
+		fmt.Printf("%s\n%s\n", color.HiBlackString("— %s —", label), t.Content)
+		fmt.Print(formatSourcesBlock(t.Sources))
+		fmt.Println()
 	}
 }
 
@@ -88,7 +90,7 @@ func saveDirectChat(store *chatstore.Store, chatID, title, model string, session
 		Title: strings.TrimSpace(title),
 		Model: model,
 		Bases: activeBaseNames(session),
-		Turns: historyToTurns(messages),
+		Turns: historyToTurns(messages, session.AnswerSources),
 	})
 	if err != nil {
 		if errors.Is(err, chatstore.ErrEmpty) {
@@ -132,6 +134,7 @@ func resumeDirectChat(store *chatstore.Store, session *Session) ([]Message, stri
 		fmt.Printf("Note: skipping knowledge base(s) that no longer exist: %s\n", strings.Join(dropped, ", "))
 	}
 
+	restoreCitations(session, saved.Turns)
 	renderTranscript(saved.Turns)
 	fmt.Printf("Resumed %q. Continue the conversation below.\n", saved.Title)
 	return turnsToHistory(saved.Turns), saved.ID, true
@@ -207,15 +210,38 @@ func relativeTime(t time.Time) string {
 // resume, so a customization applies to resumed sessions the same way it
 // applies to new ones. Assistant <think> spans are stripped by the store on
 // save, so callers need not pre-clean here.
-func historyToTurns(messages []Message) []chatstore.Turn {
+// answerSources holds the cited sources of each assistant message, in order
+// (see Session.AnswerSources); the k-th assistant turn gets answerSources[k].
+func historyToTurns(messages []Message, answerSources [][]CitedSource) []chatstore.Turn {
 	turns := make([]chatstore.Turn, 0, len(messages))
+	answer := 0
 	for _, m := range messages {
 		switch m.Role {
-		case RoleUser, RoleAssistant:
+		case RoleUser:
 			turns = append(turns, chatstore.Turn{Role: string(m.Role), Content: m.Content})
+		case RoleAssistant:
+			turn := chatstore.Turn{Role: string(m.Role), Content: m.Content}
+			if answer < len(answerSources) {
+				turn.Sources = answerSources[answer]
+			}
+			answer++
+			turns = append(turns, turn)
 		}
 	}
 	return turns
+}
+
+// restoreCitations rebuilds a session's citation state from saved turns: the
+// per-answer sources a later save writes back. Markers are numbered per answer,
+// so nothing else carries over.
+func restoreCitations(session *Session, turns []chatstore.Turn) {
+	session.AnswerSources = nil
+	for _, t := range turns {
+		if t.Role != "assistant" {
+			continue
+		}
+		session.AnswerSources = append(session.AnswerSources, t.Sources)
+	}
 }
 
 // turnsToHistory rebuilds a conversation from saved turns, so a resumed session

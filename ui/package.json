@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "tsx --test lib/*.test.ts components/answer/*.test.tsx"
+    "test": "tsx --test lib/*.test.ts components/*.test.ts components/*.test.tsx components/answer/*.test.tsx components/common/*.test.tsx components/knowledge/*.test.ts"
   },
   "dependencies": {
     "next": "^16.2.7",

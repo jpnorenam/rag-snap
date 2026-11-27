@@ -355,11 +355,11 @@ func TestRunBatchAnthropic(t *testing.T) {
 
 	orig := batchRetrieve
 	t.Cleanup(func() { batchRetrieve = orig })
-	batchRetrieve = func(_ *Session, query, _ string, _ bool) (string, *RetrievalCounts) {
+	batchRetrieve = func(_ *Session, query, _ string, _ bool) (string, []CitedSource, *RetrievalCounts) {
 		if strings.Contains(query, "NO-CONTEXT") {
-			return "", nil
+			return "", nil, nil
 		}
-		return "retrieved chunk", nil
+		return "retrieved chunk", nil, nil
 	}
 
 	manifest := &BatchManifest{

@@ -749,7 +749,7 @@ func stubCompletion(t *testing.T) string {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"id":"c","object":"chat.completion","created":0,"model":"stub-model",
-			"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"grounded answer"}}]}`))
+			"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"grounded answer [1]"}}]}`))
 	}))
 	t.Cleanup(srv.Close)
 	return srv.URL
