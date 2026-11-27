@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Guest bootstrap for the rag-cli OpenSearch node. Run as root by opensearch-on-aws.sh:
 #   sudo bash bootstrap-opensearch.sh --node-name rag0 --channel 2/stable --secrets-file <file>
+# Callers supply policy: --heap <GiB> overrides the RAM calculation, --bind <addr>
+# limits the listening addresses, --skip-sysctl leaves host sysctl settings alone.
 # The secrets file (KEY=value, mode 0600) is deleted when this script exits.
 # Every stage checks the node's actual state first, so reruns resume safely and
 # never regenerate certificates or re-initialize an initialized security index.
@@ -26,6 +28,8 @@ WAIT_INTERVAL=${RAG_BOOTSTRAP_INTERVAL:-5}
 NODE=rag0
 CHANNEL=2/stable
 SECRETS_FILE=
+BIND=
+CONFIG_CHANGED=no
 STAGE=start
 declare -A S=()
 
@@ -76,6 +80,9 @@ load_secrets() {
 		[ -n "${S[$k]:-}" ] || fail "$k missing from secrets file"
 	done
 }
+
+# valid_heap <value>: a positive integer number of GiB.
+valid_heap() { [[ ${1:-} =~ ^[1-9][0-9]*$ ]]; }
 
 # heap_gib <MemTotal KiB>: 3/8 of memory, rounded to the nearest GiB, 1..31.
 heap_gib() {
@@ -186,7 +193,7 @@ do_snap() {
 		snap install opensearch --channel="$CHANNEL" || fail "snap install opensearch --channel=$CHANNEL failed"
 	fi
 	# The host sysctl file above is authoritative; keep the snap's own handler off.
-	snap set opensearch set-sysctl-props=no
+	snap set opensearch set-sysctl-props=no || fail "snap set opensearch set-sysctl-props=no failed"
 	[ "$(snap get opensearch set-sysctl-props)" = no ] || fail "could not set opensearch set-sysctl-props=no"
 	local plug
 	for plug in "${REQUIRED_PLUGS[@]}"; do
@@ -221,7 +228,14 @@ do_heap() {
 	stage "JVM heap"
 	local gib f="$CONF/jvm.options.d/heap.options" tmp
 	[ -d "$CONF/jvm.options.d" ] || fail "$CONF/jvm.options.d not found"
-	gib=$(heap_gib "$(awk '/^MemTotal:/{print $2}' /proc/meminfo)")
+	
+	if [ -n "${HEAP_GIB:-}" ]; then
+		valid_heap "$HEAP_GIB" || fail "invalid heap value: '$HEAP_GIB' (expected a positive integer number of GiB)"
+		gib=$HEAP_GIB
+	else
+		gib=$(heap_gib "$(awk '/^MemTotal:/{print $2}' /proc/meminfo)")
+	fi
+	
 	if [ -f "$f" ] && [ "$(cat "$f")" = "$(printf -- '-Xms%sg\n-Xmx%sg' "$gib" "$gib")" ]; then
 		echo "heap already ${gib} GiB"
 		return
@@ -230,7 +244,103 @@ do_heap() {
 	printf -- '-Xms%sg\n-Xmx%sg\n' "$gib" "$gib" >"$tmp"
 	install_like "$tmp" "$f" "$CONF/jvm.options"
 	echo "heap set to ${gib} GiB"
-	if daemon_active; then
+	CONFIG_CHANGED=yes
+}
+
+# bind_ok <address>: the requested address, or the IPv6 loopback that a
+# loopback-bound node also listens on (nodes info reports both forms).
+bind_ok() {
+	[ "$1" = "$BIND" ] && return 0
+	case $1:$BIND in
+	127.*:127.* | 127.*:::1 | ::1:127.* | ::1:::1) return 0 ;;
+	esac
+	return 1
+}
+
+# do_bind: apply the caller's binding policy, if any. opensearch.setup rewrites
+# network.host every time it runs (scripts/wrappers/setup.sh sets it from
+# --node-host, defaulting to [_local_, _site_]), so this must run after do_tls,
+# and the http/transport overrides that would win over it go with it.
+do_bind() {
+	[ -n "${BIND:-}" ] || return 0
+	stage "network binding"
+	local f=$CONF/opensearch.yml tmp
+	[ -f "$f" ] || fail "$f not found"
+	# A bare network/http/transport mapping would need a YAML parser to edit
+	# safely; refuse it rather than corrupt it.
+	! grep -Eq '^[[:space:]]*"?(network|http|transport)"?[[:space:]]*:[[:space:]]*(#.*)?$' "$f" ||
+		fail "$f expresses network settings as a nested block; set network.host, http.host and transport.host to $BIND as single-line values and rerun"
+	tmp=$(mktemp "$f.XXXXXX")
+	# Drop every host key and whatever opensearch.setup wrote under it. That
+	# command writes network.host as a block list, so the key's following list
+	# items have to go with the key, then the requested single-line values are
+	# appended.
+	BIND=$BIND awk '
+		skip { if ($0 ~ /^[[:space:]]/) next; skip = 0 }
+		/^[[:space:]]*"?(network|http|transport)\.(host|bind_host)"?[[:space:]]*:/ {
+			if ($0 ~ /:[[:space:]]*(#.*)?$/) skip = 1
+			next
+		}
+		{ print }
+		END { printf "network.host: %s\nhttp.host: %s\ntransport.host: %s\n", ENVIRON["BIND"], ENVIRON["BIND"], ENVIRON["BIND"] }
+	' "$f" >"$tmp"
+	if cmp -s "$tmp" "$f"; then
+		rm -f "$tmp"
+		echo "network binding already limited to $BIND"
+		return
+	fi
+	install_like "$tmp" "$f" "$f"
+	echo "network binding set to $BIND"
+	CONFIG_CHANGED=yes
+}
+
+# verify_bind: the node's own bound addresses, for HTTP and for transport. A
+# successful request to localhost does not show whether other interfaces are
+# listening too, and one of the two lists being absent proves nothing.
+verify_bind() {
+	[ -n "${BIND:-}" ] || return 0
+	# Only reached when a caller supplied --bind, and that caller requires jq.
+	command -v jq >/dev/null 2>&1 || fail "jq is needed to verify the effective binding"
+	local json kind addrs err a host bad='' checked=0
+	json=$(os_curl "${S[OPENSEARCH_ADMIN_PASSWORD]}" \
+		'/_nodes/_local/http,transport?filter_path=nodes.*.http.bound_address,nodes.*.transport.bound_address' || true)
+	for kind in http transport; do
+		# A non-empty array of strings is the only acceptable answer: a wrong
+		# type, an empty list or one mixed entry is reported, never dropped.
+		addrs=$(printf '%s' "$json" | jq -r --arg k "$kind" \
+			'.nodes[]? | .[$k].bound_address
+			 | if . == null then "ERR:missing"
+			   elif type != "array" then "ERR:not a list"
+			   elif length == 0 then "ERR:an empty list"
+			   elif (map(type) | any(. != "string")) then "ERR:a list with entries that are not strings"
+			   else .[] end' 2>/dev/null || true)
+		err=$(printf '%s\n' "$addrs" | grep -m1 '^ERR:' || true)
+		[ -z "$err" ] ||
+			fail "the node reported the $kind bound_address as ${err#ERR:} at $URL; cannot confirm the binding is limited to $BIND (response: ${json:-none})"
+		[ -n "$addrs" ] ||
+			fail "the node reported no $kind bound_address at $URL; cannot confirm the binding is limited to $BIND (response: ${json:-none})"
+		for a in $addrs; do
+			checked=$((checked + 1))
+			[[ $a =~ ^(\[[0-9A-Fa-f:]+\]|[0-9]+(\.[0-9]+){3}):[0-9]+$ ]] || { bad="$bad $kind:$a(unreadable)"; continue; }
+			host=${a%:*}
+			host=${host#[}
+			host=${host%]}
+			bind_ok "$host" || bad="$bad $kind:$a"
+		done
+	done
+	[ -z "$bad" ] || fail "OpenSearch is listening beyond $BIND on:$bad; REST and transport must both be limited to $BIND"
+	echo "bound addresses limited to $BIND ($checked checked across http and transport)"
+}
+
+# do_config: write the caller's heap and binding policy, then restart once if
+# either changed and the daemon is already running. Restarting between the two
+# would bring the node back up with the binding the other stage still has to fix.
+do_config() {
+	CONFIG_CHANGED=no
+	do_heap
+	do_bind
+	if [ "$CONFIG_CHANGED" = yes ] && daemon_active; then
+		stage "restart for the new configuration"
 		snap restart opensearch.daemon
 	fi
 }
@@ -292,14 +402,33 @@ do_ready() {
 	roles=$(os_curl "${S[OPENSEARCH_ADMIN_PASSWORD]}" '/_cat/nodes?h=node.roles,heap.max' || true)
 	check_roles "${roles%% *}"
 	echo "cluster ${BASH_REMATCH[1]}; node roles/heap: $roles"
+	verify_bind
 }
 
 main() {
+	SKIP_SYSCTL=no
+	HEAP_GIB=
+	BIND=
 	while [ $# -gt 0 ]; do
 		case $1 in
 		--node-name) NODE=$2; shift 2 ;;
 		--channel) CHANNEL=$2; shift 2 ;;
 		--secrets-file) SECRETS_FILE=$2; shift 2 ;;
+		--skip-sysctl) SKIP_SYSCTL=yes; shift ;;
+		--bind)
+			[ $# -ge 2 ] && [[ $2 != --* ]] && [ -n "$2" ] ||
+				{ echo "--bind requires a value: the address OpenSearch must listen on" >&2; exit 2; }
+			BIND=$2
+			shift 2
+			;;
+		--heap)
+			[ $# -ge 2 ] && [[ $2 != --* ]] ||
+				{ echo "--heap requires a value: a positive integer number of GiB" >&2; exit 2; }
+			valid_heap "$2" ||
+				{ echo "invalid --heap value: '$2' (expected a positive integer number of GiB)" >&2; exit 2; }
+			HEAP_GIB=$2
+			shift 2
+			;;
 		*) echo "unknown argument: $1" >&2; exit 2 ;;
 		esac
 	done
@@ -307,10 +436,14 @@ main() {
 	trap '[ -n "$SECRETS_FILE" ] && rm -f "$SECRETS_FILE"' EXIT
 	load_secrets
 
-	do_sysctl
+	[ "$SKIP_SYSCTL" = no ] && do_sysctl
 	do_snap
 	local state=
 	if [ -f "$MARKER" ]; then
+		# The requested heap must reach disk before anything starts or waits for
+		# the node: a saved heap larger than available memory stops it from
+		# starting at all, and the rerun that lowers it has to repair that.
+		do_config
 		daemon_active || snap start --enable opensearch.daemon
 		state=$(security_state)
 	fi
@@ -318,11 +451,10 @@ main() {
 	rejected) diagnose_rejected ;;
 	ready)
 		echo "security already initialized with the saved password"
-		do_heap
 		;;
 	*)
 		do_tls
-		do_heap
+		do_config
 		do_admin_hash
 		if [ ! -f "$MARKER" ] || ! daemon_active; then do_start; fi
 		state=$(security_state)

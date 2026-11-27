@@ -22,8 +22,12 @@ ones — nothing below requires them to be on `127.0.0.1`).
 
 ### OpenSearch (the `knowledge` store)
 
-> To have `rag-cli` create a dedicated OpenSearch node on AWS and configure everything below for
-> you, see **[docs/opensearch-on-aws.md](docs/opensearch-on-aws.md)** (`rag-cli.rag prepare-script aws`).
+> **Quick automated setup options:**
+> 
+> - **Local machine:** `rag-cli.rag prepare-script local --output ~/rag-local` — automated loopback-only OpenSearch for development/testing. See **[docs/local-setup.md](docs/local-setup.md)**.
+> - **AWS:** `rag-cli.rag prepare-script aws --output ~/rag-aws` — dedicated EC2 instance with Terraform. See **[docs/opensearch-on-aws.md](docs/opensearch-on-aws.md)**.
+>
+> **Manual setup:** Continue below to install OpenSearch manually.
 
 Install and set up the [OpenSearch snap](https://github.com/canonical/opensearch-snap). During
 [certificate creation](https://github.com/canonical/opensearch-snap?tab=readme-ov-file#creating-certificates),
