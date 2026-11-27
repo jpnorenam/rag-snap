@@ -403,8 +403,10 @@ link.
 **Uncited answers.** When retrieval supplied context and the answer cites none of it (after
 markers matching no retrieved document are removed), the chat websocket's `done` frame is flagged
 `"unsourced": true` and carries no `sources`; the streamed answer stands and the session history
-keeps it, and clients show that it has no relevant sources. Batch answers are stricter: such an
-answer is withheld, so `answer` is the no-answer response and `sources` is empty.
+keeps it, and clients show that it has no relevant sources. Batch answers are kept the same way:
+such a result has empty `sources` and `"unsourced": true`. Markers that the streamed text carried for
+documents not retrieved are listed in the `done` frame's `dropped`, since the saved answer no longer
+has them.
 
 ```json
 {"type": "sources", "sources": [{"marker": 1, "key": "pro-guide", "label": "Ubuntu Pro Guide", "href": "https://ubuntu.com/pro", "base": "docs", "tag": "canonical"}]}

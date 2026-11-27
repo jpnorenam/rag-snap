@@ -48,9 +48,11 @@ export function applyAnswerFrame(prev: Message[], frame: ChatFrame): Message[] {
 
 // answerText is an assistant turn's content prepared for rendering: citation
 // groups normalized so they render as chips, keeping only markers for known
-// documents — the turn's retrieved set while streaming (empty when retrieval
-// found nothing), the cited set once done. Any other marker is invented.
+// documents — the turn's retrieved set, the set the daemon validated against
+// (or, for a restored chat, which has no retrieved set, the cited set). A run
+// citing no known document is left as written, as the daemon leaves it; with
+// no known documents at all (nothing was retrieved) every marker is dropped.
 export function answerText(m: Message): string {
-  const known = (m.streaming ? m.retrieved : m.sources) ?? [];
+  const known = m.retrieved ?? m.sources ?? [];
   return normalizeMarkers(m.content, new Set(known.map((s) => s.marker)));
 }

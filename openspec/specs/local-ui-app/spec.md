@@ -1365,9 +1365,10 @@ SHALL be kept.
 - **THEN** no base is preselected
 
 ### Requirement: Markers that refer to nothing are not shown
-The chat screen SHALL render only markers for documents the turn retrieved (while streaming) or cited
-(once done); any other marker SHALL be removed from the displayed answer rather than shown as literal
-`[n]` text.
+The chat screen SHALL render as chips only markers for documents the turn retrieved (or, for a restored
+chat, cited). Following the daemon, a marker beside a valid one that refers to nothing SHALL be removed,
+a run of markers none of which refers to a retrieved document SHALL be shown as written, and in a turn
+with nothing retrieved every marker SHALL be removed rather than shown as literal `[n]` text.
 
 #### Scenario: Marker without retrieval
 - **WHEN** an answer streamed without a preceding `sources` frame contains `[1]`

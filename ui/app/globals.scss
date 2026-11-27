@@ -2108,6 +2108,12 @@ $sidebar-accent: #e95420; // Ubuntu orange
   margin-bottom: 0.5rem;
 }
 
+// An answer that cites nothing it was given: kept for review, flagged in words.
+.qa-card__unsourced {
+  color: var(--vf-color-text-muted);
+  margin-bottom: 0.5rem;
+}
+
 .qa-card__answer {
   white-space: pre-wrap;
   margin-bottom: 0.5rem;

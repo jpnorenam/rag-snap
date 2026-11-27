@@ -365,8 +365,10 @@ carry an empty `sources` list.
 ### Requirement: Batch answers are free of citation markers
 A batch result's `answer` SHALL NOT contain citation markers: markers SHALL be removed from the
 answer text, with surrounding whitespace and punctuation normalized, once the answer's sources are
-recorded. Unlike chat, a batch answer for which context was retrieved but which cites no retrieved
-document SHALL be withheld: replaced by the no-answer response with empty sources.
+recorded. Only markers that cite a retrieved document SHALL be removed; other bracketed numbers are
+prose and SHALL stay. A batch answer for which context was retrieved but which cites no retrieved
+document SHALL be kept as generated, with empty sources, and flagged `"unsourced": true` so review can
+confirm it or add a source.
 
 #### Scenario: Markers stripped from prose
 - **WHEN** the model answers `The solution provides FIPS 140-3 certified modules. [1][2]`
@@ -374,7 +376,7 @@ document SHALL be withheld: replaced by the no-answer response with empty source
 
 #### Scenario: Uncited batch answer
 - **WHEN** context was retrieved for a question and the model's answer cites no retrieved document
-- **THEN** the result's `answer` is the no-answer response and its `sources` list is empty
+- **THEN** the result's `answer` is the model's answer, its `sources` list is empty, and it is flagged `unsourced`
 
 ### Requirement: Batch operations are judged when judging is enabled
 

@@ -36,6 +36,12 @@ export interface QAItem {
    */
   sources?: CitedSource[];
   /**
+   * Set when the answer cites none of the documents retrieved for it
+   * (chat.BatchResult.Unsourced). The answer is kept as generated, for review
+   * to confirm or add a source. Absent from older results files.
+   */
+  unsourced?: boolean;
+  /**
    * The `domains` entry that produced this answer, identified by its matched
    * pattern (chat.BatchResult.Domain, `domain` in the results JSON). Optional
    * because it is absent from every results file written before domain routing

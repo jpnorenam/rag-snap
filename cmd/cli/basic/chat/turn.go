@@ -40,6 +40,9 @@ type TurnResult struct {
 	// Unsourced reports that retrieval supplied context but the answer cited
 	// none of it. The answer is kept; clients flag it as having no sources.
 	Unsourced bool
+	// Dropped lists markers the streamed answer carried for documents that
+	// were not retrieved; the recorded answer no longer has them.
+	Dropped []int
 }
 
 // conversation is the running state of one multi-turn chat: the resolved model,
@@ -283,8 +286,8 @@ func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc,
 	// answer, which is flagged unsourced when it cited nothing it was given.
 	var result TurnResult
 	if reply != "" {
-		content, cited, uncited := citeAnswer(reply, retrieved)
-		result = TurnResult{Sources: cited, Unsourced: uncited}
+		content, cited, uncited, dropped := citeAnswer(reply, retrieved)
+		result = TurnResult{Sources: cited, Unsourced: uncited, Dropped: dropped}
 		if uncited && ls.verbose {
 			fmt.Println("unsourced: no valid citations")
 		}

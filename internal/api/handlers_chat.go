@@ -70,7 +70,9 @@ const kapaSelectionUnavailable = "kapa.ai is not configured on the daemon (set k
 // retrieved for it (each with its "[n]" marker number), and its "done" frame
 // carries the sources the answer actually cited. A "done" frame flagged
 // unsourced means the answer cited nothing it was given; the streamed text
-// stands, and clients show that it has no relevant sources.
+// stands, and clients show that it has no relevant sources. Dropped lists
+// markers the streamed text carried for documents that were not retrieved,
+// which the saved answer no longer has.
 type chatServerMessage struct {
 	Type    string   `json:"type"`
 	Content string   `json:"content,omitempty"`
@@ -83,6 +85,7 @@ type chatServerMessage struct {
 	Title      string             `json:"title,omitempty"`
 	Sources    []chat.CitedSource `json:"sources,omitempty"`
 	Unsourced  bool               `json:"unsourced,omitempty"`
+	Dropped    []int              `json:"dropped,omitempty"`
 }
 
 // defaultChatTemperature matches the chat REPL's default sampling temperature.
@@ -333,7 +336,7 @@ func (s *Server) runChatSession(ctx context.Context, conn *websocket.Conn, live 
 				_ = writeChat(ctx, conn, chatServerMessage{Type: "error", Error: err.Error()})
 				continue
 			}
-			done := chatServerMessage{Type: "done", Sources: result.Sources, Unsourced: result.Unsourced}
+			done := chatServerMessage{Type: "done", Sources: result.Sources, Unsourced: result.Unsourced, Dropped: result.Dropped}
 			if err := writeChat(ctx, conn, done); err != nil {
 				return nil
 			}

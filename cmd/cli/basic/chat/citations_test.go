@@ -28,10 +28,10 @@ func TestCitationRegistryStableNumbering(t *testing.T) {
 func TestCitationRegistrySeed(t *testing.T) {
 	reg := NewCitationRegistry()
 	reg.Seed([]CitedSource{
-		{Marker: 2, Citation: knowledge.Citation{Key: "guide.pdf"}},
-		{Marker: 1, Citation: knowledge.Citation{Key: "faq.md"}},
+		{Marker: 2, Citation: knowledge.Citation{Key: "guide.pdf", Base: "docs"}},
+		{Marker: 1, Citation: knowledge.Citation{Key: "faq.md", Base: "docs"}},
 	})
-	if n := reg.Number("guide.pdf"); n != 2 {
+	if n := reg.Number(citationKey(hitFor("guide.pdf", "Install Guide", ""))); n != 2 {
 		t.Errorf("previously cited document = %d, want 2", n)
 	}
 	if n := reg.Number("new.md"); n != 3 {
@@ -45,7 +45,20 @@ func hitFor(key, label, content string) knowledge.SearchHit {
 		SourceID: key,
 		Label:    knowledge.LabelCanonical,
 		Content:  content,
-		Citation: knowledge.Citation{Key: key, Label: label},
+		Citation: knowledge.Citation{Key: key, Label: label, Base: "docs"},
+	}
+}
+
+// A local source ingested by URL and the kapa.ai page for the same URL share a
+// source id, but are different citations and must not share a marker.
+func TestFormatContextSeparatesSameKeyFromDifferentBases(t *testing.T) {
+	url := "https://ubuntu.com/pro"
+	local := hitFor(url, "Ubuntu Pro (local)", "local chunk")
+	kapa := hitFor(url, "Ubuntu Pro", "kapa chunk")
+	kapa.Citation.Base = "kapa"
+	_, retrieved := formatContext([]knowledge.SearchHit{local, kapa}, NewCitationRegistry())
+	if len(retrieved) != 2 || retrieved[0].Base != "docs" || retrieved[1].Base != "kapa" {
+		t.Errorf("retrieved = %+v, want separate local and kapa sources", retrieved)
 	}
 }
 
@@ -126,9 +139,30 @@ func TestCiteAnswer(t *testing.T) {
 		},
 		{
 			name:        "code and indexing are not markers",
-			answer:      "Use `arr[1]` or\n```\nx = [1, 2]\n```\nsee items[2]. [1]",
+			answer:      "Use `arr[1]` or\n```\nx = [1, 2]\n```\nsee my_items[2], obj.items[2] and f(x)[2]. [1]",
 			retrieved:   retrievedSources("a", "b"),
-			wantAnswer:  "Use `arr[1]` or\n```\nx = [1, 2]\n```\nsee items[2]. [1]",
+			wantAnswer:  "Use `arr[1]` or\n```\nx = [1, 2]\n```\nsee my_items[2], obj.items[2] and f(x)[2]. [1]",
+			wantMarkers: []int{1},
+		},
+		{
+			name:        "a marker glued to a prose word is a citation",
+			answer:      "It supports SR-IOV[1]. Ubuntu 22.04[2] and (FIPS)[3] too; see the end.[1, 2]",
+			retrieved:   retrievedSources("a", "b", "c"),
+			wantAnswer:  "It supports SR-IOV[1]. Ubuntu 22.04[2] and (FIPS)[3] too; see the end.[1][2]",
+			wantMarkers: []int{1, 2, 3},
+		},
+		{
+			name:        "four-digit markers are recognised",
+			answer:      "Long-lived session. [1000]",
+			retrieved:   []CitedSource{{Marker: 1000, Citation: knowledge.Citation{Key: "a"}}},
+			wantAnswer:  "Long-lived session. [1000]",
+			wantMarkers: []int{1000},
+		},
+		{
+			name:        "bracketed numbers citing nothing retrieved are prose",
+			answer:      "Configure option [7] in the BIOS menu. [1]",
+			retrieved:   retrievedSources("a"),
+			wantAnswer:  "Configure option [7] in the BIOS menu. [1]",
 			wantMarkers: []int{1},
 		},
 		{
@@ -156,7 +190,7 @@ func TestCiteAnswer(t *testing.T) {
 			name:        "only invented markers is flagged uncited",
 			answer:      "Ubuntu Pro covers FIPS. [9]",
 			retrieved:   retrievedSources("a"),
-			wantAnswer:  "Ubuntu Pro covers FIPS.",
+			wantAnswer:  "Ubuntu Pro covers FIPS. [9]",
 			wantUncited: true,
 		},
 		{
@@ -181,7 +215,7 @@ func TestCiteAnswer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, cited, uncited := citeAnswer(tc.answer, tc.retrieved)
+			got, cited, uncited, _ := citeAnswer(tc.answer, tc.retrieved)
 			if got != tc.wantAnswer {
 				t.Errorf("answer = %q, want %q", got, tc.wantAnswer)
 			}
@@ -197,13 +231,27 @@ func TestCiteAnswer(t *testing.T) {
 	}
 }
 
+func TestCiteAnswerReportsDroppedMarkers(t *testing.T) {
+	_, _, _, dropped := citeAnswer("Pro covers FIPS. [1][7]\n\nAlso [2, 9].", retrievedSources("a", "b"))
+	if !reflect.DeepEqual(dropped, []int{7, 9}) {
+		t.Errorf("dropped = %v, want [7 9]", dropped)
+	}
+	if got := droppedMarkersNotice([]int{7, 9, 7}); !strings.Contains(got, "[7] [9]") {
+		t.Errorf("notice = %q, want each dropped marker once", got)
+	}
+}
+
 func TestStripMarkers(t *testing.T) {
+	sources := retrievedSources("a", "b", "c")
 	for in, want := range map[string]string{
 		"The solution provides FIPS 140-3 certified modules. [1][2]":    "The solution provides FIPS 140-3 certified modules.",
 		"Canonical offers support [1]. It also offers training [2, 3].": "Canonical offers support. It also offers training.",
 		"No markers here.": "No markers here.",
+		"Configure option [12] in the BIOS menu. [1]": "Configure option [12] in the BIOS menu.",
+		"Supports SR-IOV[1].":                         "Supports SR-IOV.",
+		"Line one [1]  \nLine two [2]":                "Line one  \nLine two",
 	} {
-		if got := stripMarkers(in); got != want {
+		if got := stripMarkers(in, sources); got != want {
 			t.Errorf("stripMarkers(%q) = %q, want %q", in, got, want)
 		}
 	}

@@ -202,7 +202,8 @@ func TestUsableTitle(t *testing.T) {
 func TestOriginalFileName(t *testing.T) {
 	for in, want := range map[string]string{
 		"https://ubuntu.com/pro":                 "pro",
-		"https://ubuntu.com/":                    "",
+		"https://ubuntu.com/":                    "ubuntu.com",
+		"https://docs.example.com":               "docs.example.com",
 		"https://example.com/docs/My%20Spec.pdf": "My Spec.pdf",
 		"/home/me/specs/guide.pdf":               "guide.pdf",
 		"docs/install.md":                        "install.md",

@@ -131,7 +131,8 @@ func ExportKnowledgeBase(ctx context.Context, client *OpenSearchClient, kbName s
 	}
 
 	// Ensure sources metadata index exists before elasticdump tries to read it.
-	if err := client.CreateSourcesIndex(ctx); err != nil {
+	// Only its existence: an export does not update mappings.
+	if err := client.getOrCreateSourcesIndex(ctx); err != nil {
 		return fmt.Errorf("ensuring sources metadata index: %w", err)
 	}
 

@@ -325,17 +325,20 @@ func TestBatchResultCarriesSourcesAndMarkerFreeAnswer(t *testing.T) {
 	}
 }
 
-func TestBatchResultUncitedAnswerIsWithheld(t *testing.T) {
+func TestBatchResultUncitedAnswerIsKeptAndFlagged(t *testing.T) {
 	q := BatchQuestion{Question: "Is FIPS supported?"}
 	r := batchResultFor(q, "", "The solution provides FIPS modules.", retrievedSources("fips.pdf"), nil, false)
-	if r.Answer != noContextAnswer {
-		t.Errorf("answer = %q, want the no-answer response", r.Answer)
+	if r.Answer != "The solution provides FIPS modules." {
+		t.Errorf("answer = %q, want the generated answer kept", r.Answer)
+	}
+	if !r.Unsourced {
+		t.Error("unsourced = false, want the uncited answer flagged")
 	}
 	if r.Sources == nil || len(r.Sources) != 0 {
 		t.Errorf("sources = %#v, want an empty (non-nil) list", r.Sources)
 	}
 	data, _ := json.Marshal(r)
-	if !strings.Contains(string(data), `"sources":[]`) {
+	if !strings.Contains(string(data), `"sources":[]`) || !strings.Contains(string(data), `"unsourced":true`) {
 		t.Errorf("JSON = %s, want an empty sources array", data)
 	}
 }

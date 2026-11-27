@@ -119,10 +119,10 @@ func TestSourcesSurviveSaveAndResume(t *testing.T) {
 		t.Fatalf("restored %d answer source lists, want 3", len(session.AnswerSources))
 	}
 	reg := session.citationRegistry()
-	if n := reg.Number("guide.pdf"); n != 2 {
+	if n := reg.Number(registryKey("docs", "guide.pdf")); n != 2 {
 		t.Errorf("re-retrieved guide.pdf = [%d], want [2]", n)
 	}
-	if n := reg.Number("new.md"); n != 3 {
+	if n := reg.Number(registryKey("docs", "new.md")); n != 3 {
 		t.Errorf("new document after resume = [%d], want [3]", n)
 	}
 

@@ -55,11 +55,17 @@ test("without citations, markers stay literal", () => {
   assert.ok(!html.includes("md__cite"));
 });
 
-test("bracketed numbers in code or glued to a word are not chips", () => {
+test("bracketed numbers in code or glued to code-like words are not chips", () => {
   const html = renderToStaticMarkup(
-    <Markdown content="Use `arr[1]` and items[1]. [1]" citations={citationMap([linked])} />
+    <Markdown content="Use `arr[1]`, my_items[1] and obj.items[1]. [1]" citations={citationMap([linked])} />
   );
   assert.equal((html.match(/md__cite/g) ?? []).length, 1, "only the standalone marker is a chip");
   assert.match(html, /arr\[1\]/);
-  assert.match(html, /items\[1\]/);
+  assert.match(html, /my_items\[1\]/);
+  assert.match(html, /obj\.items\[1\]/);
+});
+
+test("a marker glued to a prose word is a chip", () => {
+  const html = renderToStaticMarkup(<Markdown content="It supports SR-IOV[1]." citations={citationMap([linked])} />);
+  assert.equal((html.match(/md__cite/g) ?? []).length, 1);
 });

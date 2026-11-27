@@ -1256,7 +1256,8 @@ Sources
 Each source is shown by its document title (or file name, or source ID when neither is usable),
 followed by its link when one was recorded at ingest (see
 [source links](#knowledge-ingest)). Markers the model invents — numbers that match no retrieved
-document — are removed from the answer.
+document, written next to a valid marker — are removed from the answer, and the REPL notes which
+ones it ignored. A bracketed number with no valid marker beside it (`option [7]`) is left alone.
 
 **Uncited answers are flagged.** When a knowledge base is active and the answer cites none of the
 retrieved documents, the answer is kept, and instead of a Sources block the REPL prints
@@ -1264,7 +1265,8 @@ retrieved documents, the answer is kept, and instead of a Sources block the REPL
 with care: nothing ties it to your knowledge bases. Chatting with no active knowledge base prints
 neither; the citation instructions are only sent with retrieved context, and any `[n]` marker in
 such an answer refers to nothing and is removed from the history. Bracketed numbers inside code
-(`arr[1]`) or glued to a word are never treated as markers. With
+are never treated as markers, nor are ones glued to a code-like word (`my_arr[1]`, `obj.items[1]`);
+a marker glued to an ordinary word (`SR-IOV[1]`) is. With
 `--verbose`, each turn also prints how every retrieved hit's citation was resolved.
 
 #### Reasoning models (DeepSeek R1, QwQ, …)
@@ -1618,10 +1620,11 @@ model cites retrieved documents with `[1]`-style markers; those markers are vali
 removed from `answer`, so the prose is ready to paste into a deliverable and the citations live in
 their own field. Each source has its `marker` number within that answer, the document `key` (its
 source ID), a human-readable `label`, an `href` link when one was recorded at ingest (see
-[source links](#knowledge-ingest)), the knowledge `base`, and its knowledge-label `tag`. Unlike chat,
-batch answers stay strict because they feed procurement documents: an answer whose model output
-cited none of the retrieved documents is withheld, so `answer` is the fixed no-answer response and
-`sources` is empty, as it is when retrieval returned nothing.
+[source links](#knowledge-ingest)), the knowledge `base`, and its knowledge-label `tag`. Bracketed numbers that
+cite no retrieved document (`see Table [12]`) are prose and stay in `answer`. An answer that cited
+none of the retrieved documents is kept, with empty `sources` and `"unsourced": true`, so review can
+confirm it or add a source; the answer review screen labels it "No sources". When retrieval returned
+nothing, `answer` is the fixed no-answer response.
 
 > **Note on errors:** A question that fails (e.g. the inference server is unreachable mid-run,
 > or the model declines to answer it) prints the error and moves on. All answers collected before the failure are still written to the

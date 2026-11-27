@@ -49,12 +49,21 @@ type SourceMetadata struct {
 }
 
 // CreateSourcesIndex creates the sources metadata index if it does not exist,
-// and ensures fields added after the index was first created are mapped.
+// and ensures fields added after the index was first created are mapped. It
+// does the work once per client: later calls, such as one per file of a repo
+// ingest, return immediately.
 func (c *OpenSearchClient) CreateSourcesIndex(ctx context.Context) error {
+	if c.sourcesIndexReady.Load() {
+		return nil
+	}
 	if err := c.getOrCreateSourcesIndex(ctx); err != nil {
 		return err
 	}
-	return c.EnsureSourceURIMapping(ctx)
+	if err := c.EnsureSourceURIMapping(ctx); err != nil {
+		return err
+	}
+	c.sourcesIndexReady.Store(true)
+	return nil
 }
 
 // EnsureSourceURIMapping adds the source_uri keyword field to an existing

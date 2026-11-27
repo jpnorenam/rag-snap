@@ -62,6 +62,19 @@ test("list-form markers normalize to chips while streaming", () => {
   assert.equal(answerText(m), "One [1][2].");
 });
 
+test("glued, four-digit and prose markers follow the daemon", () => {
+  const m: Message = {
+    role: "assistant",
+    content: "Supports SR-IOV[1] and my_arr[1]; see option [7] and [1000].",
+    think: "",
+    streaming: true,
+    retrieved: [src(1, "a"), src(1000, "b")],
+  };
+  assert.equal(answerText(m), "Supports SR-IOV[1] and my_arr[1]; see option [7] and [1000].");
+  const mixed: Message = { ...m, content: "Yes. [1][7] Also [7]." };
+  assert.equal(answerText(mixed), "Yes. [1] Also [7].", "an invented marker beside a real one is dropped, a lone one kept");
+});
+
 test("markers in a turn with nothing retrieved are dropped", () => {
   // The model copied a marker although no sources frame arrived: it refers to
   // nothing, so neither a chip nor literal "[1]" text is shown.

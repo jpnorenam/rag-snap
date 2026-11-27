@@ -155,6 +155,9 @@ type BatchResult struct {
 	// Sources lists the documents the answer cited, in first-cited order. The
 	// answer text itself carries no citation markers. Empty for a no-answer.
 	Sources []CitedSource `json:"sources"`
+	// Unsourced flags an answer that cites none of the documents retrieved for
+	// it. The answer is kept as generated, for review to confirm or fix.
+	Unsourced bool `json:"unsourced,omitempty"`
 	// Retrieved records how many local and kapa.ai hits grounded the answer, so a
 	// run can show kapa.ai took part without verbose logs. Nil when no retrieval
 	// was attempted.
@@ -296,16 +299,13 @@ func (h BatchHooks) failure(i, total int, q BatchQuestion, err error) {
 
 // batchResultFor validates a generated answer's citations against the
 // documents retrieved for the question, then moves them out of the prose: the
-// answer is stored marker-free and the cited documents go in Sources. Batch
-// answers feed procurement documents, so unlike chat an answer citing nothing
-// it was given is withheld as the no-answer response.
+// answer is stored marker-free and the cited documents go in Sources. An
+// answer citing nothing it was given is kept and flagged Unsourced: a reviewer
+// can add a missing citation, but cannot recover a discarded answer.
 func batchResultFor(q BatchQuestion, domainMatch, answer string, retrieved []CitedSource, counts *RetrievalCounts, verbose bool) BatchResult {
-	cited, sources, uncited := citeAnswer(answer, retrieved)
-	if uncited {
-		cited = noContextAnswer
-		if verbose {
-			fmt.Printf("withheld answer to %q: no valid citations\n", q.Question)
-		}
+	cited, sources, uncited, _ := citeAnswer(answer, retrieved)
+	if uncited && verbose {
+		fmt.Printf("unsourced answer to %q: no valid citations\n", q.Question)
 	}
 	if sources == nil {
 		sources = []CitedSource{}
@@ -313,9 +313,10 @@ func batchResultFor(q BatchQuestion, domainMatch, answer string, retrieved []Cit
 	return BatchResult{
 		ID:        q.ID,
 		Question:  q.Question,
-		Answer:    stripMarkers(cited),
+		Answer:    stripMarkers(cited, sources),
 		Domain:    domainMatch,
 		Sources:   sources,
+		Unsourced: uncited,
 		Retrieved: counts,
 	}
 }

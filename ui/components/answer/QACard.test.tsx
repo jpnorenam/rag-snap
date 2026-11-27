@@ -137,3 +137,12 @@ test("a confidence the consistency check lowered says so", () => {
   const plain = renderToStaticMarkup(<QACard item={{ ...older, judgment: { confidence: 3, rating: "yellow", comment: "x" } }} index={0} />);
   assert.ok(!plain.includes("lowered from"));
 });
+
+test("an unsourced answer is kept and flagged in words", () => {
+  const html = renderToStaticMarkup(<QACard item={{ ...older, unsourced: true }} index={0} />);
+  assert.match(html, /Dual power feeds per rack\./);
+  assert.match(html, /qa-card__unsourced/);
+  assert.match(html, /No sources/);
+  const plain = renderToStaticMarkup(<QACard item={older} index={0} />);
+  assert.ok(!plain.includes("qa-card__unsourced"));
+});

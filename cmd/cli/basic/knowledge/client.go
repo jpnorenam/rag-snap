@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -36,6 +37,10 @@ type OpenSearchClient struct {
 	ingestPipeline   string
 	rerankModelID    string
 	searchPipeline   string
+	// sourcesIndexReady records that CreateSourcesIndex has succeeded on this
+	// client, so per-source ingest does not repeat the exists check and the
+	// mapping update for every file of a large repo.
+	sourcesIndexReady atomic.Bool
 }
 
 // URL returns the OpenSearch server URL.

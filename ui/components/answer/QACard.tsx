@@ -48,6 +48,11 @@ export default function QACard({ item, index }: Props) {
       ) : (
         <p className="qa-card__answer">{item.answer}</p>
       )}
+      {!isEmpty && item.unsourced && (
+        <p className="qa-card__unsourced p-text--small">
+          No sources: this answer cites none of the retrieved documents. Check it before using it.
+        </p>
+      )}
 
       {sources.length > 0 && (
         <details className="qa-card__sources">

@@ -9,6 +9,8 @@ import (
 	"mime/multipart"
 	"os"
 	"path/filepath"
+
+	"github.com/jpnorenam/rag-snap/internal/citation"
 )
 
 // KnowledgeBase is the client view of a knowledge base summary from
@@ -96,12 +98,7 @@ func (h SearchHit) IsMatched() bool {
 
 // Citation is a search hit's resolved document citation: a human-readable
 // label and, when one was recorded at ingest, a link.
-type Citation struct {
-	Key     string `json:"key"`
-	Label   string `json:"label"`
-	Href    string `json:"href,omitempty"`
-	Locator string `json:"locator,omitempty"`
-}
+type Citation = citation.Citation
 
 // ListKnowledge returns all knowledge bases.
 func (c *Client) ListKnowledge(ctx context.Context) ([]KnowledgeBase, error) {

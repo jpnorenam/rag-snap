@@ -255,13 +255,24 @@ function parseInline(text: string, cites?: CitationMap): ReactNode[] {
   return out;
 }
 
+// NOT_GLUED_TO_CODE is a lookbehind for a citation marker: a marker may be
+// glued to the preceding word ("SR-IOV[1]", "22.04[2]") unless that word looks
+// like code — it contains "_", a "(" after its first character ("f(x)[1]"), or
+// a "." followed by a letter ("obj.items[1]"). The word is the text since the
+// last whitespace or "]", so "[1][2]" stays two markers. Mirrors the daemon's
+// gluedToCode.
+export const NOT_GLUED_TO_CODE = String.raw`(?<![^\s\]]*(?:_|[^\s\]]\(|\.[A-Za-z])[^\s\]]*)`;
+
+const CITATION_MARKER = new RegExp(String.raw`${NOT_GLUED_TO_CODE}\[(\d{1,4})\]`);
+
 function firstInlineMatch(text: string, cites?: CitationMap): InlineMatch | null {
   const matchers: Array<{ re: RegExp; make: (m: RegExpExecArray, key: number) => ReactNode }> = [
     {
-      // Citation marker: [n], not glued to a preceding word ("arr[1]"). Listed
-      // before links so "[1](…)" is a marker followed by literal text, never a
-      // link posing as a citation. Unknown markers render literally.
-      re: /(?<!\w)\[(\d{1,3})\]/,
+      // Citation marker: [n], not glued to a code-like word ("my_arr[1]"; see
+      // NOT_GLUED_TO_CODE). Listed before links so "[1](…)" is a marker followed
+      // by literal text, never a link posing as a citation. Unknown markers
+      // render literally.
+      re: CITATION_MARKER,
       make: (m, key) => {
         const source = cites?.get(Number(m[1]));
         if (!source) return <span key={key}>{m[0]}</span>;

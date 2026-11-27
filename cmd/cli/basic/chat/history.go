@@ -34,7 +34,7 @@ func renderTranscript(turns []chatstore.Turn) {
 			label = "Assistant"
 		}
 		fmt.Printf("%s\n%s\n", color.HiBlackString("— %s —", label), t.Content)
-		fmt.Print(formatSourcesBlock(citedFromStore(t.Sources)))
+		fmt.Print(formatSourcesBlock(t.Sources))
 		fmt.Println()
 	}
 }
@@ -222,7 +222,7 @@ func historyToTurns(messages []Message, answerSources [][]CitedSource) []chatsto
 		case RoleAssistant:
 			turn := chatstore.Turn{Role: string(m.Role), Content: m.Content}
 			if answer < len(answerSources) {
-				turn.Sources = sourcesToStore(answerSources[answer])
+				turn.Sources = answerSources[answer]
 			}
 			answer++
 			turns = append(turns, turn)
@@ -241,7 +241,7 @@ func restoreCitations(session *Session, turns []chatstore.Turn) {
 		if t.Role != "assistant" {
 			continue
 		}
-		sources := citedFromStore(t.Sources)
+		sources := t.Sources
 		session.AnswerSources = append(session.AnswerSources, sources)
 		session.Citations.Seed(sources)
 	}
@@ -259,46 +259,4 @@ func turnsToHistory(turns []chatstore.Turn) []Message {
 		}
 	}
 	return messages
-}
-
-// sourcesToStore converts cited sources to their saved-chat form.
-func sourcesToStore(sources []CitedSource) []chatstore.Source {
-	if len(sources) == 0 {
-		return nil
-	}
-	out := make([]chatstore.Source, len(sources))
-	for i, s := range sources {
-		out[i] = chatstore.Source{
-			Marker:  s.Marker,
-			Key:     s.Key,
-			Label:   s.Label,
-			Href:    s.Href,
-			Locator: s.Locator,
-			Base:    s.Base,
-			Tag:     s.Tag,
-		}
-	}
-	return out
-}
-
-// citedFromStore converts saved-chat (or wire) sources back to cited sources.
-func citedFromStore(sources []chatstore.Source) []CitedSource {
-	if len(sources) == 0 {
-		return nil
-	}
-	out := make([]CitedSource, len(sources))
-	for i, s := range sources {
-		out[i] = CitedSource{
-			Marker: s.Marker,
-			Citation: knowledge.Citation{
-				Key:     s.Key,
-				Label:   s.Label,
-				Href:    s.Href,
-				Locator: s.Locator,
-				Base:    s.Base,
-				Tag:     s.Tag,
-			},
-		}
-	}
-	return out
 }

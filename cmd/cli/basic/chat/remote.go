@@ -466,10 +466,13 @@ func remotePromptTurn(ctx context.Context, session *apiclient.ChatSession, promp
 		case "done":
 			haltSpinner()
 			fmt.Println()
+			if len(msg.Dropped) > 0 {
+				fmt.Println(color.YellowString(droppedMarkersNotice(msg.Dropped)))
+			}
 			if msg.Unsourced {
 				fmt.Println(color.YellowString(noSourcesNotice))
 			} else {
-				fmt.Print(formatSourcesBlock(citedFromStore(msg.Sources)))
+				fmt.Print(formatSourcesBlock(msg.Sources))
 			}
 			return nil
 		case "error":

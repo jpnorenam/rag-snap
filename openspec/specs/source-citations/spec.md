@@ -90,6 +90,9 @@ it with the markers it relied on.
 - **THEN** the model receives no citation instruction for that turn, and the session's system prompt is the resolved prompt unchanged
 
 ### Requirement: Chat markers are numbered session-wide
+A document's identity for numbering SHALL include the knowledge base it came from, so a local source
+and a kapa.ai page with the same source id (a URL) are numbered as different documents.
+
 Within one chat session a document SHALL keep the same marker number for the life of the session,
 including across turns and after the session is resumed from a saved chat. A document first seen in
 a later turn SHALL receive the next unused number.
@@ -103,13 +106,21 @@ a later turn SHALL receive the next unused number.
 - **THEN** the new document is numbered `[3]`
 
 ### Requirement: Answers cite only retrieved documents
-After generation, markers in the answer that do not match a document retrieved for that turn SHALL
-be removed from the answer. The answer's sources SHALL be exactly the documents whose markers remain,
-in first-cited order.
+After generation, in a run of adjacent markers that cites at least one document retrieved for that
+turn, markers that do not match a retrieved document SHALL be removed from the answer. A run citing
+no retrieved document SHALL be left as written, since it may be prose (`option [2]`, `Table [12]`)
+rather than a citation. Marker numbers SHALL be recognised up to four digits. The answer's sources
+SHALL be exactly the retrieved documents whose markers remain, in first-cited order. When markers are
+removed, the chat REPL (direct and remote modes) SHALL print a notice naming them, since it has
+already shown the streamed text.
 
 #### Scenario: Invented marker dropped
 - **WHEN** the turn's context holds `[1]` and `[2]` and the model's answer cites `[1]` and `[7]`
-- **THEN** `[7]` is removed from the answer and the answer's sources list only the `[1]` document
+- **THEN** `[7]` is removed from the answer, the answer's sources list only the `[1]` document, and the REPL notes that `[7]` was ignored
+
+#### Scenario: Bracketed number citing nothing
+- **WHEN** documents `[1]` and `[2]` were retrieved and the answer says `configure option [7] in the BIOS menu. [1]`
+- **THEN** `[7]` is left in the answer and the answer's sources list only the `[1]` document
 
 #### Scenario: Marker in a turn without retrieval
 - **WHEN** a turn retrieved no documents and the model's answer contains `[1]`
@@ -120,8 +131,12 @@ in first-cited order.
 - **THEN** the answer's sources list only the `[2]` document
 
 #### Scenario: Bracketed numbers that are not markers
-- **WHEN** the answer contains `arr[1]`, or `[1, 2]` inside inline or fenced code
+- **WHEN** the answer contains `[1, 2]` inside inline or fenced code, or a marker glued to a code-like word (`my_arr[1]`, `obj.items[1]`, `f(x)[1]`)
 - **THEN** those are left unchanged and are not counted as citations
+
+#### Scenario: Marker glued to a prose word
+- **WHEN** the answer says `It supports SR-IOV[1].` or `Ubuntu 22.04[2]` and those documents were retrieved
+- **THEN** the markers are counted as citations
 
 #### Scenario: S-prefixed marker
 - **WHEN** the model writes `[S1]` or `[S1, S2]` and documents 1 and 2 were retrieved

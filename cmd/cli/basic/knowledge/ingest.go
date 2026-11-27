@@ -155,7 +155,8 @@ func (c *OpenSearchClient) IngestSource(ctx context.Context, tikaURL string, opt
 
 // OriginalFileName derives the recorded file name from the source's original
 // input rather than the staged file Tika read: the base name of a path, the
-// last path segment of a URL, or empty when neither yields a real name.
+// last path segment of a URL (its host when the path is empty or "/", as for
+// "https://docs.example.com/"), or empty when neither yields a real name.
 func OriginalFileName(metadataPath string) string {
 	var name string
 	if IsHTTPURL(metadataPath) {
@@ -166,6 +167,9 @@ func OriginalFileName(metadataPath string) string {
 		name = path.Base(strings.TrimSuffix(u.Path, "/"))
 		if unescaped, err := url.PathUnescape(name); err == nil {
 			name = unescaped
+		}
+		if name == "." || name == "/" || name == "" {
+			name = u.Host
 		}
 	} else {
 		name = filepath.Base(metadataPath)
