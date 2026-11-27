@@ -14,11 +14,49 @@ import (
 	"syscall"
 )
 
-//go:embed assets
+// Embedded runtime assets only: the shell entry points and the Terraform
+// templates. assets/test is deliberately excluded so the test scripts are kept
+// in the repository but never shipped in the snap or written by prepare-script.
+//
+//go:embed assets/*.sh assets/terraform
 var assets embed.FS
 
 // ContextFile records the snap context the unconfined host script needs.
 const ContextFile = "snap-context.env"
+
+// WriteLocal exports the local setup assets (local-setup.sh, common.sh,
+// bootstrap-opensearch.sh, snap-context.env) into dir for local OpenSearch deployment.
+func WriteLocal(dir, instance, userCommon string) error {
+	if instance == "" || userCommon == "" {
+		return errors.New("SNAP_INSTANCE_NAME and SNAP_USER_COMMON are not set; run this command from the installed rag-cli snap")
+	}
+	if err := checkDir(dir); err != nil {
+		return err
+	}
+
+	localAssets := []string{
+		"local-setup.sh",
+		"common.sh",
+		"bootstrap-opensearch.sh",
+	}
+
+	for _, name := range localAssets {
+		data, err := assets.ReadFile(filepath.Join("assets", name))
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", name, err)
+		}
+		mode := os.FileMode(0o600)
+		if strings.HasSuffix(name, ".sh") {
+			mode = 0o700
+		}
+		if err := writeFile(filepath.Join(dir, name), data, mode); err != nil {
+			return fmt.Errorf("writing %s: %w", name, err)
+		}
+	}
+
+	ctx := fmt.Sprintf("RAG_SNAP_INSTANCE=%s\nRAG_SNAP_USER_COMMON=%s\n", instance, userCommon)
+	return writeFile(filepath.Join(dir, ContextFile), []byte(ctx), 0o600)
+}
 
 // Write exports the assets into dir, creating it (mode 0700) when absent. It
 // replaces only the shipped asset files and the context file; saved answers,

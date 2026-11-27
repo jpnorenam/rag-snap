@@ -10,6 +10,8 @@ set -euo pipefail
 umask 077
 
 DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+source "$DIR/common.sh"
+
 TF_DIR=$DIR/terraform
 SETTINGS=$DIR/settings.env
 SECRETS=$DIR/secrets.env
@@ -37,16 +39,6 @@ PHASE_LOG=
 
 # --- output and failure reporting -------------------------------------------
 
-mask() {
-	local line k
-	while IFS= read -r line || [ -n "$line" ]; do
-		for k in "${MASKED_KEYS[@]}"; do
-			[ -n "${CFG[$k]:-}" ] && line=${line//"${CFG[$k]}"/***}
-		done
-		printf '%s\n' "$line"
-	done
-}
-
 phase() {
 	PHASE=$1
 	PHASE_LOG=$LOG_DIR/$2.log
@@ -71,58 +63,7 @@ run() {
 	[ "$rc" = 0 ] || die "command failed ($rc): $1 ${2:-}"
 }
 
-say() { printf '%s\n' "$*"; }
-
-confirm() { # confirm <question>; true on y/yes
-	local a
-	read -rp "$1 [y/N]: " a
-	[[ $a =~ ^[Yy]([Ee][Ss])?$ ]]
-}
-
 # --- saved answers (data only, never sourced) --------------------------------
-
-has() { [ "${CFG[$1]+set}" = set ]; }
-
-# Format: KEY="value" with \" and \\ as the only escapes (what save_env writes).
-# Hand-written KEY=value (unquoted) and KEY='value' are taken literally.
-load_env() { # load_env <file> <allowed keys...>
-	local file=$1 n=0 line key val dq='^"(([^"\\]|\\["\\])*)"$' sq="^'([^']*)'\$"
-	shift
-	local -A allowed=()
-	for key in "$@"; do allowed[$key]=1; done
-	[ -f "$file" ] || return 0
-	while IFS= read -r line || [ -n "$line" ]; do
-		n=$((n + 1))
-		[[ $line =~ ^[[:space:]]*(#|$) ]] && continue
-		[[ $line =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] || die "$file line $n: expected KEY=value"
-		key=${BASH_REMATCH[1]} val=${BASH_REMATCH[2]}
-		[ -n "${allowed[$key]:-}" ] || die "$file line $n: unknown key $key"
-		if [[ $val =~ $dq ]]; then
-			val=${BASH_REMATCH[1]}
-			val=${val//\\\\/$'\001'}
-			val=${val//\\\"/\"}
-			val=${val//$'\001'/\\}
-		elif [[ $val =~ $sq ]]; then
-			val=${BASH_REMATCH[1]}
-		elif [[ $val == [\"\']* ]]; then
-			die "$file line $n: unbalanced quotes in the value of $key"
-		fi
-		CFG[$key]=$val
-	done <"$file"
-}
-
-save_env() { # save_env <file> <keys...>
-	local file=$1 tmp key
-	shift
-	tmp=$(mktemp "$file.XXXXXX")
-	local v
-	for key in "$@"; do
-		has "$key" || continue
-		v=${CFG[$key]//\\/\\\\}
-		printf '%s="%s"\n' "$key" "${v//\"/\\\"}" >>"$tmp"
-	done
-	mv -f "$tmp" "$file"
-}
 
 save_all() {
 	save_env "$SETTINGS" "${SETTINGS_KEYS[@]}"
@@ -171,12 +112,6 @@ ask() {
 		say "Invalid value for $key."
 	done
 	CFG[$key]=$ans
-}
-
-gen_secret() {
-	local s
-	s=$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9')
-	echo "${s:0:32}"
 }
 
 # --- tools and context ------------------------------------------------------
@@ -259,7 +194,7 @@ protect_state() { chmod 600 "$TF_DIR"/terraform.tfstate* "$TF_DIR"/*.tfplan 2>/d
 preflight() {
 	phase "Preflight" preflight
 	local c
-	for c in curl ssh ssh-keygen scp sudo snap getent; do need "$c"; done
+	for c in curl ssh ssh-keygen scp sudo snap getent jq; do need "$c"; done
 	command -v "$RAG" >/dev/null 2>&1 || die "$RAG not found; install the ${CFG[RAG_SNAP_INSTANCE]} snap"
 	if [ "$(snap services "${CFG[RAG_SNAP_INSTANCE]}.ragd" 2>/dev/null | awk 'NR==2{print $3}')" = active ]; then
 		die "${CFG[RAG_SNAP_INSTANCE]}.ragd is running, so rag-cli commands would be served by the daemon, whose secrets this script does not manage (see INSTALL.md, Secrets). Stop it with 'sudo snap stop ${CFG[RAG_SNAP_INSTANCE]}.ragd' and rerun."
@@ -490,11 +425,12 @@ bootstrap() {
 }
 
 write_credentials() {
-	local dir=${CFG[RAG_SNAP_USER_COMMON]} f mode tmp existing key
+	local dir=${CFG[RAG_SNAP_USER_COMMON]} f mode existing
 	f=$dir/credentials.json
 	[ -d "$dir" ] && [ -O "$dir" ] || die "$dir must exist and be owned by $(id -un); run any rag-cli.rag command once and rerun"
 	mode=$(stat -c %a "$dir")
 	((8#$mode & 8#022)) && die "$dir is writable by group or others; fix its permissions and rerun"
+	# AWS policy: replace the file, after confirming over different credentials.
 	if [ -f "$f" ]; then
 		existing=$(sed -n 's/.*"OPENSEARCH_PASSWORD": *"\([^"]*\)".*/\1/p' "$f")
 		if [ "$existing" != "${CFG[OPENSEARCH_ADMIN_PASSWORD]}" ]; then
@@ -502,85 +438,32 @@ write_credentials() {
 				die "kept the existing $f; export OPENSEARCH_USERNAME/OPENSEARCH_PASSWORD yourself or rerun and allow the replacement"
 		fi
 	fi
-	key=${CFG[CHAT_API_KEY]:-}
-	key=${key//\\/\\\\}
-	key=${key//\"/\\\"}
-	tmp=$(mktemp "$dir/.credentials.json.XXXXXX")
-	{
-		printf '{\n  "OPENSEARCH_USERNAME": "admin",\n  "OPENSEARCH_PASSWORD": "%s"' "${CFG[OPENSEARCH_ADMIN_PASSWORD]}"
-		[ -n "$key" ] && printf ',\n  "CHAT_API_KEY": "%s"' "$key"
-		printf '\n}\n'
-	} >"$tmp"
-	mv -f "$tmp" "$f"
+	write_credentials_json "$f" "${CFG[OPENSEARCH_ADMIN_PASSWORD]}" "${CFG[CHAT_API_KEY]:-}" '{}'
 	say "wrote $f"
-}
-
-rag_set() { # rag_set <key> <value>: package-scope set, then verify the effective value
-	sudo "$RAG" set --package "$1=$2" || die "sudo $RAG set --package $1=... failed"
-	local got
-	got=$("$RAG" get "$1" 2>/dev/null) || got=
-	[ "$got" = "$2" ] || die "rag-cli $1 is '$got' after setting '$2': a user-layer value overrides it; run 'sudo $RAG set $1=$2' and rerun"
 }
 
 configure_local() {
 	phase "Local rag-cli configuration" local
 	write_credentials
-	rag_set knowledge.http.host "$IP"
-	rag_set knowledge.http.port 9200
-	rag_set knowledge.http.tls true
-	rag_set tika.http.host 127.0.0.1
-	rag_set tika.http.port 9998
-	rag_set tika.http.path tika
-	rag_set chat.http.host "${CFG[CHAT_HOST]}"
-	rag_set chat.http.port "${CFG[CHAT_PORT]}"
-	rag_set chat.http.path "${CFG[CHAT_PATH]}"
-	rag_set chat.http.tls "${CFG[CHAT_TLS]}"
-	rag_set chat.model "${CFG[CHAT_MODEL]}"
-	sudo snap start --enable "${CFG[RAG_SNAP_INSTANCE]}.tika-server" >/dev/null
-	local _
-	for _ in $(seq 1 24); do
-		curl -fsS --max-time 5 -o /dev/null http://127.0.0.1:9998/tika && { say "Tika is up"; return 0; }
-		sleep 5
-	done
-	die "Tika did not answer on http://127.0.0.1:9998/tika within 120 s (see: sudo snap logs ${CFG[RAG_SNAP_INSTANCE]}.tika-server)"
-}
-
-# model_id <Embedding|Rerank> <file>: the ID printed by `knowledge init`.
-model_id() {
-	tr -d '\r' <"$2" | sed 's/\x1b\[[0-9;?]*[A-Za-z]//g' |
-		sed -nE "s/.*$1 model ID: ([A-Za-z0-9_-]+)[[:space:]]*$/\1/p" | tail -n 1
+	configure_rag_cli "$IP"
+	start_tika_and_wait
 }
 
 init_models() {
 	phase "Knowledge models and pipelines" init
-	run "$RAG" knowledge init
-	local emb rer
-	emb=$(model_id Embedding "$PHASE_LOG")
-	rer=$(model_id Rerank "$PHASE_LOG")
-	[ -n "$emb" ] && [ -n "$rer" ] || die "knowledge init did not report both model IDs"
-	rag_set knowledge.model.embedding "$emb"
-	rag_set knowledge.model.rerank "$rer"
+	knowledge_init_and_extract "$PHASE_LOG"
 }
 
 drive_import() {
 	[ "${CFG[DRIVE_IMPORT]}" = yes ] || return 0
 	phase "Google Drive import" drive
-	if [ -n "${CFG[DRIVE_IMPORT_LAST_ATTEMPT]:-}" ]; then
-		confirm "A previous import attempt finished at ${CFG[DRIVE_IMPORT_LAST_ATTEMPT]}. Run the import again?" || return 0
-	fi
-	cat <<-'EOF'
-		Google sign-in uses a local callback on 127.0.0.1 on this machine. If no browser opens here:
-		  a) on the machine with the browser, first run: ssh -L <port>:127.0.0.1:<port> <you>@<this-host>
-		     (<port> is in the redirect_uri of the printed URL), then open the URL there; or
-		  b) open the URL anywhere, finish consent, copy the address of the failed
-		     http://127.0.0.1:<port>/?... page and run: curl '<that address>' on this machine
-		     within 5 minutes.
-	EOF
-	GOOGLE_DRIVE_CLIENT_ID=${CFG[GOOGLE_DRIVE_CLIENT_ID]} GOOGLE_DRIVE_CLIENT_SECRET=${CFG[GOOGLE_DRIVE_CLIENT_SECRET]} \
-		run "$RAG" knowledge import --url "${CFG[DRIVE_FOLDER_URL]}" --all
-	say "Import command finished; review its output for archive failures."
-	CFG[DRIVE_IMPORT_LAST_ATTEMPT]=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	local rc=0
+	drive_import_folder "$PHASE_LOG" || rc=$?
+	# AWS policy: a failed import fails the run and records no new attempt, so the
+	# next run does not offer to retry. Local records and reports instead.
+	[ "$rc" = 0 ] || die "knowledge import command failed ($rc); see $PHASE_LOG"
 	save_all
+	say "Import command finished; review its output for archive failures."
 }
 
 setup() {

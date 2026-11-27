@@ -21,7 +21,44 @@ func PrepareScriptCommand(_ *common.Context) *cobra.Command {
 		Short:   "Export setup scripts and templates",
 		GroupID: groupID,
 	}
+	cmd.AddCommand(prepareScriptLocal())
 	cmd.AddCommand(prepareScriptAWS())
+	return cmd
+}
+
+func prepareScriptLocal() *cobra.Command {
+	var output string
+	cmd := &cobra.Command{
+		Use:   "local --output <directory>",
+		Short: "Export the local setup script for OpenSearch on this machine",
+		Long: "Write local-setup.sh, common.sh and bootstrap-opensearch.sh into a directory you own.\n" +
+			"Run './local-setup.sh setup' from that directory (outside the snap) to install and configure\n" +
+			"a local OpenSearch instance (loopback-only) and configure rag-cli.\n" +
+			"'./local-setup.sh start|stop|destroy' manage the local deployment.\n" +
+			"Re-running this command refreshes the scripts and keeps saved answers, secrets and state.",
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if os.Geteuid() == 0 {
+				return errors.New("run this command as your normal user, without sudo")
+			}
+			dir, err := filepath.Abs(output)
+			if err != nil {
+				return err
+			}
+			if err := checkNotSnapTmp(dir); err != nil {
+				return err
+			}
+			if err := awssetup.WriteLocal(dir, os.Getenv("SNAP_INSTANCE_NAME"), os.Getenv("SNAP_USER_COMMON")); err != nil {
+				return err
+			}
+			fmt.Printf("Exported the local setup assets to %s\nNext: cd %s && ./local-setup.sh\n", dir, dir)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&output, "output", "", "deployment directory to write (created if missing)")
+	if err := cmd.MarkFlagRequired("output"); err != nil {
+		panic(err)
+	}
 	return cmd
 }
 
@@ -34,8 +71,7 @@ func prepareScriptAWS() *cobra.Command {
 		Long: "Write opensearch-on-aws.sh, bootstrap-opensearch.sh and Terraform templates into a directory you own.\n" +
 			"Run './opensearch-on-aws.sh setup' from that directory (outside the snap) to provision a dedicated\n" +
 			"OpenSearch instance on AWS and configure rag-cli; './opensearch-on-aws.sh destroy' removes it.\n" +
-			"Re-running this command refreshes the scripts and keeps saved answers, secrets, keys and state.\n" +
-			"Only AWS is supported today.",
+			"Re-running this command refreshes the scripts and keeps saved answers, secrets, keys and state.",
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if os.Geteuid() == 0 {
