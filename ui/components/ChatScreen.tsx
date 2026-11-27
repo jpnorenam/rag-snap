@@ -5,7 +5,7 @@ import Header from "@/components/Header";
 import ChatHistoryPanel from "@/components/ChatHistoryPanel";
 import Markdown from "@/components/common/Markdown";
 import SourcesList, { citationMap } from "@/components/common/SourcesList";
-import { answerText, applyAnswerFrame, NO_SOURCES_NOTICE, type Message } from "@/components/chatMessages";
+import { applyAnswerFrame, NO_SOURCES_NOTICE, type Message } from "@/components/chatMessages";
 import { ApiError, errorMessage } from "@/lib/api/envelope";
 import { startChat, ChatConnection, type ChatFrame, type ChatStartOptions } from "@/lib/api/chat";
 import { listKnowledge, type KnowledgeBase } from "@/lib/api/knowledge";
@@ -580,8 +580,8 @@ export default function ChatScreen() {
                 <div className="chat-message__bubble chat-message__bubble--md">
                   {m.content ? (
                     <Markdown
-                      content={answerText(m)}
-                      citations={citationMap(m.streaming ? m.retrieved : m.sources)}
+                      content={m.content}
+                      citations={citationMap(m.streaming ? m.citedSoFar : m.sources)}
                     />
                   ) : m.streaming ? (
                     "…"

@@ -89,34 +89,39 @@ it with the markers it relied on.
 - **WHEN** a turn is answered with no retrieved context (no active knowledge source, or retrieval found nothing)
 - **THEN** the model receives no citation instruction for that turn, and the session's system prompt is the resolved prompt unchanged
 
-### Requirement: Chat markers are numbered session-wide
-A document's identity for numbering SHALL include the knowledge base it came from, so a local source
-and a kapa.ai page with the same source id (a URL) are numbered as different documents.
+### Requirement: Markers are numbered per answer in reading order
+Each answer's markers SHALL be numbered on their own, in the order the answer first cites each
+document: the first document cited is `[1]`, the next new one `[2]`, and so on, whatever number the
+document carried in the context the model was given. Numbers SHALL NOT carry over between answers of
+a chat session, nor after a chat is resumed. The answer's sources SHALL be listed in that order, and
+every surface — chat REPL, chat websocket, saved chats, and batch results — SHALL show the same
+numbers. Within one turn's context, chunks of the same document SHALL share one context marker, and
+a document's identity SHALL include the knowledge base it came from, so a local source and a kapa.ai
+page with the same source id (a URL) are different documents.
 
-Within one chat session a document SHALL keep the same marker number for the life of the session,
-including across turns and after the session is resumed from a saved chat. A document first seen in
-a later turn SHALL receive the next unused number.
+#### Scenario: Top-ranked document cited last
+- **WHEN** the context numbers documents `[1]` to `[3]` and the answer cites `[2]`, then `[3]`, then `[1]`
+- **THEN** the answer shows `[1]`, `[2]`, `[3]` in that order and its sources list the context's `[2]`, `[3]` and `[1]` documents as 1, 2 and 3
 
-#### Scenario: Document cited in two turns
-- **WHEN** `guide.pdf` is marked `[1]` in turn 1 and is retrieved again in turn 3 alongside a new document
-- **THEN** `guide.pdf` is still `[1]` in turn 3 and the new document gets the next unused number
+#### Scenario: Later answer in the same chat
+- **WHEN** a second answer in a chat cites a document the first answer cited as `[2]`, and cites it first
+- **THEN** that document is `[1]` in the second answer
 
-#### Scenario: Resumed session keeps numbering
-- **WHEN** a saved chat whose turns cited `[1]` and `[2]` is resumed and a new document is retrieved
-- **THEN** the new document is numbered `[3]`
+#### Scenario: Numbers while streaming
+- **WHEN** an answer is streamed to the chat REPL or a websocket client
+- **THEN** the streamed text already carries the final numbers, and matches the saved answer
 
 ### Requirement: Answers cite only retrieved documents
 After generation, in a run of adjacent markers that cites at least one document retrieved for that
 turn, markers that do not match a retrieved document SHALL be removed from the answer. A run citing
 no retrieved document SHALL be left as written, since it may be prose (`option [2]`, `Table [12]`)
 rather than a citation. Marker numbers SHALL be recognised up to four digits. The answer's sources
-SHALL be exactly the retrieved documents whose markers remain, in first-cited order. When markers are
-removed, the chat REPL (direct and remote modes) SHALL print a notice naming them, since it has
-already shown the streamed text.
+SHALL be exactly the retrieved documents whose markers remain, renumbered as above. Removed markers
+SHALL never be shown, including while the answer streams.
 
 #### Scenario: Invented marker dropped
 - **WHEN** the turn's context holds `[1]` and `[2]` and the model's answer cites `[1]` and `[7]`
-- **THEN** `[7]` is removed from the answer, the answer's sources list only the `[1]` document, and the REPL notes that `[7]` was ignored
+- **THEN** `[7]` is never shown and the answer's sources list only the `[1]` document
 
 #### Scenario: Bracketed number citing nothing
 - **WHEN** documents `[1]` and `[2]` were retrieved and the answer says `configure option [7] in the BIOS menu. [1]`

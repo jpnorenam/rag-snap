@@ -206,15 +206,16 @@ SHALL be reported as an error frame without terminating the session.
 - **WHEN** the chat store is unavailable and a client sends `save`
 - **THEN** the daemon replies with an error frame and the websocket session continues
 
-### Requirement: Retrieved sources are sent before the answer streams
-When a prompt's retrieval supplies context, the daemon SHALL send a `sources` frame before the first
-answer token, listing every document in that turn's context with its marker number, citation key,
-label, link, locator, knowledge base, and label tag. A turn without retrieval SHALL send no `sources`
-frame.
+### Requirement: Cited sources are sent as the answer cites them
+The daemon SHALL stream answer tokens with their final, per-answer marker numbers (see
+`source-citations`). Each time the answer cites a new document, the daemon SHALL send a `sources`
+frame listing the documents cited so far, each with its marker number, citation key, label, link,
+locator, knowledge base, and label tag, before the token that carries the new marker. An answer that
+cites nothing, or a turn without retrieval, SHALL send no `sources` frame.
 
 #### Scenario: Grounded prompt
-- **WHEN** a prompt retrieves chunks from two documents
-- **THEN** the client receives a `sources` frame listing both documents with their marker numbers before any `token` frame
+- **WHEN** an answer cites two documents
+- **THEN** the client receives a `sources` frame listing the first before the token carrying `[1]`, and one listing both before the token carrying `[2]`
 
 #### Scenario: No active knowledge base
 - **WHEN** a prompt is answered with no active knowledge base

@@ -1242,10 +1242,10 @@ When no knowledge base is reachable, the client falls back to plain chat with no
 
 #### Citations
 
-Every grounded answer cites the documents it came from. Chunks of the same document share one
-marker, and a document keeps its marker for the whole session — `[1]` means the same document in
-every turn, and after the chat is saved and resumed. After the answer, a dimmed **Sources** block
-lists the cited documents:
+Every grounded answer cites the documents it came from. Each answer numbers its sources on its own,
+in reading order: the first document it cites is `[1]`, the next new one `[2]`, and so on, so the
+same document can carry a different number in another answer. After the answer, a dimmed
+**Sources** block lists the cited documents in that order:
 
 ```
 Sources
@@ -1256,8 +1256,8 @@ Sources
 Each source is shown by its document title (or file name, or source ID when neither is usable),
 followed by its link when one was recorded at ingest (see
 [source links](#knowledge-ingest)). Markers the model invents — numbers that match no retrieved
-document, written next to a valid marker — are removed from the answer, and the REPL notes which
-ones it ignored. A bracketed number with no valid marker beside it (`option [7]`) is left alone.
+document, written next to a valid marker — are never shown. A bracketed number with no valid marker
+beside it (`option [7]`) is left alone.
 
 **Uncited answers are flagged.** When a knowledge base is active and the answer cites none of the
 retrieved documents, the answer is kept, and instead of a Sources block the REPL prints

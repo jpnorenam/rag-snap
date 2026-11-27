@@ -171,19 +171,37 @@ func citingServer(t *testing.T, reply string) string {
 	return sock
 }
 
-func TestChatSourcesFramePrecedesTokensAndDoneCarriesCited(t *testing.T) {
+func TestChatSourcesFramePrecedesItsMarkerAndDoneCarriesCited(t *testing.T) {
 	sock := citingServer(t, "Yes, Ubuntu Pro includes FIPS 140-3 modules. [1][4]")
 	frames := chatTurnFrames(t, sock, `{"bases":["docs"]}`)
 
-	if frames[0].Type != "sources" {
-		t.Fatalf("first frame = %q, want sources before any token", frames[0].Type)
+	// The sources frame announces the cited document before the token that
+	// carries its marker; every streamed token already has the final numbers.
+	var streamed strings.Builder
+	sourcesAt := -1
+	for i, f := range frames {
+		switch f.Type {
+		case "sources":
+			if sourcesAt == -1 {
+				sourcesAt = i
+			}
+		case "token":
+			if strings.Contains(f.Content, "[") && sourcesAt == -1 {
+				t.Fatalf("token %q carries a marker before any sources frame", f.Content)
+			}
+			streamed.WriteString(f.Content)
+		}
 	}
-	if len(frames[0].Sources) != 1 {
-		t.Fatalf("sources frame = %+v, want one retrieved document", frames[0].Sources)
+	if sourcesAt == -1 {
+		t.Fatal("no sources frame for a cited answer")
 	}
-	src := frames[0].Sources[0]
-	if src.Marker != 1 || src.Key != "pro-guide" || src.Label != "Ubuntu Pro Guide" || src.Href != "https://ubuntu.com/pro" {
-		t.Errorf("retrieved source = %+v, want marker 1 for pro-guide labeled and linked from metadata", src)
+	if got := frames[sourcesAt].Sources; len(got) != 1 {
+		t.Fatalf("sources frame = %+v, want one cited document", got)
+	} else if src := got[0]; src.Marker != 1 || src.Key != "pro-guide" || src.Label != "Ubuntu Pro Guide" || src.Href != "https://ubuntu.com/pro" {
+		t.Errorf("cited source = %+v, want marker 1 for pro-guide labeled and linked from metadata", src)
+	}
+	if want := "Yes, Ubuntu Pro includes FIPS 140-3 modules. [1]"; streamed.String() != want {
+		t.Errorf("streamed answer = %q, want %q (invented [4] never shown)", streamed.String(), want)
 	}
 
 	done := frames[len(frames)-1]

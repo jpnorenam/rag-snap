@@ -396,17 +396,15 @@ link.
 |---|---|
 | `POST /1.0/search` | Each hit has a `citation` object. |
 | `POST /1.0/knowledge/{name}/sources` | URL ingests record their `url` as `source_uri`; `github`/`gitea` batch entries record each file's web URL on its branch; a multipart upload accepts an optional `source_uri` form field (absolute http(s) URL, else `400`). Source metadata from `GET …/sources[/{id}]` includes `source_uri` when recorded. |
-| Chat websocket | A grounded answer is preceded by a `sources` frame listing the documents retrieved for it, sent before the first `token`. The terminal `done` frame carries `sources` — the documents the answer actually cited, in first-cited order. A turn without retrieval sends no `sources` frame. |
-| `POST /1.0/answer/batch` results | Each result has `sources`; its `answer` is free of `[n]` markers. |
+| Chat websocket | Tokens stream with their final markers, numbered per answer in reading order (`[1]` is the first document the answer cites). Each time the answer cites a new document, a `sources` frame listing the documents cited so far is sent before the token carrying the new marker. The terminal `done` frame carries `sources` — the documents the answer cited, in marker order. An answer that cites nothing sends no `sources` frame. |
+| `POST /1.0/answer/batch` results | Each result has `sources`, numbered 1, 2, … in the order the answer cited them; its `answer` is free of `[n]` markers. |
 | `GET /1.0/chats/{id}` | Assistant turns carry the `sources` they cited; chats saved before sources existed have none. |
 
 **Uncited answers.** When retrieval supplied context and the answer cites none of it (after
 markers matching no retrieved document are removed), the chat websocket's `done` frame is flagged
 `"unsourced": true` and carries no `sources`; the streamed answer stands and the session history
 keeps it, and clients show that it has no relevant sources. Batch answers are kept the same way:
-such a result has empty `sources` and `"unsourced": true`. Markers that the streamed text carried for
-documents not retrieved are listed in the `done` frame's `dropped`, since the saved answer no longer
-has them.
+such a result has empty `sources` and `"unsourced": true`.
 
 ```json
 {"type": "sources", "sources": [{"marker": 1, "key": "pro-guide", "label": "Ubuntu Pro Guide", "href": "https://ubuntu.com/pro", "base": "docs", "tag": "canonical"}]}

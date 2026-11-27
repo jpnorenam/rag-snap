@@ -337,7 +337,13 @@ func handlePrompt(backend Backend, conv *conversation, prompt string, session *S
 	}
 
 	stopProgress := sync.OnceFunc(common.StartProgressSpinner("Generating an answer"))
-	reply, err := backend.Stream(context.Background(), req, printToken(stopProgress))
+	// Markers are renumbered for the reader as the answer streams, so the
+	// terminal shows the numbers the Sources block and the saved chat carry.
+	cites := newCitationStream(retrieved, printToken(stopProgress), nil)
+	reply, err := backend.Stream(context.Background(), req, cites.Emit)
+	if err == nil {
+		err = cites.Flush()
+	}
 	stopProgress()
 	if err != nil {
 		// A refusal or an exhausted output budget fails this turn only: report
@@ -354,16 +360,10 @@ func handlePrompt(backend Backend, conv *conversation, prompt string, session *S
 
 	// Validate the streamed answer's citations against what was retrieved: the
 	// history keeps the normalized answer and the session records its sources.
-	// An answer citing nothing it was given is kept, flagged as unsourced. The
-	// terminal shows the raw stream, so markers dropped from the saved answer
-	// are called out: otherwise the screen shows a "[7]" that the Sources block
-	// and a resumed chat do not.
+	// An answer citing nothing it was given is kept, flagged as unsourced.
 	var sources []CitedSource
 	if reply != "" {
-		content, cited, uncited, dropped := citeAnswer(reply, retrieved)
-		if len(dropped) > 0 {
-			fmt.Println(color.YellowString(droppedMarkersNotice(dropped)))
-		}
+		content, cited, uncited := citeAnswer(reply, retrieved)
 		if uncited {
 			fmt.Println(color.YellowString(noSourcesNotice))
 		} else {

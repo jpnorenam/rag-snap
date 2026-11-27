@@ -22,10 +22,10 @@ type ChatControl struct {
 // ChatServerMessage is a server→client frame on the chat websocket. ID and Title
 // carry the saved-chat identity on a "saved" frame.
 //
-// Sources is set on a "sources" frame (the documents retrieved for the turn)
-// and on a "done" frame (the documents the answer cited); Unsourced flags a
-// done frame whose answer cited none of the retrieved documents, and Dropped
-// lists markers the streamed text carried for documents not retrieved.
+// Sources is set on a "sources" frame (the documents the answer has cited so
+// far, sent each time it cites a new one) and on a "done" frame (the documents
+// the answer cited); Unsourced flags a done frame whose answer cited none of
+// the retrieved documents.
 type ChatServerMessage struct {
 	Type       string             `json:"type"`
 	Content    string             `json:"content,omitempty"`
@@ -36,7 +36,6 @@ type ChatServerMessage struct {
 	Title      string             `json:"title,omitempty"`
 	Sources    []chatstore.Source `json:"sources,omitempty"`
 	Unsourced  bool               `json:"unsourced,omitempty"`
-	Dropped    []int              `json:"dropped,omitempty"`
 }
 
 // RestoredChat is the transcript and knowledge-base context recovered when a

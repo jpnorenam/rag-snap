@@ -66,13 +66,13 @@ const kapaSelectionUnavailable = "kapa.ai is not configured on the daemon (set k
 // effective selection, or an error when kapa.ai is not configured), a "saved"
 // acknowledgement (carrying the saved chat's id and title), or an "error".
 //
-// A grounded answer is preceded by a "sources" frame listing the documents
-// retrieved for it (each with its "[n]" marker number), and its "done" frame
-// carries the sources the answer actually cited. A "done" frame flagged
+// Markers are numbered per answer in first-cited order and the streamed text
+// already carries the final numbers. Each time the answer cites a new
+// document, a "sources" frame listing the documents cited so far (each with
+// its "[n]" marker number) precedes the token carrying the new marker; the
+// "done" frame carries the final cited sources. A "done" frame flagged
 // unsourced means the answer cited nothing it was given; the streamed text
-// stands, and clients show that it has no relevant sources. Dropped lists
-// markers the streamed text carried for documents that were not retrieved,
-// which the saved answer no longer has.
+// stands, and clients show that it has no relevant sources.
 type chatServerMessage struct {
 	Type    string   `json:"type"`
 	Content string   `json:"content,omitempty"`
@@ -85,7 +85,6 @@ type chatServerMessage struct {
 	Title      string             `json:"title,omitempty"`
 	Sources    []chat.CitedSource `json:"sources,omitempty"`
 	Unsourced  bool               `json:"unsourced,omitempty"`
-	Dropped    []int              `json:"dropped,omitempty"`
 }
 
 // defaultChatTemperature matches the chat REPL's default sampling temperature.
@@ -336,7 +335,7 @@ func (s *Server) runChatSession(ctx context.Context, conn *websocket.Conn, live 
 				_ = writeChat(ctx, conn, chatServerMessage{Type: "error", Error: err.Error()})
 				continue
 			}
-			done := chatServerMessage{Type: "done", Sources: result.Sources, Unsourced: result.Unsourced, Dropped: result.Dropped}
+			done := chatServerMessage{Type: "done", Sources: result.Sources, Unsourced: result.Unsourced}
 			if err := writeChat(ctx, conn, done); err != nil {
 				return nil
 			}

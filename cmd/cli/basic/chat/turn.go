@@ -40,9 +40,6 @@ type TurnResult struct {
 	// Unsourced reports that retrieval supplied context but the answer cited
 	// none of it. The answer is kept; clients flag it as having no sources.
 	Unsourced bool
-	// Dropped lists markers the streamed answer carried for documents that
-	// were not retrieved; the recorded answer no longer has them.
-	Dropped []int
 }
 
 // conversation is the running state of one multi-turn chat: the resolved model,
@@ -238,9 +235,10 @@ func (ls *LiveSession) ActiveKapaGroups() []string {
 // REPL's handlePrompt: the same rewrite → retrieve → augment → stream pipeline.
 // Retrieval augmentation is applied only when a knowledge client and at least
 // one active base are present; with no active bases the prompt is answered
-// without retrieval. When retrieval supplied context, emitSources receives the
-// retrieved documents before streaming starts, and the returned TurnResult
-// carries the validated citations (see citeAnswer).
+// without retrieval. Markers are renumbered per answer in first-cited order as
+// the answer streams (see citationStream): emitSources receives the sources
+// cited so far whenever the answer cites a new document, and the returned
+// TurnResult carries the final citations (see citeAnswer).
 func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc, emitSources SourcesFunc) (TurnResult, error) {
 	// Retrieval runs when local bases or kapa.ai source groups are active,
 	// matching the REPL's handlePrompt.
@@ -259,11 +257,6 @@ func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc,
 		lexicalQuery = rewriteSearchQuery(ls.backend, ls.conv.model, ls.conv.history, text, ls.verbose)
 		ragContext, retrieved, _ = retrieveContext(ls.session, text, lexicalQuery, ls.verbose)
 	}
-	if len(retrieved) > 0 && emitSources != nil {
-		if err := emitSources(retrieved); err != nil {
-			return TurnResult{}, err
-		}
-	}
 
 	llmPrompt := text
 	if ragContext != "" {
@@ -277,7 +270,14 @@ func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc,
 
 	// Send the augmented prompt to the API but keep only the original prompt in
 	// history, mirroring the REPL's handlePrompt.
-	reply, err := ls.backend.Stream(ctx, ls.conv.turnRequest(llmPrompt), emit)
+	// Markers are renumbered for the reader as the answer streams; each time
+	// the answer cites a new document, emitSources receives the sources cited
+	// so far, ahead of the text carrying the new marker.
+	cites := newCitationStream(retrieved, emit, emitSources)
+	reply, err := ls.backend.Stream(ctx, ls.conv.turnRequest(llmPrompt), cites.Emit)
+	if err == nil {
+		err = cites.Flush()
+	}
 	if err != nil {
 		return TurnResult{}, err
 	}
@@ -286,8 +286,8 @@ func (ls *LiveSession) Prompt(ctx context.Context, text string, emit StreamFunc,
 	// answer, which is flagged unsourced when it cited nothing it was given.
 	var result TurnResult
 	if reply != "" {
-		content, cited, uncited, dropped := citeAnswer(reply, retrieved)
-		result = TurnResult{Sources: cited, Unsourced: uncited, Dropped: dropped}
+		content, cited, uncited := citeAnswer(reply, retrieved)
+		result = TurnResult{Sources: cited, Unsourced: uncited}
 		if uncited && ls.verbose {
 			fmt.Println("unsourced: no valid citations")
 		}

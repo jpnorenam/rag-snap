@@ -105,7 +105,7 @@ func retrieveContext(session *Session, query, lexicalQuery string, verbose bool)
 		}
 	}
 
-	text, sources := formatContext(res.Hits, session.citationRegistry())
+	text, sources := formatContext(res.Hits, NewCitationRegistry())
 	return text, sources, counts
 }
 

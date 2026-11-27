@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { answerText, applyAnswerFrame, type Message } from "./chatMessages";
+import { applyAnswerFrame, type Message } from "./chatMessages";
 import type { CitedSource } from "@/lib/types";
 
 const src = (marker: number, key: string): CitedSource => ({
@@ -16,19 +16,21 @@ const streaming = (): Message[] => [
   { role: "assistant", content: "", think: "", streaming: true },
 ];
 
-test("a sources frame records the retrieved documents on the streaming answer", () => {
-  const next = applyAnswerFrame(streaming(), { type: "sources", sources: [src(1, "a"), src(2, "b")] });
-  assert.deepEqual(next[1].retrieved?.map((s) => s.marker), [1, 2]);
-  assert.equal(next[1].streaming, true);
+test("each sources frame replaces the documents cited so far", () => {
+  let msgs = applyAnswerFrame(streaming(), { type: "sources", sources: [src(1, "b")] });
+  assert.deepEqual(msgs[1].citedSoFar?.map((s) => s.key), ["b"]);
+  msgs = applyAnswerFrame(msgs, { type: "sources", sources: [src(1, "b"), src(2, "a")] });
+  assert.deepEqual(msgs[1].citedSoFar?.map((s) => s.marker), [1, 2]);
+  assert.equal(msgs[1].streaming, true);
 });
 
-test("a done frame keeps the cited sources", () => {
-  let msgs = applyAnswerFrame(streaming(), { type: "sources", sources: [src(1, "a"), src(2, "b")] });
-  msgs[1] = { ...msgs[1], content: "Yes. [2][7]" };
-  msgs = applyAnswerFrame(msgs, { type: "done", sources: [src(2, "b")] });
+test("a done frame keeps the cited sources and the streamed text", () => {
+  let msgs = applyAnswerFrame(streaming(), { type: "sources", sources: [src(1, "b")] });
+  msgs[1] = { ...msgs[1], content: "Yes. [1]" };
+  msgs = applyAnswerFrame(msgs, { type: "done", sources: [src(1, "b")] });
   assert.equal(msgs[1].streaming, false);
-  assert.deepEqual(msgs[1].sources?.map((s) => s.marker), [2]);
-  assert.equal(answerText(msgs[1]), "Yes. [2]", "the rejected [7] is dropped once done");
+  assert.deepEqual(msgs[1].sources?.map((s) => s.marker), [1]);
+  assert.equal(msgs[1].content, "Yes. [1]");
 });
 
 test("an unsourced done frame keeps the streamed text and flags it", () => {
@@ -40,46 +42,7 @@ test("an unsourced done frame keeps the streamed text and flags it", () => {
   assert.deepEqual(msgs[1].sources, []);
 });
 
-test("legacy S-prefixed markers and code are handled", () => {
-  const m: Message = {
-    role: "assistant",
-    content: "One [S1, S2]. Code `x[1]` stays.",
-    think: "",
-    streaming: true,
-    retrieved: [src(1, "a"), src(2, "b")],
-  };
-  assert.equal(answerText(m), "One [1][2]. Code `x[1]` stays.");
-});
-
-test("list-form markers normalize to chips while streaming", () => {
-  const m: Message = {
-    role: "assistant",
-    content: "One [1, 2].",
-    think: "",
-    streaming: true,
-    retrieved: [src(1, "a"), src(2, "b")],
-  };
-  assert.equal(answerText(m), "One [1][2].");
-});
-
-test("glued, four-digit and prose markers follow the daemon", () => {
-  const m: Message = {
-    role: "assistant",
-    content: "Supports SR-IOV[1] and my_arr[1]; see option [7] and [1000].",
-    think: "",
-    streaming: true,
-    retrieved: [src(1, "a"), src(1000, "b")],
-  };
-  assert.equal(answerText(m), "Supports SR-IOV[1] and my_arr[1]; see option [7] and [1000].");
-  const mixed: Message = { ...m, content: "Yes. [1][7] Also [7]." };
-  assert.equal(answerText(mixed), "Yes. [1] Also [7].", "an invented marker beside a real one is dropped, a lone one kept");
-});
-
-test("markers in a turn with nothing retrieved are dropped", () => {
-  // The model copied a marker although no sources frame arrived: it refers to
-  // nothing, so neither a chip nor literal "[1]" text is shown.
-  const streamingTurn: Message = { role: "assistant", content: "Kafka is a broker. [1]", think: "", streaming: true };
-  assert.equal(answerText(streamingTurn), "Kafka is a broker.");
-  const doneTurn: Message = { ...streamingTurn, streaming: false, sources: [] };
-  assert.equal(answerText(doneTurn), "Kafka is a broker.");
+test("a sources frame after the answer ended is ignored", () => {
+  const done: Message[] = [{ role: "assistant", content: "Yes. [1]", think: "", sources: [src(1, "b")] }];
+  assert.equal(applyAnswerFrame(done, { type: "sources", sources: [src(1, "a")] }), done);
 });

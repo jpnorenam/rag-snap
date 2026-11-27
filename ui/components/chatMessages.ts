@@ -1,17 +1,18 @@
-import { normalizeMarkers } from "@/components/common/SourcesList";
 import type { ChatFrame } from "@/lib/api/chat";
 import type { CitedSource } from "@/lib/types";
 
 // A turn in the chat transcript. Assistant turns accumulate streamed
-// token/think content incrementally as frames arrive. `retrieved` holds the
-// documents the turn's `sources` frame announced (so markers render as chips
-// while streaming); `sources` holds the ones the finished answer cited.
+// token/think content incrementally as frames arrive. The daemon streams the
+// answer with its final, per-answer marker numbers, so content renders as is.
+// `citedSoFar` holds the documents the latest `sources` frame announced (so
+// markers render as chips while streaming); `sources` holds the ones the
+// finished answer cited.
 export interface Message {
   role: "user" | "assistant";
   content: string;
   think: string;
   streaming?: boolean;
-  retrieved?: CitedSource[];
+  citedSoFar?: CitedSource[];
   sources?: CitedSource[];
   unsourced?: boolean;
 }
@@ -20,7 +21,7 @@ export interface Message {
 export const NO_SOURCES_NOTICE = "No relevant sources: this answer cites none of the retrieved documents.";
 
 // applyAnswerFrame folds a turn's citation-bearing frames into the transcript:
-// a "sources" frame records the retrieved documents on the streaming answer;
+// a "sources" frame records the documents the streaming answer has cited so far;
 // a "done" frame ends it, keeping the cited sources, or flagging the answer
 // unsourced when it cited none of them.
 export function applyAnswerFrame(prev: Message[], frame: ChatFrame): Message[] {
@@ -30,7 +31,7 @@ export function applyAnswerFrame(prev: Message[], frame: ChatFrame): Message[] {
   switch (frame.type) {
     case "sources":
       if (!last.streaming) return prev;
-      updated = { ...last, retrieved: frame.sources ?? [] };
+      updated = { ...last, citedSoFar: frame.sources ?? [] };
       break;
     case "done":
       updated = {
@@ -44,15 +45,4 @@ export function applyAnswerFrame(prev: Message[], frame: ChatFrame): Message[] {
       return prev;
   }
   return [...prev.slice(0, -1), updated];
-}
-
-// answerText is an assistant turn's content prepared for rendering: citation
-// groups normalized so they render as chips, keeping only markers for known
-// documents — the turn's retrieved set, the set the daemon validated against
-// (or, for a restored chat, which has no retrieved set, the cited set). A run
-// citing no known document is left as written, as the daemon leaves it; with
-// no known documents at all (nothing was retrieved) every marker is dropped.
-export function answerText(m: Message): string {
-  const known = m.retrieved ?? m.sources ?? [];
-  return normalizeMarkers(m.content, new Set(known.map((s) => s.marker)));
 }

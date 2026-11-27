@@ -25,20 +25,6 @@ func TestCitationRegistryStableNumbering(t *testing.T) {
 	}
 }
 
-func TestCitationRegistrySeed(t *testing.T) {
-	reg := NewCitationRegistry()
-	reg.Seed([]CitedSource{
-		{Marker: 2, Citation: knowledge.Citation{Key: "guide.pdf", Base: "docs"}},
-		{Marker: 1, Citation: knowledge.Citation{Key: "faq.md", Base: "docs"}},
-	})
-	if n := reg.Number(citationKey(hitFor("guide.pdf", "Install Guide", ""))); n != 2 {
-		t.Errorf("previously cited document = %d, want 2", n)
-	}
-	if n := reg.Number("new.md"); n != 3 {
-		t.Errorf("new document after resume = %d, want 3", n)
-	}
-}
-
 func hitFor(key, label, content string) knowledge.SearchHit {
 	return knowledge.SearchHit{
 		Index:    "rag-snap-context-docs",
@@ -100,84 +86,92 @@ func markers(sources []CitedSource) []int {
 	return out
 }
 
+func keys(sources []CitedSource) []string {
+	out := make([]string, len(sources))
+	for i, s := range sources {
+		out[i] = s.Key
+	}
+	return out
+}
+
 func TestCiteAnswer(t *testing.T) {
 	cases := []struct {
 		name        string
 		answer      string
 		retrieved   []CitedSource
 		wantAnswer  string
-		wantMarkers []int
+		wantKeys    []string // cited documents, in answer-marker order
 		wantUncited bool
 	}{
 		{
-			name:        "invented marker dropped",
-			answer:      "Pro covers FIPS. [1][7]",
-			retrieved:   retrievedSources("a", "b"),
-			wantAnswer:  "Pro covers FIPS. [1]",
-			wantMarkers: []int{1},
+			name:       "invented marker dropped",
+			answer:     "Pro covers FIPS. [1][7]",
+			retrieved:  retrievedSources("a", "b"),
+			wantAnswer: "Pro covers FIPS. [1]",
+			wantKeys:   []string{"a"},
 		},
 		{
-			name:        "only cited documents are sources",
-			answer:      "First point. [2]",
-			retrieved:   retrievedSources("a", "b", "c"),
-			wantAnswer:  "First point. [2]",
-			wantMarkers: []int{2},
+			name:       "markers are renumbered in first-cited order",
+			answer:     "First point. [2]\n\nSecond point. [3][2]\n\nIn short. [1]",
+			retrieved:  retrievedSources("a", "b", "c"),
+			wantAnswer: "First point. [1]\n\nSecond point. [2][1]\n\nIn short. [3]",
+			wantKeys:   []string{"b", "c", "a"},
 		},
 		{
-			name:        "list forms are normalized, first-cited order",
-			answer:      "One. [3, 1]\n\nTwo. [1;2]",
-			retrieved:   retrievedSources("a", "b", "c"),
-			wantAnswer:  "One. [3][1]\n\nTwo. [1][2]",
-			wantMarkers: []int{3, 1, 2},
+			name:       "list forms are normalized and renumbered",
+			answer:     "One. [3, 1]\n\nTwo. [1;2]",
+			retrieved:  retrievedSources("a", "b", "c"),
+			wantAnswer: "One. [1][2]\n\nTwo. [2][3]",
+			wantKeys:   []string{"c", "a", "b"},
 		},
 		{
-			name:        "legacy S-prefixed markers are renumbered",
-			answer:      "One. [S2, S1] Two. [S1]",
-			retrieved:   retrievedSources("a", "b"),
-			wantAnswer:  "One. [2][1] Two. [1]",
-			wantMarkers: []int{2, 1},
+			name:       "a document repeated within a run is cited once",
+			answer:     "One. [2, 2]",
+			retrieved:  retrievedSources("a", "b"),
+			wantAnswer: "One. [1]",
+			wantKeys:   []string{"b"},
 		},
 		{
-			name:        "code and indexing are not markers",
-			answer:      "Use `arr[1]` or\n```\nx = [1, 2]\n```\nsee my_items[2], obj.items[2] and f(x)[2]. [1]",
-			retrieved:   retrievedSources("a", "b"),
-			wantAnswer:  "Use `arr[1]` or\n```\nx = [1, 2]\n```\nsee my_items[2], obj.items[2] and f(x)[2]. [1]",
-			wantMarkers: []int{1},
+			name:       "legacy S-prefixed markers are renumbered",
+			answer:     "One. [S2, S1] Two. [S1]",
+			retrieved:  retrievedSources("a", "b"),
+			wantAnswer: "One. [1][2] Two. [2]",
+			wantKeys:   []string{"b", "a"},
 		},
 		{
-			name:        "a marker glued to a prose word is a citation",
-			answer:      "It supports SR-IOV[1]. Ubuntu 22.04[2] and (FIPS)[3] too; see the end.[1, 2]",
-			retrieved:   retrievedSources("a", "b", "c"),
-			wantAnswer:  "It supports SR-IOV[1]. Ubuntu 22.04[2] and (FIPS)[3] too; see the end.[1][2]",
-			wantMarkers: []int{1, 2, 3},
+			name:       "code and indexing are not markers",
+			answer:     "Use `arr[1]` or\n```\nx = [1, 2]\n```\nsee my_items[2], obj.items[2] and f(x)[2]. [2]",
+			retrieved:  retrievedSources("a", "b"),
+			wantAnswer: "Use `arr[1]` or\n```\nx = [1, 2]\n```\nsee my_items[2], obj.items[2] and f(x)[2]. [1]",
+			wantKeys:   []string{"b"},
 		},
 		{
-			name:        "four-digit markers are recognised",
-			answer:      "Long-lived session. [1000]",
-			retrieved:   []CitedSource{{Marker: 1000, Citation: knowledge.Citation{Key: "a"}}},
-			wantAnswer:  "Long-lived session. [1000]",
-			wantMarkers: []int{1000},
+			name:       "a marker glued to a prose word is a citation",
+			answer:     "It supports SR-IOV[1]. Ubuntu 22.04[2] and (FIPS)[3] too; see the end.[1, 2]",
+			retrieved:  retrievedSources("a", "b", "c"),
+			wantAnswer: "It supports SR-IOV[1]. Ubuntu 22.04[2] and (FIPS)[3] too; see the end.[1][2]",
+			wantKeys:   []string{"a", "b", "c"},
 		},
 		{
-			name:        "bracketed numbers citing nothing retrieved are prose",
-			answer:      "Configure option [7] in the BIOS menu. [1]",
-			retrieved:   retrievedSources("a"),
-			wantAnswer:  "Configure option [7] in the BIOS menu. [1]",
-			wantMarkers: []int{1},
+			name:       "bracketed numbers citing nothing retrieved are prose",
+			answer:     "Configure option [7] in the BIOS menu. [1]",
+			retrieved:  retrievedSources("a"),
+			wantAnswer: "Configure option [7] in the BIOS menu. [1]",
+			wantKeys:   []string{"a"},
 		},
 		{
-			name:        "a marker followed by (…) is a marker, not link text",
-			answer:      "See [2](https://evil.example).",
-			retrieved:   retrievedSources("a", "b"),
-			wantAnswer:  "See [2](https://evil.example).",
-			wantMarkers: []int{2},
+			name:       "a marker followed by (…) is a marker, not link text",
+			answer:     "See [2](https://evil.example).",
+			retrieved:  retrievedSources("a", "b"),
+			wantAnswer: "See [1](https://evil.example).",
+			wantKeys:   []string{"b"},
 		},
 		{
-			name:        "years and large numbers are not markers",
-			answer:      "Released in [2024]. [2]",
-			retrieved:   retrievedSources("a", "b"),
-			wantAnswer:  "Released in [2024]. [2]",
-			wantMarkers: []int{2},
+			name:       "years and large numbers are not markers",
+			answer:     "Released in [2024]. [2]",
+			retrieved:  retrievedSources("a", "b"),
+			wantAnswer: "Released in [2024]. [1]",
+			wantKeys:   []string{"b"},
 		},
 		{
 			name:        "nothing cited is kept and flagged uncited",
@@ -194,7 +188,7 @@ func TestCiteAnswer(t *testing.T) {
 			wantUncited: true,
 		},
 		{
-			name:        "markers inside reasoning do not count",
+			name:        "markers inside reasoning do not count and are left alone",
 			answer:      "<think>use [1]</think>Ubuntu Pro covers FIPS.",
 			retrieved:   retrievedSources("a"),
 			wantAnswer:  "<think>use [1]</think>Ubuntu Pro covers FIPS.",
@@ -215,29 +209,25 @@ func TestCiteAnswer(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, cited, uncited, _ := citeAnswer(tc.answer, tc.retrieved)
+			got, cited, uncited := citeAnswer(tc.answer, tc.retrieved)
 			if got != tc.wantAnswer {
 				t.Errorf("answer = %q, want %q", got, tc.wantAnswer)
 			}
 			if uncited != tc.wantUncited {
 				t.Errorf("uncited = %v, want %v", uncited, tc.wantUncited)
 			}
-			if gotMarkers := markers(cited); len(cited) != 0 || len(tc.wantMarkers) != 0 {
-				if !reflect.DeepEqual(gotMarkers, tc.wantMarkers) {
-					t.Errorf("cited markers = %v, want %v", gotMarkers, tc.wantMarkers)
+			if len(cited) != 0 || len(tc.wantKeys) != 0 {
+				if !reflect.DeepEqual(keys(cited), tc.wantKeys) {
+					t.Errorf("cited documents = %v, want %v", keys(cited), tc.wantKeys)
+				}
+			}
+			for i, s := range cited {
+				if s.Marker != i+1 {
+					t.Errorf("cited markers = %v, want 1..%d", markers(cited), len(cited))
+					break
 				}
 			}
 		})
-	}
-}
-
-func TestCiteAnswerReportsDroppedMarkers(t *testing.T) {
-	_, _, _, dropped := citeAnswer("Pro covers FIPS. [1][7]\n\nAlso [2, 9].", retrievedSources("a", "b"))
-	if !reflect.DeepEqual(dropped, []int{7, 9}) {
-		t.Errorf("dropped = %v, want [7 9]", dropped)
-	}
-	if got := droppedMarkersNotice([]int{7, 9, 7}); !strings.Contains(got, "[7] [9]") {
-		t.Errorf("notice = %q, want each dropped marker once", got)
 	}
 }
 

@@ -261,7 +261,7 @@ function parseInline(text: string, cites?: CitationMap): ReactNode[] {
 // a "." followed by a letter ("obj.items[1]"). The word is the text since the
 // last whitespace or "]", so "[1][2]" stays two markers. Mirrors the daemon's
 // gluedToCode.
-export const NOT_GLUED_TO_CODE = String.raw`(?<![^\s\]]*(?:_|[^\s\]]\(|\.[A-Za-z])[^\s\]]*)`;
+const NOT_GLUED_TO_CODE = String.raw`(?<![^\s\]]*(?:_|[^\s\]]\(|\.[A-Za-z])[^\s\]]*)`;
 
 const CITATION_MARKER = new RegExp(String.raw`${NOT_GLUED_TO_CODE}\[(\d{1,4})\]`);
 

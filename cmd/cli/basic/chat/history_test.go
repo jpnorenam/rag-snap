@@ -118,14 +118,6 @@ func TestSourcesSurviveSaveAndResume(t *testing.T) {
 	if len(session.AnswerSources) != 3 {
 		t.Fatalf("restored %d answer source lists, want 3", len(session.AnswerSources))
 	}
-	reg := session.citationRegistry()
-	if n := reg.Number(registryKey("docs", "guide.pdf")); n != 2 {
-		t.Errorf("re-retrieved guide.pdf = [%d], want [2]", n)
-	}
-	if n := reg.Number(registryKey("docs", "new.md")); n != 3 {
-		t.Errorf("new document after resume = [%d], want [3]", n)
-	}
-
 	// A second save from the resumed session writes the same sources back.
 	again := historyToTurns(turnsToHistory(got.Turns), session.AnswerSources)
 	if len(again[5].Sources) != 2 {

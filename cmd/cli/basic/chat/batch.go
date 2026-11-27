@@ -303,7 +303,7 @@ func (h BatchHooks) failure(i, total int, q BatchQuestion, err error) {
 // answer citing nothing it was given is kept and flagged Unsourced: a reviewer
 // can add a missing citation, but cannot recover a discarded answer.
 func batchResultFor(q BatchQuestion, domainMatch, answer string, retrieved []CitedSource, counts *RetrievalCounts, verbose bool) BatchResult {
-	cited, sources, uncited, _ := citeAnswer(answer, retrieved)
+	cited, sources, uncited := citeAnswer(answer, retrieved)
 	if uncited && verbose {
 		fmt.Printf("unsourced answer to %q: no valid citations\n", q.Question)
 	}
@@ -505,8 +505,6 @@ func RunBatch(
 		if lexicalQuery != q.Question {
 			semanticQuery = q.Question + " " + lexicalQuery
 		}
-		// Each answer's citation numbering is self-contained.
-		session.Citations = NewCitationRegistry()
 		ragContext, retrieved, counts := batchRetrieve(session, semanticQuery, lexicalQuery, verbose)
 
 		// When no context was retrieved there is nothing to ground the answer on.

@@ -101,9 +101,11 @@ function buildWsUrl(opPath: string, secret: string): string {
 // "active-kapa-groups" frame acknowledges a kapa.ai selection (with an error
 // when kapa.ai is not configured); a "warning" is a non-fatal notice about the
 // current turn, such as a failed kapa.ai request — the turn still completes.
-// A "sources" frame precedes a grounded answer's tokens, listing the documents
-// retrieved for it; that answer's "done" frame carries the sources it actually
-// cited, or is flagged `unsourced` when it cited none (the streamed answer stands).
+// Markers are numbered per answer in first-cited order, and the streamed tokens
+// already carry the final numbers. Each time the answer cites a new document, a
+// "sources" frame listing the documents cited so far precedes the token with the
+// new marker; the "done" frame carries the final cited sources, or is flagged
+// `unsourced` when it cited none (the streamed answer stands).
 export type ChatFrameType =
   | "token"
   | "think"

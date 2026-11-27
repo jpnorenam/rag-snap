@@ -15,10 +15,10 @@ import (
 // it carries in the answer plus its resolved citation (see citation.Source).
 type CitedSource = citation.Source
 
-// CitationRegistry assigns marker numbers to cited documents. A document keeps
-// its number for the registry's lifetime: a chat session holds one registry so
-// "[1]" means the same document in every turn and in saved history; a batch run
-// uses a fresh registry per question.
+// CitationRegistry numbers the documents in one turn's retrieved context, in
+// order of first appearance, so chunks of one document share a context marker.
+// Context numbers are what the model sees; answers are renumbered from them in
+// first-cited order (see citeAnswer), so they never reach the user.
 type CitationRegistry struct {
 	byKey map[string]int
 	next  int
@@ -39,21 +39,6 @@ func (r *CitationRegistry) Number(key string) int {
 	r.byKey[key] = n
 	r.next++
 	return n
-}
-
-// Seed restores numbering from previously cited sources (a resumed chat), so a
-// re-retrieved document keeps its number and a new one numbers after the
-// highest number seen.
-func (r *CitationRegistry) Seed(sources []CitedSource) {
-	for _, s := range sources {
-		if s.Key == "" || s.Marker <= 0 {
-			continue
-		}
-		r.byKey[registryKey(s.Base, s.Key)] = s.Marker
-		if s.Marker >= r.next {
-			r.next = s.Marker + 1
-		}
-	}
 }
 
 // citationKey is the identity a hit is numbered under: its document key (the
@@ -84,9 +69,9 @@ var markerGroup = regexp.MustCompile(`([ \t]*)((?:\[\s*[Ss]?\d{1,4}(?:\s*[,;]\s*
 
 var markerNumber = regexp.MustCompile(`\d+`)
 
-// codeSpan matches fenced code blocks and inline code, whose brackets are code
-// ("arr[1]", "[1, 2]"), never citations.
-var codeSpan = regexp.MustCompile("(?s)```.*?(?:```|$)|`[^`\n]*`")
+// codeSpan matches the spans whose brackets are never citations: reasoning
+// (<think>) blocks, fenced code blocks, and inline code ("arr[1]", "[1, 2]").
+var codeSpan = regexp.MustCompile("(?s)<think>.*?(?:</think>|$)|```.*?(?:```|$)|`[^`\n]*`")
 
 // rewriteMarkers calls fn for every run of citation groups in text's prose and
 // splices in what it returns; raw is the run as written, lead its leading
@@ -157,54 +142,53 @@ func removeMarkers(text string) string {
 }
 
 // citeAnswer validates an answer's citation markers against the documents
-// retrieved for the turn. In a run of markers that cites at least one
-// retrieved document, markers for documents not retrieved are dropped (and
-// reported in dropped) and the list forms are normalized to "[1][2]". A run
-// citing no retrieved document at all is left as written: it may be prose
-// ("option [2]", "Table [12]") rather than a citation. The cited sources are
-// returned in first-cited order. uncited reports that context was retrieved
-// but the answer cites none of it: the answer is still returned, and the
-// caller flags it as unsourced. A turn without retrieval has nothing to cite,
-// so any marker in its answer is copied or invented and removed. Reasoning
-// (<think>) content never counts as a citation.
-func citeAnswer(answer string, retrieved []CitedSource) (content string, cited []CitedSource, uncited bool, dropped []int) {
+// retrieved for the turn and renumbers them for the reader: the first document
+// the answer cites becomes [1], the next new one [2], and so on, whatever its
+// number in the context the model saw. In a run of markers that cites at least
+// one retrieved document, markers for documents not retrieved are dropped and
+// list forms are normalized to "[1][2]". A run citing no retrieved document is
+// left as written: it may be prose ("option [2]", "Table [12]") rather than a
+// citation. The cited sources are returned in answer-marker order (1, 2, …).
+// uncited reports that context was retrieved but the answer cites none of it:
+// the answer is still returned, and the caller flags it as unsourced. A turn
+// without retrieval has nothing to cite, so any marker in its answer is copied
+// or invented and removed. Reasoning (<think>) content is left untouched and
+// never counts as a citation.
+func citeAnswer(answer string, retrieved []CitedSource) (content string, cited []CitedSource, uncited bool) {
 	if len(retrieved) == 0 {
-		return removeMarkers(answer), nil, false, nil
+		return removeMarkers(answer), nil, false
 	}
 	byMarker := make(map[int]CitedSource, len(retrieved))
 	for _, s := range retrieved {
 		byMarker[s.Marker] = s
 	}
+	local := make(map[int]int)
 
-	normalized := rewriteMarkers(answer, func(raw, lead string, nums []int) string {
+	content = rewriteMarkers(answer, func(raw, lead string, nums []int) string {
 		var kept strings.Builder
-		var invalid []int
+		inRun := make(map[int]bool)
 		for _, n := range nums {
-			if _, ok := byMarker[n]; ok {
-				fmt.Fprintf(&kept, "[%d]", n)
-			} else {
-				invalid = append(invalid, n)
+			src, ok := byMarker[n]
+			if !ok {
+				continue
+			}
+			m, seen := local[n]
+			if !seen {
+				m = len(cited) + 1
+				local[n] = m
+				cited = append(cited, CitedSource{Marker: m, Citation: src.Citation})
+			}
+			if !inRun[m] {
+				inRun[m] = true
+				fmt.Fprintf(&kept, "[%d]", m)
 			}
 		}
 		if kept.Len() == 0 {
 			return raw
 		}
-		dropped = append(dropped, invalid...)
 		return lead + kept.String()
 	})
-
-	seen := make(map[int]bool)
-	rewriteMarkers(StripThinkTags(normalized), func(raw, _ string, nums []int) string {
-		for _, n := range nums {
-			if _, ok := byMarker[n]; ok && !seen[n] {
-				seen[n] = true
-				cited = append(cited, byMarker[n])
-			}
-		}
-		return raw
-	})
-
-	return normalized, cited, len(cited) == 0, dropped
+	return content, cited, len(cited) == 0
 }
 
 // stripMarkers removes the citation markers that cite one of sources from
@@ -231,20 +215,6 @@ func stripMarkers(text string, sources []CitedSource) string {
 // noSourcesNotice is shown under a chat answer that cited none of the
 // documents retrieved for it.
 const noSourcesNotice = "No relevant sources: this answer cites none of the retrieved documents."
-
-// droppedMarkersNotice is shown under a chat answer whose markers included
-// ones for documents that were not retrieved, which citeAnswer removed.
-func droppedMarkersNotice(dropped []int) string {
-	seen := make(map[int]bool, len(dropped))
-	var parts []string
-	for _, n := range dropped {
-		if !seen[n] {
-			seen[n] = true
-			parts = append(parts, fmt.Sprintf("[%d]", n))
-		}
-	}
-	return "Ignored " + strings.Join(parts, " ") + ": not among the retrieved documents."
-}
 
 // formatSourcesBlock renders an answer's cited sources for the terminal: one
 // dimmed line per source with its marker, label, and link when it has one.

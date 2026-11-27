@@ -232,18 +232,15 @@ func historyToTurns(messages []Message, answerSources [][]CitedSource) []chatsto
 }
 
 // restoreCitations rebuilds a session's citation state from saved turns: the
-// per-answer sources a later save writes back, and a registry seeded so a
-// previously cited document keeps its marker and a new one numbers after them.
+// per-answer sources a later save writes back. Markers are numbered per answer,
+// so nothing else carries over.
 func restoreCitations(session *Session, turns []chatstore.Turn) {
 	session.AnswerSources = nil
-	session.Citations = NewCitationRegistry()
 	for _, t := range turns {
 		if t.Role != "assistant" {
 			continue
 		}
-		sources := t.Sources
-		session.AnswerSources = append(session.AnswerSources, sources)
-		session.Citations.Seed(sources)
+		session.AnswerSources = append(session.AnswerSources, t.Sources)
 	}
 }
 

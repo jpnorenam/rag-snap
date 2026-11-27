@@ -1,7 +1,7 @@
 "use client";
 
 import type { CitedSource } from "@/lib/types";
-import { NOT_GLUED_TO_CODE, type CitationMap } from "@/components/common/Markdown";
+import type { CitationMap } from "@/components/common/Markdown";
 
 interface Props {
   sources: CitedSource[];
@@ -46,39 +46,4 @@ export function citationMap(sources: CitedSource[] | null | undefined): Citation
 
 function isHttpUrl(href: string | undefined): href is string {
   return !!href && /^https?:\/\//i.test(href);
-}
-
-// A run of citation groups the model may emit: "[1]", "[1][3]", and the list
-// forms "[1, 2]", "[1;2]", with a tolerated "S" prefix ("[S1]") — mirroring the
-// daemon's markerGroup. Leading spaces are included so a run removed entirely
-// leaves no dangling space, and a run glued to a code-like word ("my_arr[1]")
-// is not a citation.
-const GROUP = String.raw`\[\s*[Ss]?\d{1,4}(?:\s*[,;]\s*[Ss]?\d{1,4})*\s*\]`;
-const MARKER_GROUP = new RegExp(String.raw`([ \t]*)${NOT_GLUED_TO_CODE}((?:${GROUP}[ \t]*)*${GROUP})`, "g");
-
-// Fenced code blocks and inline code: their brackets are code, never markers.
-const CODE_SPAN = /```[^]*?(?:```|$)|`[^`\n]*`/g;
-
-// normalizeMarkers rewrites citation runs outside code to the "[1][2]" form
-// the Markdown renderer turns into chips. When keep is given, a run citing at
-// least one marker in it loses the others (invented markers), while a run
-// citing none is left as written, as the daemon does: it may be prose
-// ("option [2]") rather than a citation. An empty keep set drops every run.
-export function normalizeMarkers(text: string, keep?: Set<number>): string {
-  const prose = (seg: string) =>
-    seg.replace(MARKER_GROUP, (raw: string, lead: string, run: string) => {
-      const all = (run.match(/\d+/g) ?? []).map(Number);
-      const nums = all.filter((n) => !keep || keep.has(n));
-      if (nums.length > 0) return lead + nums.map((n) => `[${n}]`).join("");
-      // An empty keep set is a turn with nothing to cite: its markers are
-      // copied or invented, and the daemon removes them.
-      return keep?.size === 0 ? "" : raw;
-    });
-  let out = "";
-  let last = 0;
-  for (const m of text.matchAll(CODE_SPAN)) {
-    out += prose(text.slice(last, m.index)) + m[0];
-    last = m.index + m[0].length;
-  }
-  return out + prose(text.slice(last));
 }

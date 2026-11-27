@@ -86,7 +86,8 @@ driven from commands like `rag-cli.rag k ingest …`.
 Grounded chat answers cite the documents they came from. As an answer streams, each `[1]`-style
 marker at the end of a paragraph renders as a small numbered **source chip**: hover it (or reach it
 with the keyboard) for the document's name, and activate it to open the document in a new tab when
-a link was recorded at ingest. A document keeps its number for the whole conversation. When the
+a link was recorded at ingest. Each answer numbers its sources on its own, in reading order: the
+first document it cites is `1`, the next `2`, and so on. When the
 answer finishes, a **Sources** list under it names every cited document, linked where possible, with
 the knowledge base it came from. Resumed chats show the same chips and Sources lists they were saved
 with; chats saved before citations existed show plain answers.

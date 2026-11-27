@@ -1344,7 +1344,7 @@ list of its cited documents.
 - **THEN** activating the chip opens the link in a new tab
 
 #### Scenario: Chips during streaming
-- **WHEN** a marker arrives in the token stream after the turn's `sources` frame
+- **WHEN** a marker arrives in the token stream after the `sources` frame announcing its document
 - **THEN** it renders as a chip before the answer completes
 
 #### Scenario: Unknown marker
@@ -1365,14 +1365,14 @@ SHALL be kept.
 - **THEN** no base is preselected
 
 ### Requirement: Markers that refer to nothing are not shown
-The chat screen SHALL render as chips only markers for documents the turn retrieved (or, for a restored
-chat, cited). Following the daemon, a marker beside a valid one that refers to nothing SHALL be removed,
-a run of markers none of which refers to a retrieved document SHALL be shown as written, and in a turn
-with nothing retrieved every marker SHALL be removed rather than shown as literal `[n]` text.
+The chat screen SHALL render the answer text as the daemon streams it, since the daemon has already
+removed markers that refer to nothing and renumbered the rest. It SHALL render as chips only markers
+for documents the answer has cited so far (or, once done, its cited sources); any other bracketed
+number SHALL be shown as written.
 
-#### Scenario: Marker without retrieval
-- **WHEN** an answer streamed without a preceding `sources` frame contains `[1]`
-- **THEN** the answer is shown without the `[1]` text and without a chip
+#### Scenario: Bracketed number that is not a citation
+- **WHEN** an answer says `configure option [7]` and `[7]` is not among its sources
+- **THEN** `[7]` is shown as text, not as a chip
 
 ### Requirement: Unsourced chat answers say they have no relevant sources
 When the terminal frame flags an answer as unsourced, the chat screen SHALL keep the streamed text and
