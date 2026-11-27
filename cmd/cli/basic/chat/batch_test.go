@@ -313,7 +313,7 @@ func TestBatchResultCarriesSourcesAndMarkerFreeAnswer(t *testing.T) {
 	q := BatchQuestion{ID: "SEC-1", Question: "Is FIPS supported?"}
 	retrieved := retrievedSources("fips.pdf", "pro.md")
 
-	r := batchResultFor(q, "SEC*", "The solution provides FIPS 140-3 certified modules. [1][7][2]", retrieved, false)
+	r := batchResultFor(q, "SEC*", "The solution provides FIPS 140-3 certified modules. [1][7][2]", retrieved, nil, false)
 	if r.Answer != "The solution provides FIPS 140-3 certified modules." {
 		t.Errorf("answer = %q, want marker-free prose", r.Answer)
 	}
@@ -327,7 +327,7 @@ func TestBatchResultCarriesSourcesAndMarkerFreeAnswer(t *testing.T) {
 
 func TestBatchResultUncitedAnswerIsWithheld(t *testing.T) {
 	q := BatchQuestion{Question: "Is FIPS supported?"}
-	r := batchResultFor(q, "", "The solution provides FIPS modules.", retrievedSources("fips.pdf"), false)
+	r := batchResultFor(q, "", "The solution provides FIPS modules.", retrievedSources("fips.pdf"), nil, false)
 	if r.Answer != noContextAnswer {
 		t.Errorf("answer = %q, want the no-answer response", r.Answer)
 	}

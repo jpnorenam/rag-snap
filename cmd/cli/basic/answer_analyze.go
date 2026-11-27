@@ -2,6 +2,7 @@ package basic
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -26,8 +27,14 @@ const extractionFallbackHint = "\n\nThe pattern-based extraction path is unaffec
 // Every failure it can return is wrapped with extractionFallbackHint by the caller, so
 // an operator whose analysis is unconfigured or whose provider is unreachable is told
 // what still works rather than being left at a dead end.
-func (cmd *answerCommand) runAnalyze(docPath string, contextPaths []string, outputPath, instructions string) error {
-	if err := cmd.analyze(docPath, contextPaths, outputPath, instructions); err != nil {
+func (cmd *answerCommand) runAnalyze(docPath string, contextPaths []string, outputPath, instructions string, scope analysis.SheetScope) error {
+	if err := cmd.analyze(docPath, contextPaths, outputPath, instructions, scope); err != nil {
+		// A scope the workbook cannot satisfy is the operator's to correct, and the
+		// extraction path has no scope to fall back to, so the hint would mislead.
+		var scopeErr *analysis.SheetScopeError
+		if errors.As(err, &scopeErr) {
+			return err
+		}
 		return fmt.Errorf("%w%s", err, extractionFallbackHint)
 	}
 	return nil
@@ -51,7 +58,7 @@ func resolveInstructions(text, file string) (string, error) {
 	return text, nil
 }
 
-func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputPath, instructions string) error {
+func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputPath, instructions string, scope analysis.SheetScope) error {
 	if _, err := os.Stat(docPath); err != nil {
 		return fmt.Errorf("cannot access file: %w", err)
 	}
@@ -85,7 +92,7 @@ func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputP
 	converter := analysis.NewConverter(tikaURL)
 
 	stop := common.StartProgressSpinner("Reading documents")
-	conveyance, err := converter.ConveyAll(docPath, contextPaths)
+	conveyance, err := converter.ConveyAllWith(docPath, contextPaths, scope)
 	stop()
 	if err != nil {
 		return err
@@ -95,6 +102,11 @@ func (cmd *answerCommand) analyze(docPath string, contextPaths []string, outputP
 		len(conveyance.Documents), settings.Model)
 	for _, r := range conveyance.Report {
 		fmt.Printf("  %-30s %-6s %-10s %s\n", r.Filename, r.Format, r.Path, r.Detail)
+		if analysis.Scoped(r.Sheets) {
+			for _, s := range r.Sheets {
+				fmt.Printf("      %2d  %-34s %5d row(s)  %s\n", s.Position, s.Name, s.DataRows, s.Scope)
+			}
+		}
 	}
 	// What triage is about to be told, so the operator can see it before spending a call.
 	if instructions != "" {

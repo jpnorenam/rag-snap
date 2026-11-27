@@ -45,6 +45,7 @@ type envelope struct {
 	Error      string          `json:"error"`
 	Operation  string          `json:"operation"`
 	Metadata   json.RawMessage `json:"metadata"`
+	Warnings   []string        `json:"warnings"`
 }
 
 // SocketPath returns the daemon socket path under $SNAP_COMMON, or a temp-dir

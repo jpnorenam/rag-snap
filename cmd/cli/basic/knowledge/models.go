@@ -14,6 +14,9 @@ const (
 	DefaultSentenceTransformerName    = "huggingface/sentence-transformers/msmarco-distilbert-base-tas-b"
 	defaultSentenceTransformerVersion = "1.0.2"
 
+	// DefaultCrossEncoderName is the reranker `knowledge init` registers. Search's
+	// MatchScoreThreshold assumes its output scale (a relevance logit, boundary 0):
+	// changing the model means revisiting the threshold.
 	DefaultCrossEncoderName    = "huggingface/cross-encoders/ms-marco-MiniLM-L-12-v2"
 	defaultCrossEncoderVersion = "1.0.2"
 

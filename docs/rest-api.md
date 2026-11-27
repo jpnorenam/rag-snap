@@ -270,7 +270,8 @@ SOCK=/var/snap/rag-cli/common/ragd/unix.socket
 # Discover the API: version, auth state, and feature extensions
 curl --unix-socket "$SOCK" http://ragd/
 
-# Server info: effective (secret-free) config summary and backend readiness
+# Server info: snap version and build commit, effective (secret-free) config
+# summary, and backend readiness
 curl --unix-socket "$SOCK" http://ragd/1.0
 
 # List knowledge bases (sync)
@@ -335,7 +336,7 @@ websocket URL to dial for streamed tokens and `<think>` blocks.
 | Method & path | Kind | Purpose |
 |---|---|---|
 | `GET /` | sync | API discovery: version, auth state, `api_extensions` |
-| `GET /1.0` | sync | Server info: config summary + backend readiness |
+| `GET /1.0` | sync | Server info: snap `version` and build `commit`, config summary, backend readiness |
 | `GET /1.0/operations`, `GET /1.0/operations/{id}` | sync | List / inspect operations |
 | `GET /1.0/operations/{id}/wait` | sync | Long-poll an operation to completion |
 | `DELETE /1.0/operations/{id}` | sync | Cancel a cancellable operation |
@@ -353,7 +354,8 @@ websocket URL to dial for streamed tokens and `<think>` blocks.
 | `DELETE /1.0/knowledge-engine/models/{id}` | sync | Undeploy and delete a model (`?force=true` if in use) |
 | `POST /1.0/search` | sync | Hybrid search |
 | `POST /1.0/chat` | async (ws) | Start an interactive chat session |
-| `POST /1.0/answer/batch` | async | Run a prepared batch manifest |
+| `POST /1.0/answer/batch` | async | Run a prepared batch manifest (optionally with `kapa_source_groups`) |
+| `GET /1.0/kapa/source-groups` | sync | List the kapa.ai project's source groups |
 | `POST /1.0/answer/build` | async | Extract questions from a document (spreadsheets return a column choice) |
 | `POST /1.0/answer/build/extract` | async | Extract questions from a chosen spreadsheet column |
 | `POST /1.0/answer/analyze` | async | Triage RFP documents for manifest generation |
@@ -409,6 +411,116 @@ answer is withheld, so `answer` is the no-answer response and `sources` is empty
 {"type": "token", "content": "Ubuntu Pro includes FIPS 140-3 modules. [1]"}
 {"type": "done", "sources": [{"marker": 1, "key": "pro-guide", "label": "Ubuntu Pro Guide", "href": "https://ubuntu.com/pro", "base": "docs", "tag": "canonical"}]}
 ```
+
+---
+
+## Search
+
+`POST /1.0/search` takes a `query`, the `bases` to search, and an optional `count` (default 15).
+It returns hits ordered by relevance score, highest first:
+
+```bash
+curl --unix-socket "$SOCK" -X POST http://ragd/1.0/search \
+  -H 'Content-Type: application/json' \
+  -d '{"bases":["default","docs"],"query":"kafka","count":4}' | jq '.metadata'
+```
+
+```json
+[
+  { "score": 9.1,  "base": "docs",    "source_id": "b1", "created_at": "2026-11-01", "label": "canonical", "content": "…", "matched": true },
+  { "score": 7.5,  "base": "default", "source_id": "a1", "created_at": "2026-11-01", "label": "canonical", "content": "…", "matched": true },
+  { "score": 0,    "base": "default", "source_id": "a2", "created_at": "2026-11-01", "label": "canonical", "content": "…", "matched": false },
+  { "score": -1.0, "base": "docs",    "source_id": "b2", "created_at": "2026-11-01", "label": "canonical", "content": "…", "matched": false }
+]
+```
+
+- **`count` caps the total across all bases.** Searching two bases with `count: 4` returns at most
+  4 hits: the best 4 across both, not 4 from each. To see more, raise `count`.
+- **`matched` tells whether a hit matches the query.** It's `true` when the relevance score is
+  above 0. The score comes from the cross-encoder reranker, and a positive score means the reranker
+  judges the passage relevant. Search always returns the nearest chunks, even for a term that
+  appears nowhere in the bases, so read `matched` rather than assuming every hit is relevant.
+  The CLI and the web UI show matched hits and hide the rest as "similar results".
+- **kapa.ai hits always match.** With `kapa_groups` (see [kapa.ai source groups](#kapaai-source-groups)),
+  up to `count` kapa.ai hits follow the local ones with `"matched": true`. Their scores are
+  rank-derived (1, ½, ⅓, …), not reranker scores, so the threshold below doesn't apply to them.
+- Clients should use `matched` rather than comparing scores themselves: the threshold belongs to
+  the server and may change with the reranker. A hit without `matched` comes from an older daemon;
+  treat it as matching.
+
+### The match threshold
+
+`matched` is `true` when `score > 0`. The threshold is exclusive, so a score of exactly 0 does
+not match.
+
+The score is the output of the cross-encoder reranker (by default
+`ms-marco-MiniLM-L-12-v2`, deployed by `knowledge init`). It reads the query and the chunk together
+and outputs a **relevance logit**: sigmoid(score) is its estimate of the probability that the
+chunk is relevant to the query. That makes 0 the reranker's own decision boundary, not a tuned
+number:
+
+| Score | Probability of relevant | Typical meaning |
+|---|---|---|
+| +8 | ~99.9% | Clearly answers the query |
+| +2 | ~88% | Relevant |
+| 0 | 50% | Boundary: does not match |
+| −4 | ~2% | Unrelated |
+| −10 | ~0% | Noise |
+
+Scores are not normalized to 0–1 and can't be compared across rerankers. Some things to know:
+
+- Short keyword queries tend to score lower than full questions, so a relevant chunk can land
+  just below 0 and show up as a similar result.
+- The reranker reads about the first 512 tokens of each chunk.
+- The threshold only filters the candidates retrieval found; it can't add results.
+
+---
+
+## kapa.ai source groups
+
+kapa.ai is a remote retrieval source used alongside the local knowledge bases. `ragd` builds its
+kapa.ai client once at startup from `kapa.enabled` and `kapa.project.id` (config) and
+`KAPA_API_KEY` (environment; `KAPA_PROJECT_ID` overrides the project). The key is never read from
+config: give it to the daemon in the same root-only systemd drop-in as `CHAT_API_KEY`, then
+`sudo snap restart rag-cli.ragd`.
+
+```bash
+curl --unix-socket "$SOCK" http://ragd/1.0/kapa/source-groups
+# {"type":"sync", …, "metadata": {"configured": true,
+#   "groups": [{"id": "74e10295-…", "name": "MAAS"}, {"id": "2ac5de52-…", "name": "Landscape"}]}}
+```
+
+- `configured: false` with an empty `groups` list means kapa.ai is disabled or its project id or
+  API key is missing. `configured: true` with an empty list is a project with no groups.
+- A failing kapa.ai request (rejected key, unreachable host) returns **502** instead of an empty list.
+
+A batch manifest selects groups by id with `kapa_source_groups`; absent or empty means no kapa.ai
+retrieval:
+
+```json
+{"version": "1.0", "knowledge_bases": ["maas"],
+ "kapa_source_groups": ["74e10295-…"],
+ "questions": [{"id": "Q1", "question": "How does MAAS commission servers?"}]}
+```
+
+Chat sessions and search take a selection the same way. `POST /1.0/chat` accepts
+`"kapa_source_groups": [...]` (a session otherwise starts with none), and its operation metadata
+reports the effective `kapa_groups` and `kapa_unavailable` (also inside `chat` when resuming a saved
+chat, which restores its selection). On the websocket, `{"type": "set-active-kapa-groups",
+"kapa_groups": [...]}` changes the selection and is acknowledged by an `active-kapa-groups` frame
+carrying the effective selection, or an `error` when kapa.ai is not configured. A non-fatal
+`warning` frame reports a kapa.ai request that failed during a turn; the turn still completes.
+`POST /1.0/search` accepts `"kapa_groups": [...]`, with or without `bases`. kapa.ai hits follow the
+local ones, with base `kapa.ai` and label `kapa-canonical`. When kapa.ai cannot be applied, the
+local hits are returned and the response's top-level `warnings` says why.
+
+Each result records what grounded it under `retrieved`, for example
+`"retrieved": {"local": 30, "kapa": 14}`, so you can confirm kapa.ai took part in a daemon run
+(the CLI's results file carries the same counts). Problems that degrade a run without failing it are
+listed under the operation metadata's `warnings` key: groups selected while kapa.ai is not configured, or a kapa.ai request failing for
+one question. The run continues on local knowledge in both cases. A problem that recurs across
+questions is one entry naming them (`questions Q1, Q3: …`, with ids past the tenth counted as
+`and N more`), so an outage does not produce one entry per question.
 
 ---
 
@@ -477,7 +589,12 @@ Per-service detail:
   to `model_state: DEPLOYED`). Each configured model carries a `deployed` flag. **A configured
   model ID that is not deployed breaks retrieval, and nothing else reports it until a search
   fails** — this flag is how you see it. Fix it with `rag-cli.rag knowledge init`.
-- **`inference`** — the LLM model name the chat backend serves (`llm_model`).
+- **`inference`** — the LLM model name the chat backend serves (`llm_model`). When the backend
+  cannot list models (AWS Bedrock's OpenAI-compatible route, or any `chat.api=anthropic` setup),
+  this is the configured `chat.model`, and with `chat.api=anthropic` health is a connection check
+  only, so no tokens are spent. With no `chat.model` configured there, the entry is `unreachable`
+  with guidance. Under `chat.api=anthropic`, the optional `temperature` in chat and
+  answer-batch request bodies is accepted but ignored.
 - **`tika`** — the Tika server version (`version`).
 - **`ragd`** — the API version and the enabled listeners (unix socket, and the loopback address
   when the loopback listener is on). The localhost token is never included.
@@ -509,10 +626,33 @@ sudo curl -s --unix-socket /var/snap/rag-cli/common/ragd/unix.socket -X DELETE \
 ```
 
 **Secrets never come back out.** The service credentials (`OPENSEARCH_USERNAME`,
-`OPENSEARCH_PASSWORD`, `CHAT_API_KEY`) are environment variables and are not config keys at all.
+`OPENSEARCH_PASSWORD`, `CHAT_API_KEY`, `KAPA_API_KEY`) are environment variables and are not config keys at all.
 The config keys that *are* secrets — any key whose last segment is `secret`, `password`, or
 `token`, today `gdrive.client.secret` — are redacted on read: the key is listed and stays
 writable, but its value is replaced with `<redacted>`. They are write-only through the API.
+### `POST /1.0/answer/batch`
+
+Runs a prepared batch manifest, in the JSON shape of the CLI's YAML manifest, as an async
+operation. While it runs, the metadata carries `questions_total`, `questions_done`, and `results`,
+which grows as each answer is produced. On completion it adds `generated_at`, `model` and `prompt`.
+
+**Judging.** Unless the body sets `"judge": false`, each answer is judged by Gemini as it is
+produced, against the chunks it was grounded on (see [Judging the answers](usage.md#judging-the-answers)).
+A judged run adds the following to the metadata:
+
+| Key | When | Meaning |
+|---|---|---|
+| `phase` | Always | `answering`, then `judging` once every question is answered, then `done` |
+| `judged_done`, `judged_total` | Judged runs | Verdicts so far, against answers so far |
+| `results[].judgment` | Once that row is judged | `{confidence, rating, issues, comment}`, or `{error}` for a row that could not be judged |
+| `judge` | On completion of a judged run | `{model, green, yellow, red, not_judged, consistency, consistency_error?, consistency_findings?, consistency_discarded?}`. Each finding is `{rows: [{row, phrase}], comment, broad?}`, listed once for the run; a `broad` one was applied to no row. A verdict whose score the consistency check lowered carries `pre_consistency_confidence` |
+| `judge_unavailable` | Judging is on but cannot run | Why, for example a missing `GEMINI_API_KEY` in the daemon's service environment. The run proceeds unjudged |
+
+Results are published before their verdicts, so a client can show answers while they are judged.
+Judging never fails the operation. A daemon that will judge advertises `answer_judge` in
+`api_extensions`. Turning judging off with `judge.enabled=false` removes the entry and adds no
+`judge_unavailable`, since that is a choice, not a fault.
+
 ### `POST /1.0/answer/build`
 
 Derives a batch manifest from an uploaded RFP/RFI document. Accepts
@@ -549,6 +689,16 @@ the `min_length` filter fails the operation with a column-naming message so the
 client can pick a different column or lower the minimum without starting a batch
 run.
 
+### `POST /1.0/answer/analyze/sheets`
+
+Lists a document's sheets so a client can offer a tab scope before analysis.
+`multipart/form-data` with the document in `file`. Synchronous: returns `{format, sheets}`, where
+each sheet has `position` (1-based, workbook order), `name` and `data_rows`. It makes no model
+call, needs no API key and stages nothing. A CSV is one sheet; a PDF or DOCX returns an empty
+`sheets` list. An unsupported file type, a workbook with no tables or a CSV that does not
+parse is a `400`; a workbook that cannot be converted because
+Tika is unavailable is a `500` saying so.
+
 ### `POST /1.0/answer/analyze`
 
 First of the two RFP-analysis passes. `multipart/form-data`: `file` is the RFP, and any
@@ -556,8 +706,18 @@ number of repeated `context` fields are supporting documents. An optional `instr
 field carries the operator's free-text instructions (granularity, scope, which questions to
 include). They are applied to every analysis call for the session, including generation,
 without being sent again. Over 4,000 characters is a `400` before any operation starts.
+An optional `sheets` field scopes a spreadsheet RFP's tabs: a JSON object mapping sheet names
+(matched ignoring case) or 1-based positions to `answer`, `context` or `exclude`, for example
+`{"1":"context","2":"answer","3":"answer"}`. A key is matched against sheet names before
+positions, so a client that has the sheet list should send names: in a workbook with tabs
+named `1` or `2`, a position key can name a different tab. Once any sheet is named, unnamed sheets are
+excluded. A malformed `sheets` value, or one sent with a primary document that is not an `.xlsx`,
+is a `400` before any operation starts. A sheet the workbook lacks, or a scope with nothing to
+answer, fails the operation before any model call, with a message listing the sheets.
 Runs as an async operation and publishes `analysis_token`, `expires_at`, `model`, `triage`,
-`report` and `instructions` (the instructions the session is working to, empty when none).
+`report`, `instructions` (the instructions the session is working to, empty when none) and,
+for a spreadsheet, `sheets`: every sheet with `position`, `name`, `data_rows` and its resolved
+`scope`. The scope is staged with the token, so generation applies it without it being sent again.
 
 `triage` is what the model found without generating anything: the RFP's identity, its
 section structure with the id prefix each section uses, an estimated question count,

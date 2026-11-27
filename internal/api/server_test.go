@@ -83,7 +83,7 @@ func startTestServerWithConfig(t *testing.T, urls map[string]string, configLines
 // startTestServerWithStore is startTestServerWithConfig with the config store given
 // directly, for handlers that write config (the file config is read-only) or that
 // need layered package/user values.
-func startTestServerWithStore(t *testing.T, dir string, urls map[string]string, cfg storage.Config) (string, *Server) {
+func startTestServerWithStore(t *testing.T, dir string, urls map[string]string, cfg storage.Config, mutate ...func(*Options)) (string, *Server) {
 	t.Helper()
 	sock := filepath.Join(dir, "ragd", "unix.socket")
 
@@ -92,11 +92,15 @@ func startTestServerWithStore(t *testing.T, dir string, urls map[string]string, 
 	// each other's prompt customizations.
 	t.Setenv("SNAP_COMMON", dir)
 
-	srv := New(Options{
+	opts := Options{
 		Context:     &common.Context{Config: cfg},
 		Socket:      SocketConfig{Path: sock, Group: currentUserGroup(t), Mode: 0o660},
 		BackendURLs: urls,
-	})
+	}
+	for _, m := range mutate {
+		m(&opts)
+	}
+	srv := New(opts)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

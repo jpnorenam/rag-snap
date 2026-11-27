@@ -213,12 +213,12 @@ func TestStripMarkers(t *testing.T) {
 // prompt is exactly the resolved prompt, so a turn without retrieval never sees
 // the rules' "[1]" example.
 func TestCitationRulesStayOutOfSystemPrompt(t *testing.T) {
-	ls, err := NewLiveSession("http://127.0.0.1:1", "model", nil, "", nil, "CUSTOM VARIANT", 0.3, false)
+	ls, err := NewLiveSession(BackendConfig{BaseURL: "http://127.0.0.1:1"}, "model", nil, nil, "", nil, "CUSTOM VARIANT", 0.3, false)
 	if err != nil {
 		t.Fatalf("NewLiveSession: %v", err)
 	}
-	if ls.systemPrompt != "CUSTOM VARIANT" {
-		t.Errorf("system prompt = %q, want the resolved prompt unchanged", ls.systemPrompt)
+	if ls.conv.system != "CUSTOM VARIANT" {
+		t.Errorf("system prompt = %q, want the resolved prompt unchanged", ls.conv.system)
 	}
 }
 

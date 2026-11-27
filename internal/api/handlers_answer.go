@@ -6,9 +6,15 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/chat"
 )
+
+// judgedResultsInterval is how often a judged run republishes its results while the
+// verdicts arrive. Progress counters are published on every verdict.
+const judgedResultsInterval = 2 * time.Second
 
 // defaultBatchTemperature matches the CLI `answer batch` default: low sampling
 // temperature for deterministic, grounded answers.
@@ -24,15 +30,21 @@ type batchManifestRequest struct {
 	Version        string   `json:"version,omitempty"`
 	Model          string   `json:"model,omitempty"`
 	KnowledgeBases []string `json:"knowledge_bases,omitempty"`
-	Prompt         string   `json:"prompt,omitempty"`
+	// KapaSourceGroups selects the kapa.ai source groups to retrieve from, by id.
+	// Absent or empty means no kapa.ai retrieval.
+	KapaSourceGroups []string `json:"kapa_source_groups,omitempty"`
+	Prompt           string   `json:"prompt,omitempty"`
 	// PromptRef names a stored answer_system_prompt variant to run this batch on.
 	// It is mutually exclusive with the inline Prompt.
 	PromptRef string `json:"prompt_ref,omitempty"`
 	// Domains routes questions to requirement domains by id, applied identically
 	// to the CLI's direct path.
-	Domains     []batchDomainRequest   `json:"domains,omitempty"`
-	Temperature *float64               `json:"temperature,omitempty"`
-	Questions   []batchQuestionRequest `json:"questions"`
+	Domains     []batchDomainRequest `json:"domains,omitempty"`
+	Temperature *float64             `json:"temperature,omitempty"`
+	// Judge set to false skips judging for this run. Absent or true judges the
+	// answers whenever the daemon can (see answer-judge).
+	Judge     *bool                  `json:"judge,omitempty"`
+	Questions []batchQuestionRequest `json:"questions"`
 }
 
 // batchQuestionRequest is a single question in a posted manifest.
@@ -81,13 +93,16 @@ func (req batchManifestRequest) toManifest() *chat.BatchManifest {
 			Keywords: chat.KeywordList(q.Keywords),
 		}
 	}
+	// PromptRef is deliberately not copied: the handler resolves it against the
+	// prompt store before the run, and a run manifest carrying it is an error.
 	return &chat.BatchManifest{
-		Version:        req.Version,
-		Model:          req.Model,
-		KnowledgeBases: req.KnowledgeBases,
-		Prompt:         req.Prompt,
-		Domains:        req.domains(),
-		Questions:      questions,
+		Version:          req.Version,
+		Model:            req.Model,
+		KnowledgeBases:   req.KnowledgeBases,
+		KapaSourceGroups: req.KapaSourceGroups,
+		Prompt:           req.Prompt,
+		Domains:          req.domains(),
+		Questions:        questions,
 	}
 }
 
@@ -101,7 +116,23 @@ func (req batchManifestRequest) toManifest() *chat.BatchManifest {
 // retrieval on completion. Each result under the operation metadata's "results"
 // key carries the question's "id", "question", "answer", and — when the
 // manifest's "domains" block routed it — the "domain" pattern that matched, so
-// the routing is auditable per answer. To derive a manifest from a document,
+// the routing is auditable per answer, and "retrieved" ({"local": n, "kapa": m})
+// when retrieval ran, recording how many local and kapa.ai hits grounded it.
+// Problems that degrade the run without failing it are listed under the
+// metadata's "warnings" key — for example a manifest selecting
+// "kapa_source_groups" while kapa.ai is not configured, or a kapa.ai request
+// failing for one question; the run continues on local knowledge in both cases.
+//
+// Unless the request sets "judge" to false, the answers are judged by Gemini as they
+// are produced. A judged result carries a "judgment" (confidence, rating, issues,
+// comment — or an error when that row could not be judged), the metadata carries
+// "phase" ("answering" or "judging") with "judged_done" and "judged_total", and the
+// completed metadata carries a "judge" summary, including each cross-answer
+// "consistency_findings" entry once, with every row it names quoted, and the count
+// "consistency_discarded" of findings whose quotes did not check out. A verdict the
+// consistency check lowered carries "pre_consistency_confidence". When judging is wanted but the daemon
+// cannot judge, "judge_unavailable" says why and the run proceeds unjudged. Judging
+// never fails the operation. To derive a manifest from a document,
 // use the separate POST /1.0/answer/build endpoint (Tika extraction + optional
 // LLM refinement); this run endpoint accepts only a prepared manifest.
 //
@@ -204,43 +235,94 @@ func (s *Server) handleAnswerBatch(w http.ResponseWriter, r *http.Request) {
 		resources["knowledge"] = bases
 	}
 
+	// Judging is resolved before the operation starts, like the prompts.
+	var judge *chat.BatchJudge
+	var judgeUnavailable string
+	if req.Judge == nil || *req.Judge {
+		judge, judgeUnavailable = s.batchJudge()
+	}
+
 	total := len(manifest.Questions)
 	op, err := s.ops.runTask(
 		fmt.Sprintf("Answering a batch of %d question(s)", total),
 		resources, true,
 		func(ctx context.Context, op *Operation) error {
-			op.UpdateMetadata(map[string]any{"questions_total": total, "questions_done": 0})
+			start := map[string]any{"questions_total": total, "questions_done": 0, "phase": "answering"}
+			if judgeUnavailable != "" {
+				start["judge_unavailable"] = judgeUnavailable
+			}
+			op.UpdateMetadata(start)
 			// Publish each answer as it completes so a client can render the
 			// Q&A pairs live, matching the direct-mode `answer batch` output.
-			var done []chat.BatchResult
+			// Verdicts land on the published results as they arrive, from the
+			// judge's goroutines, so the shared slice is guarded.
+			var (
+				mu          sync.Mutex
+				done        []chat.BatchResult
+				lastResults time.Time
+				warnings    chat.BatchWarnings
+			)
+			publish := func(extra map[string]any) {
+				extra["results"] = append([]chat.BatchResult(nil), done...)
+				op.UpdateMetadata(extra)
+			}
 			hooks := chat.BatchHooks{
 				OnResult: func(i, total int, r chat.BatchResult) {
+					mu.Lock()
+					defer mu.Unlock()
 					done = append(done, r)
-					op.UpdateMetadata(map[string]any{
-						"questions_total": total,
-						"questions_done":  i + 1,
-						"results":         append([]chat.BatchResult(nil), done...),
-					})
+					publish(map[string]any{"questions_total": total, "questions_done": i + 1})
 				},
 				OnError: func(i, total int, _ chat.BatchQuestion, _ error) {
 					op.UpdateMetadata(map[string]any{"questions_total": total, "questions_done": i + 1})
 				},
+				// Problems that degrade the run without failing it (kapa.ai
+				// requested but unavailable, or a kapa.ai request failing) are
+				// published so the client can show them, never swallowed. A
+				// problem repeated across questions is one line naming them.
+				OnWarning: func(question, msg string) {
+					warnings.Add(question, msg)
+					op.UpdateMetadata(map[string]any{"warnings": warnings.Lines()})
+				},
+				OnAnswered: func(*chat.BatchOutput) {
+					op.UpdateMetadata(map[string]any{"phase": "judging", "questions_done": total})
+				},
+				OnJudged: func(idx int, j chat.Judgment, judged, judgeTotal int) {
+					mu.Lock()
+					defer mu.Unlock()
+					if idx < len(done) {
+						done[idx].Judgment = &j
+					}
+					progress := map[string]any{"judged_done": judged, "judged_total": judgeTotal}
+					// Copying every result on every verdict would send the whole run once
+					// per row, so the results are republished at most once per interval;
+					// the final metadata always carries all of them.
+					if time.Since(lastResults) < judgedResultsInterval {
+						op.UpdateMetadata(progress)
+						return
+					}
+					lastResults = time.Now()
+					publish(progress)
+				},
 			}
-			// kapa.ai retrieval is not yet wired into the daemon backend/client
-			// config, so batch answers served over the REST API run without it.
-			out, err := chat.RunBatch(ctx, baseURL, knowledgeClient, nil, embeddingModelID, manifest, prompts, temperature, hooks, s.ctx.Verbose)
+			out, err := chat.RunBatch(ctx, s.clients.chatBackend(), knowledgeClient, s.kapa, embeddingModelID, manifest, prompts, temperature, judge, hooks, s.ctx.Verbose)
 			if err != nil {
 				return err
 			}
 			out.Prompt = promptRef
 			// Publish the structured results on the operation so a client can
 			// retrieve them once the operation completes.
-			op.UpdateMetadata(map[string]any{
+			final := map[string]any{
 				"generated_at": out.GeneratedAt,
 				"model":        out.Model,
 				"prompt":       out.Prompt,
 				"results":      out.Results,
-			})
+				"phase":        "done",
+			}
+			if out.Judge != nil {
+				final["judge"] = out.Judge
+			}
+			op.UpdateMetadata(final)
 			return nil
 		},
 	)

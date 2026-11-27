@@ -48,6 +48,13 @@ the docs in a new tab. The active section is marked with an orange left-border i
 browser tab title tracks the section you are on. On narrow windows the rail collapses to an
 icon-only strip; hover an icon for its label.
 
+The very bottom of the rail shows the running build: the snap version and the commit it was built
+from, e.g. `v0.0.9 · cd3ac8925556`. A `-dirty` suffix means the snap was built from a tree with
+uncommitted changes (or new, uncommitted source files), and `dev` means ragd isn't running from
+the snap. Include it when reporting a problem. It's hidden when the rail collapses; the **ragd** card
+on the Status page shows the same information. For the CLI, `rag-cli.rag --version` prints the same
+for its own build.
+
 ### Background operations
 
 Long-running work the daemon performs on your behalf — ingesting documents, running an answer
@@ -130,6 +137,21 @@ the exact variable name to set.
 Re-running a batch is safe by default: sources already ingested are skipped unless **Force
 re-ingest** is set, which replaces them (the same semantics as the CLI).
 
+### Search
+
+**Search** runs the same retrieval as `rag-cli.rag k search`: hybrid semantic + lexical search
+with reranking, over the knowledge bases you toggle on, with no LLM involved. **Results** sets
+the maximum number of results in total across the selected bases. The query, bases, and count
+are kept in the URL, so a search can be shared or reloaded.
+
+Only results that **match** the query are listed. A result matches when its relevance score
+is above 0, meaning the reranker judges it relevant. Search always returns the chunks nearest
+to the query, even for a term your bases don't contain, so the others are kept apart as
+**similar results**: a line under the matches says how many there are, and **Show similar
+results** reveals them, marked "Not matching". They're hidden again on every new search. When
+nothing matches, the page says so instead of listing unrelated chunks. The split is the same
+one the CLI makes for the same query.
+
 ### Prompts
 
 The **Prompts** page is the browser equivalent of `rag-cli.rag prompt init`. It shows the three
@@ -175,8 +197,8 @@ always shown, never colour alone), its endpoint, and its own details:
   init` prints them) *and* the models OpenSearch actually has **deployed**. If a configured model
   is not deployed, the card says so — that combination breaks retrieval, and without this you would
   not find out until a search failed. Fix it with `rag-cli.rag knowledge init`.
-- **Inference** shows the LLM it serves, **Tika** its version, and **ragd** its API version and
-  listeners.
+- **Inference** shows the LLM it serves, **Tika** its version, and **ragd** its snap version, the
+  commit it was built from, its API version, and its listeners.
 
 The daemon probes the services when you ask, not on a timer: the page checks on load and on
 **Refresh**, and shows when it last checked. An unreachable service degrades on its own card,
@@ -193,6 +215,25 @@ re-check Status above.
 Secret values are never shown. The service credentials are environment variables, not
 configuration, and the one config key that *is* a secret (`gdrive.client.secret`) is redacted by
 the daemon — it renders as `••••` and can be written but never read back.
+
+### kapa.ai sources
+
+When kapa.ai is configured on the daemon (`kapa.project.id` plus `KAPA_API_KEY`, see
+[below](#configuring-the-chat-backend-and-api-key)), the **Chat** screen, the **Search** page and
+**Run a manifest** each show a **Kapa.ai sources** row of chips under the knowledge-base chips.
+
+- **Chat:** chips can be toggled mid-conversation and apply from the next question, like
+  `/use-kapa`. A new chat starts with none selected. Saved chats remember the selection, and resuming
+  restores it.
+- **Search:** selected groups are searched as well. kapa.ai results follow the local ones with a
+  `kapa.ai` chip, and the selection is kept in the page URL (`g=`) so a shared link reproduces the
+  search.
+- **Run a manifest:** the manifest's `kapa_source_groups` are preselected and can be changed before
+  the run.
+
+Without kapa.ai configured, the row explains what to set instead. If kapa.ai is selected but cannot
+be used, or a request fails, a caution notice says so and the answer or results use local knowledge
+only.
 
 ### Answer RFPs
 
@@ -231,6 +272,15 @@ The **Answer RFPs** section is browser parity with the CLI's `answer batch` (and
   with no routing.
   The wizard warns you before you navigate away with an unsaved manifest; cancelling while the
   document is being read or a column extracted just returns you to the previous step.
+
+  On the **analysis** path (see [Analysis](usage.md#instructions)), choosing a workbook (`.xlsx`) as
+  the RFP lists its tabs, with each tab's position and row count, under **Tabs to analyse**. Set each
+  tab to **Answer** (questions are taken from it, the default), **Context only** (sent as background,
+  such as a read-me or a sizing appendix, with no questions taken from it) or **Exclude** (not sent).
+  Listing the tabs makes no model call. Analysis cannot start with no tab set to Answer. The triage
+  step shows the tab scope beside your instructions, and a downloaded manifest records it in its
+  header, as `--sheets`/`--context-sheets` do on the CLI. If the tabs cannot be listed, for example
+  because Tika is down, the reason is shown and analysis still runs over every tab.
 - **Review results** — open a previously exported results JSON to review the answers without
   re-running anything.
 
@@ -243,6 +293,22 @@ results file written before domain routing existed. A **Sources** disclosure und
 the documents it cited, by name and linked where a link was recorded; batch answers carry no
 `[1]` markers in their text, so the sources live only in this list. Results files written before
 citations existed show no sources.
+
+When the run was [judged](usage.md#judging-the-answers), each card shows the verdict between the
+question and the answer: a badge naming the rating in words and by icon shape (**Green · paste as
+is**, **Yellow · check or edit**, **Red · fix or answer**, or **Not judged** with the reason), the
+confidence score, the spreadsheet row (the first answer is row 2), and the judge's comment saying
+what to check or correct. Above the cards, a summary strip counts each rating; each count is a toggle
+that shows or hides that rating's cards, so you can work through red and yellow only. Cards keep their
+numbers and rows while filtered. While a judged run is finishing, the running view shows **Judging
+answers** with its own progress, and says up front when the daemon cannot judge and why. A results
+file with no verdicts renders as before, and **Export JSON** keeps the verdicts and the summary.
+
+Below the strip, **Consistency across answers** lists each cross-answer finding once: the rows it
+names, each a link to that card (clearing a rating filter that would hide it), and what conflicts.
+A finding too wide to be a contradiction is marked **Not applied to rows** and changes no card.
+A card whose score the check lowered shows it, for example *Confidence 3/5 (lowered from 5 by the
+consistency check)*.
 
 ---
 
@@ -283,7 +349,8 @@ The UI is then reachable at `http://127.0.0.1:43210/ui/` on that resolved port. 
 
 The UI talks to the daemon, and the **daemon** — not your shell — makes the call to the
 inference backend. Backend secrets are passed to `ragd` through environment variables
-(`OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `CHAT_API_KEY`), never through config.
+(`OPENSEARCH_USERNAME`, `OPENSEARCH_PASSWORD`, `CHAT_API_KEY`, and `KAPA_API_KEY` if you use
+kapa.ai), never through config.
 
 This matters for the chat API key. When you run `rag-cli.rag chat` interactively, the CLI
 inherits `CHAT_API_KEY` from your shell, so a plain `export CHAT_API_KEY=…` is enough. But
@@ -299,8 +366,8 @@ The same recipe is in [the REST API guide](rest-api.md):
 
 ```bash
 sudo mkdir -p /etc/systemd/system/snap.rag-cli.ragd.service.d
-printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\n' \
-  "$YOUR_CHAT_KEY" "$YOUR_OPENSEARCH_USER" "$YOUR_OPENSEARCH_PASSWORD" | \
+printf '[Service]\nEnvironment=CHAT_API_KEY=%s\nEnvironment=OPENSEARCH_USERNAME=%s\nEnvironment=OPENSEARCH_PASSWORD=%s\nEnvironment=KAPA_API_KEY=%s\n' \
+  "$YOUR_CHAT_KEY" "$YOUR_OPENSEARCH_USER" "$YOUR_OPENSEARCH_PASSWORD" "$YOUR_KAPA_KEY" | \
   sudo tee /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf >/dev/null
 sudo chmod 600 /etc/systemd/system/snap.rag-cli.ragd.service.d/10-secrets.conf
 sudo systemctl daemon-reload
@@ -313,8 +380,13 @@ through the `snapctl` config store or the `GET /1.0` config summary.
 Confirm the running daemon actually has them (checks the live process, not just the unit):
 
 ```bash
-sudo tr '\0' '\n' < /proc/$(pgrep -x ragd)/environ | grep -E 'CHAT_API_KEY|OPENSEARCH_USERNAME|OPENSEARCH_PASSWORD'
+sudo tr '\0' '\n' < /proc/$(pgrep -x ragd)/environ | grep -E 'CHAT_API_KEY|OPENSEARCH_USERNAME|OPENSEARCH_PASSWORD|KAPA_API_KEY'
 ```
+
+`ragd` reads these once at startup, so restart it (`sudo snap restart rag-cli.ragd`) after changing
+the drop-in or a config key such as `kapa.project.id`. With kapa.ai configured, the *Run a
+manifest* screen lists your kapa.ai source groups by name; without it, the screen shows what to set.
+The kapa.ai API key is no longer a config key: `kapa.api.key` is ignored and removed on refresh.
 
 The drop-in directory survives `snap restart` and `snap install --dangerous` of the same
 build. A full `snap remove` clears it, so re-apply the drop-in after a clean reinstall.

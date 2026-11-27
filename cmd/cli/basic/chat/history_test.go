@@ -6,18 +6,16 @@ import (
 
 	"github.com/jpnorenam/rag-snap/cmd/cli/basic/knowledge"
 	"github.com/jpnorenam/rag-snap/internal/chatstore"
-	"github.com/openai/openai-go/v3"
 )
 
-func TestHistoryToTurnsDropsSystem(t *testing.T) {
-	msgs := []openai.ChatCompletionMessageParamUnion{
-		openai.SystemMessage("system prompt"),
-		openai.UserMessage("hello"),
-		openai.AssistantMessage("hi there"),
+func TestHistoryToTurns(t *testing.T) {
+	msgs := []Message{
+		{Role: RoleUser, Content: "hello"},
+		{Role: RoleAssistant, Content: "hi there"},
 	}
 	turns := historyToTurns(msgs, nil)
 	if len(turns) != 2 {
-		t.Fatalf("expected 2 turns (system dropped), got %d", len(turns))
+		t.Fatalf("expected 2 turns, got %d", len(turns))
 	}
 	if turns[0].Role != "user" || turns[0].Content != "hello" {
 		t.Errorf("turn 0 = %+v", turns[0])
@@ -27,23 +25,40 @@ func TestHistoryToTurnsDropsSystem(t *testing.T) {
 	}
 }
 
-func TestTurnsToHistoryRebuildsWithFreshSystem(t *testing.T) {
+func TestTurnsToHistoryDropsUnknownRoles(t *testing.T) {
 	turns := []chatstore.Turn{
+		{Role: "system", Content: "a stored system prompt must never be replayed"},
 		{Role: "user", Content: "hello"},
 		{Role: "assistant", Content: "hi there"},
 	}
-	msgs := turnsToHistory("fresh system", turns)
-	if len(msgs) != 3 {
-		t.Fatalf("expected system + 2 turns, got %d", len(msgs))
+	msgs := turnsToHistory(turns)
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 turns (system dropped), got %d", len(msgs))
 	}
-	if msgs[0].OfSystem == nil || msgs[0].OfSystem.Content.OfString.Or("") != "fresh system" {
-		t.Errorf("first message is not the fresh system prompt: %+v", msgs[0])
+	if msgs[0] != (Message{Role: RoleUser, Content: "hello"}) {
+		t.Errorf("first message is not the user turn: %+v", msgs[0])
 	}
-	if msgs[1].OfUser == nil || msgs[1].OfUser.Content.OfString.Or("") != "hello" {
-		t.Errorf("second message is not the user turn: %+v", msgs[1])
+	if msgs[1] != (Message{Role: RoleAssistant, Content: "hi there"}) {
+		t.Errorf("second message is not the assistant turn: %+v", msgs[1])
 	}
-	if msgs[2].OfAssistant == nil || msgs[2].OfAssistant.Content.OfString.Or("") != "hi there" {
-		t.Errorf("third message is not the assistant turn: %+v", msgs[2])
+}
+
+// Saved turns are backend-neutral: a chat saved under one chat.api must resume
+// unchanged under the other.
+func TestHistoryRoundTrip(t *testing.T) {
+	want := []Message{
+		{Role: RoleUser, Content: "what is MAAS?"},
+		{Role: RoleAssistant, Content: "Metal as a Service."},
+		{Role: RoleUser, Content: "and its storage?"},
+	}
+	got := turnsToHistory(historyToTurns(want, nil))
+	if len(got) != len(want) {
+		t.Fatalf("round trip changed the length: got %d, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("message %d = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }
 
@@ -69,14 +84,13 @@ func TestRelativeTime(t *testing.T) {
 func TestSourcesSurviveSaveAndResume(t *testing.T) {
 	guide := CitedSource{Marker: 2, Citation: knowledge.Citation{Key: "guide.pdf", Label: "Install Guide", Href: "https://example.com/guide.pdf", Base: "docs", Tag: "canonical"}}
 	faq := CitedSource{Marker: 1, Citation: knowledge.Citation{Key: "faq.md", Label: "faq.md", Base: "docs", Tag: "canonical"}}
-	msgs := []openai.ChatCompletionMessageParamUnion{
-		openai.SystemMessage("system"),
-		openai.UserMessage("q1"),
-		openai.AssistantMessage("a1 [1]"),
-		openai.UserMessage("hi"),
-		openai.AssistantMessage("hello"),
-		openai.UserMessage("q2"),
-		openai.AssistantMessage("a2 [2][1]"),
+	msgs := []Message{
+		{Role: RoleUser, Content: "q1"},
+		{Role: RoleAssistant, Content: "a1 [1]"},
+		{Role: RoleUser, Content: "hi"},
+		{Role: RoleAssistant, Content: "hello"},
+		{Role: RoleUser, Content: "q2"},
+		{Role: RoleAssistant, Content: "a2 [2][1]"},
 	}
 	answerSources := [][]CitedSource{{faq}, nil, {guide, faq}}
 
@@ -113,7 +127,7 @@ func TestSourcesSurviveSaveAndResume(t *testing.T) {
 	}
 
 	// A second save from the resumed session writes the same sources back.
-	again := historyToTurns(turnsToHistory("system", got.Turns), session.AnswerSources)
+	again := historyToTurns(turnsToHistory(got.Turns), session.AnswerSources)
 	if len(again[5].Sources) != 2 {
 		t.Errorf("re-saved last answer sources = %+v, want 2", again[5].Sources)
 	}

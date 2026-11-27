@@ -12,10 +12,11 @@ import (
 
 // ChatControl is a client→server control frame on the chat websocket.
 type ChatControl struct {
-	Type    string   `json:"type"`
-	Content string   `json:"content,omitempty"`
-	Bases   []string `json:"bases,omitempty"`
-	Title   string   `json:"title,omitempty"`
+	Type       string   `json:"type"`
+	Content    string   `json:"content,omitempty"`
+	Bases      []string `json:"bases,omitempty"`
+	KapaGroups []string `json:"kapa_groups,omitempty"`
+	Title      string   `json:"title,omitempty"`
 }
 
 // ChatServerMessage is a server→client frame on the chat websocket. ID and Title
@@ -25,14 +26,15 @@ type ChatControl struct {
 // and on a "done" frame (the documents the answer cited); Unsourced flags a
 // done frame whose answer cited none of the retrieved documents.
 type ChatServerMessage struct {
-	Type      string             `json:"type"`
-	Content   string             `json:"content,omitempty"`
-	Bases     []string           `json:"bases,omitempty"`
-	Error     string             `json:"error,omitempty"`
-	ID        string             `json:"id,omitempty"`
-	Title     string             `json:"title,omitempty"`
-	Sources   []chatstore.Source `json:"sources,omitempty"`
-	Unsourced bool               `json:"unsourced,omitempty"`
+	Type       string             `json:"type"`
+	Content    string             `json:"content,omitempty"`
+	Bases      []string           `json:"bases,omitempty"`
+	KapaGroups []string           `json:"kapa_groups,omitempty"`
+	Error      string             `json:"error,omitempty"`
+	ID         string             `json:"id,omitempty"`
+	Title      string             `json:"title,omitempty"`
+	Sources    []chatstore.Source `json:"sources,omitempty"`
+	Unsourced  bool               `json:"unsourced,omitempty"`
 }
 
 // RestoredChat is the transcript and knowledge-base context recovered when a
@@ -43,6 +45,10 @@ type RestoredChat struct {
 	Turns        []chatstore.Turn `json:"turns"`
 	Bases        []string         `json:"bases"`
 	DroppedBases []string         `json:"dropped_bases"`
+	// KapaGroups is the restored kapa.ai selection; KapaUnavailable is set when
+	// the saved chat had one but kapa.ai is not configured on the daemon.
+	KapaGroups      []string `json:"kapa_groups"`
+	KapaUnavailable bool     `json:"kapa_unavailable"`
 }
 
 // ChatSession is an open chat websocket plus the resolved model. Restored is set
@@ -135,6 +141,12 @@ func (s *ChatSession) Prompt(ctx context.Context, text string) error {
 // frame the caller reads next.
 func (s *ChatSession) Save(ctx context.Context, title string) error {
 	return wsjson.Write(ctx, s.conn, ChatControl{Type: "save", Title: title})
+}
+
+// SetActiveKapaGroups sends a set-active-kapa-groups control frame selecting
+// kapa.ai source groups by id.
+func (s *ChatSession) SetActiveKapaGroups(ctx context.Context, ids []string) error {
+	return wsjson.Write(ctx, s.conn, ChatControl{Type: "set-active-kapa-groups", KapaGroups: ids})
 }
 
 // SetActiveBases sends a set-active-kbs control frame.

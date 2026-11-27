@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -212,5 +213,60 @@ func TestStatusReportsDaemonWithoutLeakingToken(t *testing.T) {
 	}
 	if leaks(t, env, "super-secret-token") {
 		t.Fatal("the localhost token leaked into the status payload")
+	}
+}
+
+// fakeMessagesEndpoint is a reachable chat endpoint that fails the test if the
+// status probe sends it anything: with chat.api=anthropic, health must cost no
+// tokens, so reachability is a TCP connect and nothing more.
+func fakeMessagesEndpoint(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		t.Errorf("status probe sent %s %s to the Messages endpoint; it must not spend tokens", r.Method, r.URL.Path)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func TestStatusAnthropicReportsConfiguredModel(t *testing.T) {
+	chatSrv := fakeMessagesEndpoint(t)
+	sock, _ := startTestServerWithStore(t, t.TempDir(), map[string]string{
+		backendOpenAI: chatSrv.URL + "/anthropic",
+	}, newMemConfig(map[string]any{
+		"chat.api":   "anthropic",
+		"chat.model": "anthropic.claude-sonnet-5-5",
+	}, nil))
+
+	_, env := promptRequest(t, sock, http.MethodGet, "/1.0/status", nil)
+	inference := statusPayload(t, env)[serviceInference]
+	if inference.State != serviceRunning || inference.LLMModel != "anthropic.claude-sonnet-5-5" {
+		t.Fatalf("inference = %+v, want running with the configured model", inference)
+	}
+}
+
+func TestStatusAnthropicWithoutModel(t *testing.T) {
+	chatSrv := fakeMessagesEndpoint(t)
+	sock, _ := startTestServerWithStore(t, t.TempDir(), map[string]string{
+		backendOpenAI: chatSrv.URL + "/anthropic",
+	}, newMemConfig(map[string]any{"chat.api": "anthropic"}, nil))
+
+	_, env := promptRequest(t, sock, http.MethodGet, "/1.0/status", nil)
+	inference := statusPayload(t, env)[serviceInference]
+	if inference.State != serviceUnreachable || !strings.Contains(inference.Error, "chat.model") {
+		t.Fatalf("inference = %+v, want unreachable with guidance naming chat.model", inference)
+	}
+}
+
+func TestStatusAnthropicEndpointDown(t *testing.T) {
+	sock, _ := startTestServerWithStore(t, t.TempDir(), map[string]string{
+		backendOpenAI: "http://127.0.0.1:1/anthropic", // nothing listening
+	}, newMemConfig(map[string]any{
+		"chat.api":   "anthropic",
+		"chat.model": "anthropic.claude-sonnet-5-5",
+	}, nil))
+
+	_, env := promptRequest(t, sock, http.MethodGet, "/1.0/status", nil)
+	if inference := statusPayload(t, env)[serviceInference]; inference.State != serviceUnreachable {
+		t.Fatalf("inference = %+v, want unreachable when nothing listens", inference)
 	}
 }

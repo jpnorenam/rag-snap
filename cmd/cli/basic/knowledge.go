@@ -3,6 +3,7 @@ package basic
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -619,15 +620,23 @@ func (cmd *knowledgeCommand) ingestCommand() *cobra.Command {
 
 func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 	var (
-		bases []string
-		k     int
+		bases       []string
+		k           int
+		kapaGroups  []string
+		showSimilar bool
 	)
 
 	cobraCmd := &cobra.Command{
 		Use:   "search <query>",
 		Short: "Search the knowledge base",
-		Long:  "Search for documents across knowledge bases.\nIf no bases are specified with --index, the default index is searched.\nResults from all bases are merged and sorted by relevance score.",
-		Args:  cobra.ExactArgs(1),
+		Long: "Search for documents across knowledge bases.\n" +
+			"If no bases are specified with --bases, the default base is searched.\n" +
+			"Results from all bases are merged and sorted by relevance score; --top caps the total.\n" +
+			"Only results that match the query (relevance score above 0) are shown. The rest are\n" +
+			"similar results, summarized but hidden unless " + knowledge.ShowSimilarFlag + " is given.\n" +
+			"With --kapa-groups, the given kapa.ai source groups are searched too; their results follow\n" +
+			"the local ones and always count as matches. List the group ids with /use-kapa in `chat`.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			query := args[0]
 
@@ -637,25 +646,23 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 					defaultBase, _ := knowledge.KnowledgeBaseNameFromIndex(knowledge.DefaultIndexName())
 					searchBases = []string{defaultBase}
 				}
-				hits, err := dc.Search(context.Background(), query, searchBases, k)
+				hits, warnings, err := dc.Search(context.Background(), query, searchBases, k, kapaGroups)
 				if err != nil {
 					return err
 				}
-				if len(hits) == 0 {
-					fmt.Println("No results found.")
-					return nil
+				for _, w := range warnings {
+					fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 				}
-				for i, hit := range hits {
-					fmt.Printf("\n--- Result %d (score: %.4f, base: %s) %s ---\n", i+1, hit.Score, hit.Base, knowledge.LabelTag(hit.Label))
-					fmt.Printf("  Source: %s\n", knowledge.SourceLine(hit.Citation.Label, hit.Citation.Href, hit.SourceID))
-					fmt.Printf("  Date:   %s\n", hit.CreatedAt)
-					content := hit.Content
-					if len(content) > 200 {
-						content = content[:200] + "..."
+				views := make([]searchHitView, len(hits))
+				for i, h := range hits {
+					views[i] = searchHitView{
+						Score: h.Score, Where: "base: " + h.Base, Label: h.Label,
+						SourceID: h.SourceID, CreatedAt: h.CreatedAt, Content: h.Content,
+						CiteLabel: h.Citation.Label, CiteHref: h.Citation.Href,
+						Matched: h.IsMatched(),
 					}
-					fmt.Printf("  %s\n", content)
 				}
-				fmt.Printf("\nTotal: %d results\n", len(hits))
+				fmt.Print(formatSearchHitViews(query, views, showSimilar))
 				return nil
 			}
 
@@ -680,36 +687,99 @@ func (cmd *knowledgeCommand) searchCommand() *cobra.Command {
 				fullIndexNames = []string{knowledge.DefaultIndexName()}
 			}
 
-			results, err := client.Search(context.Background(), fullIndexNames, query, query, modelID, k)
-			if err != nil {
+			var kapaClient *knowledge.KapaClient
+			if len(kapaGroups) > 0 {
+				if kapaClient = buildKapaClient(cmd.Context); kapaClient == nil {
+					fmt.Fprintln(os.Stderr, "Warning: kapa.ai is not configured (set kapa.project.id and export KAPA_API_KEY); showing local results only")
+				}
+			}
+			res := knowledge.SearchWithKapa(context.Background(), client, fullIndexNames,
+				query, query, modelID, k, kapaClient, kapaGroups)
+			if err := res.Err(); err != nil {
 				return fmt.Errorf("searching: %w", err)
 			}
-
-			if len(results) == 0 {
-				fmt.Println("No results found.")
-				return nil
+			if res.LocalErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: local knowledge search failed, showing kapa.ai results only: %v\n", res.LocalErr)
 			}
+			if res.KapaErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: kapa.ai search failed, showing local results only: %v\n", res.KapaErr)
+			}
+			results := res.Hits
 
-			for i, hit := range results {
-				fmt.Printf("\n--- Result %d (score: %.4f, index: %s) %s ---\n", i+1, hit.Score, hit.Index, knowledge.LabelTag(hit.Label))
-				fmt.Printf("  Source: %s\n", knowledge.SourceLine(hit.Citation.Label, hit.Citation.Href, hit.SourceID))
-				fmt.Printf("  Date:   %s\n", hit.CreatedAt)
-				content := hit.Content
-				if len(content) > 200 {
-					content = content[:200] + "..."
+			views := make([]searchHitView, len(results))
+			for i, h := range results {
+				views[i] = searchHitView{
+					Score: h.Score, Where: "index: " + h.Index, Label: h.Label,
+					SourceID: h.SourceID, CreatedAt: h.CreatedAt, Content: h.Content,
+					CiteLabel: h.Citation.Label, CiteHref: h.Citation.Href,
+					Matched: h.Matched,
 				}
-				fmt.Printf("  %s\n", content)
 			}
-
-			fmt.Printf("\nTotal: %d results\n", len(results))
+			fmt.Print(formatSearchHitViews(query, views, showSimilar))
 			return nil
 		},
 	}
 
 	cobraCmd.Flags().StringSliceVarP(&bases, "bases", "b", nil, "Knowledge base name(s) to search (comma-separated string list, defaults to 'default')")
-	cobraCmd.Flags().IntVarP(&k, "top", "k", 10, "Number of results per index")
+	cobraCmd.Flags().IntVarP(&k, "top", "k", 10, "Maximum number of results, in total across all bases (kapa.ai adds up to as many again)")
+	cobraCmd.Flags().StringSliceVar(&kapaGroups, "kapa-groups", nil, "kapa.ai source group id(s) to search as well (comma-separated)")
+	cobraCmd.Flags().BoolVar(&showSimilar, strings.TrimPrefix(knowledge.ShowSimilarFlag, "--"), false, "Also show similar results that don't match the query")
 
 	return cobraCmd
+}
+
+// searchHitView is a search hit as k search prints it, from either the direct
+// OpenSearch path or the daemon. Where is "index: <name>" or "base: <name>".
+type searchHitView struct {
+	Score     float64
+	Where     string
+	Label     string
+	SourceID  string
+	CreatedAt string
+	Content   string
+	// CiteLabel and CiteHref are the hit's resolved document citation, shown
+	// as its source in place of the raw source id when present.
+	CiteLabel string
+	CiteHref  string
+	Matched   bool
+}
+
+// formatSearchHitViews renders k search output: the matched hits, then the
+// similar results hidden behind a notice, or shown under a separator with
+// showSimilar. Numbering continues from the matched hits into the similar ones.
+func formatSearchHitViews(query string, hits []searchHitView, showSimilar bool) string {
+	matched, similar := knowledge.SplitByMatch(hits, func(h searchHitView) bool { return h.Matched })
+
+	render := func(group []searchHitView, start int) string {
+		var b strings.Builder
+		for i, hit := range group {
+			fmt.Fprintf(&b, "\n--- Result %d (score: %.4f, %s) %s ---\n", start+i+1, hit.Score, hit.Where, knowledge.LabelTag(hit.Label))
+			fmt.Fprintf(&b, "  Source: %s\n", knowledge.SourceLine(hit.CiteLabel, hit.CiteHref, hit.SourceID))
+			fmt.Fprintf(&b, "  Date:   %s\n", hit.CreatedAt)
+			content := hit.Content
+			if len(content) > 200 {
+				content = content[:200] + "..."
+			}
+			fmt.Fprintf(&b, "  %s\n", content)
+		}
+		return b.String()
+	}
+
+	// The total counts what is listed. With similar results shown it follows them
+	// and says how it splits, so it never contradicts the numbering.
+	listsSimilar := showSimilar && len(similar) > 0
+	matchedOut := ""
+	if len(matched) > 0 {
+		matchedOut = render(matched, 0)
+		if !listsSimilar {
+			matchedOut += fmt.Sprintf("\nTotal: %d results\n", len(matched))
+		}
+	}
+	out := knowledge.FormatSplit(query, matchedOut, render(similar, len(matched)), len(matched), len(similar), showSimilar)
+	if listsSimilar {
+		out += fmt.Sprintf("\nTotal: %d results (%d matching, %d similar)\n", len(matched)+len(similar), len(matched), len(similar))
+	}
+	return out
 }
 
 func (cmd *knowledgeCommand) forgetCommand() *cobra.Command {

@@ -8,6 +8,7 @@ export interface ApiEnvelope<T = unknown> {
   type: "sync" | "async" | "error";
   status?: string;
   status_code?: number;
+  warnings?: string[] | null;
   error_code?: number;
   error?: string;
   operation?: string;
@@ -94,6 +95,16 @@ export async function getSync<T>(path: string): Promise<T> {
   return env.metadata as T;
 }
 
+// postSyncWithWarnings is postSync that also returns the response's top-level
+// warnings: problems that degraded the result without failing it.
+export async function postSyncWithWarnings<T>(
+  path: string,
+  body?: unknown
+): Promise<{ metadata: T; warnings: string[] }> {
+  const env = await request<T>("POST", path, body);
+  return { metadata: env.metadata as T, warnings: env.warnings ?? [] };
+}
+
 // postSync issues a request expecting a sync response and returns its metadata.
 export async function postSync<T>(path: string, body?: unknown): Promise<T> {
   const env = await request<T>("POST", path, body);
@@ -169,6 +180,13 @@ async function requestForm<T>(path: string, form: FormData): Promise<ApiEnvelope
     throw new ApiError(env.error ?? `request failed`, env.error_code ?? resp.status);
   }
   return env;
+}
+
+// postSyncForm uploads a multipart form and expects a sync response, returning its
+// metadata.
+export async function postSyncForm<T>(path: string, form: FormData): Promise<T> {
+  const env = await requestForm<T>(path, form);
+  return env.metadata as T;
 }
 
 // postAsyncForm uploads a multipart form and expects an async operation (used by
